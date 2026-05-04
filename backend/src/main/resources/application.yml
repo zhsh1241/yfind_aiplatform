@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: yfind-aiplatform-backend
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+ai:
+  adapter:
+    base-url: ${AI_ADAPTER_BASE_URL:http://localhost:8000}
