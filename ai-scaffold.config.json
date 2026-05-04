@@ -1,0 +1,143 @@
+{
+  "projectName": "yfind_aiplatform",
+  "featureRoot": "docs/features",
+  "bugfixRoot": "docs/bugfix",
+  "codeLikeRoots": [
+    "backend/",
+    "frontend/",
+    "ai-adapter/",
+    "deploy/",
+    "docs/db/"
+  ],
+  "scaffoldRoots": [
+    "tools/ai-scaffold/",
+    "scripts/check-",
+    "docs/features/",
+    "docs/bugfix/",
+    "docs/architecture/",
+    ".github/workflows/ci.yml",
+    "ai-adapter/README.md"
+  ],
+  "backend": {
+    "path": "backend",
+    "changeRoot": "backend/",
+    "modulePathPrefix": "backend/",
+    "commands": {
+      "compile": {
+        "command": "mvn",
+        "args": [
+          "compile",
+          "-q"
+        ]
+      },
+      "test": {
+        "command": "mvn",
+        "args": [
+          "test",
+          "-q"
+        ]
+      },
+      "verify": {
+        "command": "mvn",
+        "args": [
+          "verify"
+        ]
+      },
+      "verifyWithoutIntegration": {
+        "command": "mvn",
+        "args": [
+          "verify",
+          "-DskipITs=true"
+        ]
+      }
+    }
+  },
+  "frontends": [
+    {
+      "name": "web",
+      "path": "frontend",
+      "changeRoot": "frontend/",
+      "commands": {
+        "lint": {
+          "command": "npm",
+          "args": [
+            "run",
+            "lint"
+          ]
+        },
+        "test": {
+          "command": "npm",
+          "args": [
+            "run",
+            "test:ci"
+          ]
+        },
+        "build": {
+          "command": "npm",
+          "args": [
+            "run",
+            "build"
+          ]
+        },
+        "e2e": {
+          "command": "npm",
+          "args": [
+            "run",
+            "e2e"
+          ]
+        }
+      }
+    }
+  ],
+  "database": {
+    "testName": "TODO_CONFIRM_POSTGRES_TEST_DB",
+    "user": "TODO_CONFIRM_POSTGRES_USER",
+    "password": "TODO_CONFIRM_POSTGRES_PASSWORD",
+    "dockerContainer": "TODO_CONFIRM_POSTGRES_CONTAINER"
+  },
+  "e2e": {
+    "username": "TODO_CONFIRM_E2E_USERNAME",
+    "password": "TODO_CONFIRM_E2E_PASSWORD",
+    "tenantCode": "TODO_CONFIRM_E2E_TENANT_CODE"
+  },
+  "services": [
+    {
+      "name": "ai-adapter",
+      "path": "ai-adapter",
+      "changeRoot": "ai-adapter/",
+      "commands": {
+        "compile": {
+          "command": "python",
+          "args": [
+            "-m",
+            "compileall",
+            "app",
+            "tests"
+          ]
+        },
+        "test": {
+          "command": "python",
+          "args": [
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests",
+            "-v"
+          ]
+        },
+        "verify": {
+          "command": "python",
+          "args": [
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests",
+            "-v"
+          ]
+        }
+      }
+    }
+  ]
+}

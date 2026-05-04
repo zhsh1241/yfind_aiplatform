@@ -1,0 +1,42 @@
+{
+  "projectName": "Example App",
+  "featureRoot": "docs/features",
+  "bugfixRoot": "docs/bugfix",
+  "codeLikeRoots": ["backend/", "frontend/", "db/"],
+  "scaffoldRoots": ["tools/ai-scaffold/", "docs/features/", ".github/workflows/ci.yml"],
+  "backend": {
+    "path": "backend",
+    "changeRoot": "backend/",
+    "modulePathPrefix": "backend/",
+    "commands": {
+      "compile": { "command": "mvn", "args": ["compile", "-q"] },
+      "test": { "command": "mvn", "args": ["test", "-q"] },
+      "verify": { "command": "mvn", "args": ["verify"] },
+      "verifyWithoutIntegration": { "command": "mvn", "args": ["verify", "-Dtest=!*IntegrationTest*"] }
+    }
+  },
+  "frontends": [
+    {
+      "name": "web",
+      "path": "frontend",
+      "changeRoot": "frontend/",
+      "commands": {
+        "lint": { "command": "npm", "args": ["run", "lint"] },
+        "test": { "command": "npm", "args": ["run", "test:ci"] },
+        "build": { "command": "npm", "args": ["run", "build"] },
+        "e2e": { "command": "npm", "args": ["run", "e2e"] }
+      }
+    }
+  ],
+  "database": {
+    "testName": "app_test",
+    "user": "app",
+    "password": "app",
+    "dockerContainer": "postgres"
+  },
+  "e2e": {
+    "username": "admin",
+    "password": "change-me",
+    "tenantCode": "default"
+  }
+}
