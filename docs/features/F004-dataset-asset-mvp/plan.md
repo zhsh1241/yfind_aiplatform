@@ -1,8 +1,8 @@
 ﻿---
 feature: F004-dataset-asset-mvp
 title: 数据资产 MVP
-plan_status: draft
-approved_at: ""
+plan_status: approved
+approved_at: "2026-05-04"
 owner: codex
 created_at: 2026-05-04
 updated_at: 2026-05-04
@@ -90,10 +90,11 @@ updated_at: 2026-05-04
 
 ### Must Reuse
 
-- `backend/` 现有 Spring Boot 单体骨架与 F002 身份/权限/审计边界。
-- `frontend/` 现有 React + TypeScript + Ant Design 基线。
-- `tools/ai-scaffold` 与 `docs/features/` 既有 feature 工作流。
-- F003 原型中关于数据资产与权限交互的概念信息架构。
+- `backend/src/main/java/com/yfind/aiplatform/identity/PermissionService.java`、`dataset:read` / `dataset:manage` 权限键，以及 `backend/` Spring Boot 单体骨架。
+- `backend/src/test/java/com/yfind/aiplatform/identity/AuthControllerTest.java`、既有 MockMvc 测试基座与 F002 权限边界。
+- `frontend/src/App.tsx`、`frontend/src/App.test.tsx` 与 `frontend/` React + TypeScript + Ant Design 基线。
+- `tools/ai-scaffold`、`docs/features/` 既有 feature 工作流，以及 `docs/features/F002-identity-org-permission/` 已验证的报告结构。
+- F003 原型中已有的数据资产入口、模块导航与 `/api/datasets` 数据资产概念信息架构。
 
 ### Duplication Rejected
 
@@ -144,3 +145,4 @@ updated_at: 2026-05-04
 
 - Reviewer:
 - Decision:
+

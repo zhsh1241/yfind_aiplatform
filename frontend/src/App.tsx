@@ -1,22 +1,14 @@
 ﻿import {
-  ApiOutlined,
-  AuditOutlined,
   BellOutlined,
   CloudUploadOutlined,
-  ClusterOutlined,
   DashboardOutlined,
   DatabaseOutlined,
-  DeploymentUnitOutlined,
   ExperimentOutlined,
-  EyeOutlined,
   FileSearchOutlined,
-  HddOutlined,
-  LoginOutlined,
   MonitorOutlined,
   PlayCircleOutlined,
   RocketOutlined,
   SafetyCertificateOutlined,
-  SettingOutlined,
 } from "@ant-design/icons";
 import {
   App as AntdApp,
@@ -27,13 +19,11 @@ import {
   ConfigProvider,
   Descriptions,
   Drawer,
-  Flex,
   Form,
   Input,
   List,
   Modal,
   Progress,
-  Result,
   Row,
   Select,
   Space,
@@ -41,7 +31,6 @@ import {
   Steps,
   Table,
   Tag,
-  Timeline,
   Typography,
   theme,
 } from "antd";
@@ -49,7 +38,7 @@ import type { ColumnsType } from "antd/es/table";
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Paragraph, Text } = Typography;
 
 type ModuleKey =
   | "overview"
@@ -62,13 +51,22 @@ type ModuleKey =
   | "edge"
   | "monitoring";
 
+type ModalKind =
+  | "upload"
+  | "training"
+  | "deploy"
+  | "permission"
+  | "labeling"
+  | "edge"
+  | "dataset-request"
+  | "dataset-approve"
+  | null;
+
 type Detail = {
   title: string;
   description: string;
   items: Array<{ label: string; value: string }>;
 };
-
-type ModalKind = "upload" | "training" | "deploy" | "permission" | "labeling" | "edge" | null;
 
 type Dataset = {
   key: string;
@@ -77,6 +75,14 @@ type Dataset = {
   status: string;
   samples: number;
   quality: number;
+  versionCount: number;
+  previewType: string;
+  canView: boolean;
+  canDownloadLatestVersion: boolean;
+  dedupStrategy: string;
+  processingStatus: string;
+  samplePreviewName: string;
+  samplePreviewType: string;
 };
 
 const moduleItems: Array<{ key: ModuleKey; label: string; icon: ReactNode; summary: string; tone: "light" | "dark" | "parchment" }> = [
@@ -85,9 +91,9 @@ const moduleItems: Array<{ key: ModuleKey; label: string; icon: ReactNode; summa
   { key: "dataset", label: "数据资产", icon: <DatabaseOutlined />, summary: "数据集、版本、质量和标注入口", tone: "dark" },
   { key: "labeling", label: "标注任务", icon: <FileSearchOutlined />, summary: "标注队列、复核、质检与交付", tone: "light" },
   { key: "training", label: "训练中心", icon: <ExperimentOutlined />, summary: "训练任务、资源调度和实验指标", tone: "parchment" },
-  { key: "model", label: "模型仓库", icon: <DeploymentUnitOutlined />, summary: "版本、评测、审批和回滚", tone: "dark" },
+  { key: "model", label: "模型仓库", icon: <DatabaseOutlined />, summary: "版本、评测、审批和回滚", tone: "dark" },
   { key: "inference", label: "推理服务", icon: <RocketOutlined />, summary: "KServe 发布、灰度和回滚", tone: "light" },
-  { key: "edge", label: "边缘下发", icon: <ClusterOutlined />, summary: "边缘节点、模型包、部署状态", tone: "parchment" },
+  { key: "edge", label: "边缘下发", icon: <CloudUploadOutlined />, summary: "边缘节点、模型包、部署状态", tone: "parchment" },
   { key: "monitoring", label: "监控审计", icon: <MonitorOutlined />, summary: "告警、指标、日志、审计追踪", tone: "dark" },
 ];
 
@@ -103,9 +109,54 @@ const inferenceMetrics = [
 ];
 
 const datasets: Dataset[] = [
-  { key: "motor-thermal", name: "电机温升异常图像集", owner: "算法组", status: "质检通过", samples: 12840, quality: 96 },
-  { key: "bearing-audio", name: "轴承异响音频集", owner: "设备组", status: "训练中", samples: 6200, quality: 91 },
-  { key: "welding-vision", name: "焊点外观缺陷集", owner: "质检组", status: "待复核", samples: 8920, quality: 88 },
+  {
+    key: "motor-thermal",
+    name: "电机温升异常图像集",
+    owner: "算法组",
+    status: "ACTIVE",
+    samples: 12840,
+    quality: 96,
+    versionCount: 3,
+    previewType: "图片",
+    canView: true,
+    canDownloadLatestVersion: true,
+    dedupStrategy: "SKIP_DUPLICATE",
+    processingStatus: "SUCCEEDED",
+    samplePreviewName: "sample-001.jpg",
+    samplePreviewType: "image/jpeg",
+  },
+  {
+    key: "bearing-audio",
+    name: "轴承异响音频集",
+    owner: "设备组",
+    status: "PROCESSING",
+    samples: 6200,
+    quality: 91,
+    versionCount: 1,
+    previewType: "通用文件",
+    canView: true,
+    canDownloadLatestVersion: false,
+    dedupStrategy: "WARN_DUPLICATE",
+    processingStatus: "RUNNING",
+    samplePreviewName: "bearing-001.wav",
+    samplePreviewType: "audio/wav",
+  },
+  {
+    key: "welding-vision",
+    name: "焊点外观缺陷集",
+    owner: "质检组",
+    status: "PENDING_APPROVAL",
+    samples: 8920,
+    quality: 88,
+    versionCount: 2,
+    previewType: "图片",
+    canView: true,
+    canDownloadLatestVersion: false,
+    dedupStrategy: "SKIP_DUPLICATE",
+    processingStatus: "QUEUED",
+    samplePreviewName: "weld-101.jpg",
+    samplePreviewType: "image/jpeg",
+  },
 ];
 
 const frontendUser = {
@@ -114,18 +165,7 @@ const frontendUser = {
   organization: "YFI 智造中心（本地占位）",
   authMethod: "LOCAL_DEV_PRINCIPAL",
   iamProvider: "TODO_CONFIRM_IAM_PROVIDER",
-  roles: ["平台管理员", "算法工程师"],
-  permissions: [
-    "identity:user:read",
-    "identity:role:manage",
-    "dataset:manage",
-    "labeling:manage",
-    "training:execute",
-    "model:manage",
-    "inference:deploy",
-    "edge:deploy",
-    "audit:read",
-  ],
+  permissions: ["identity:role:manage", "dataset:manage", "inference:deploy", "audit:read"],
 };
 
 const moduleRequiredPermissions: Record<ModuleKey, string> = {
@@ -140,7 +180,7 @@ const moduleRequiredPermissions: Record<ModuleKey, string> = {
   monitoring: "audit:read",
 };
 
-function detailFor(title: string, description: string): Detail {
+function makeDetail(title: string, description: string): Detail {
   return {
     title,
     description,
@@ -176,68 +216,52 @@ function PrototypeApp() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [modalKind, setModalKind] = useState<ModalKind>(null);
   const [trainingStep, setTrainingStep] = useState(0);
-  const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(datasets[0]);
-  const [deploymentApproved, setDeploymentApproved] = useState(false);
+  const [selectedDataset, setSelectedDataset] = useState<Dataset>(datasets[0]);
+  const [datasetQuery, setDatasetQuery] = useState("");
+  const [datasetStatusFilter, setDatasetStatusFilter] = useState("ALL");
+  const [requestApproved, setRequestApproved] = useState(false);
   const { message } = AntdApp.useApp();
 
-  const activeInfo = useMemo(
-    () => moduleItems.find((item) => item.key === activeModule) ?? moduleItems[0],
-    [activeModule],
-  );
+  const activeInfo = useMemo(() => moduleItems.find((item) => item.key === activeModule) ?? moduleItems[0], [activeModule]);
 
-  const openDetail = (title: string, description: string) => {
-    setDetail(detailFor(title, description));
-  };
+  const filteredDatasets = useMemo(() => {
+    return datasets.filter((dataset) => {
+      const matchQuery = !datasetQuery || dataset.name.includes(datasetQuery) || dataset.owner.includes(datasetQuery);
+      const matchStatus = datasetStatusFilter === "ALL" || dataset.status === datasetStatusFilter;
+      return matchQuery && matchStatus;
+    });
+  }, [datasetQuery, datasetStatusFilter]);
 
-  const openModal = (kind: ModalKind) => {
-    setModalKind(kind);
-    if (kind === "training") {
-      setTrainingStep(0);
-    }
-  };
-
+  const openDetail = (title: string, description: string) => setDetail(makeDetail(title, description));
   const closeModal = () => setModalKind(null);
-
-  const notify = (content: string) => {
-    void message.success(content);
-  };
+  const notify = (content: string) => void message.success(content);
 
   const datasetColumns: ColumnsType<Dataset> = [
     {
       title: "数据集",
       dataIndex: "name",
-      render: (value: string, record) => (
-        <Button type="link" onClick={() => setSelectedDataset(record)}>
-          {value}
-        </Button>
-      ),
+      render: (value: string, record) => <Button type="link" onClick={() => setSelectedDataset(record)}>{value}</Button>,
     },
     { title: "负责人", dataIndex: "owner" },
-    {
-      title: "状态",
-      dataIndex: "status",
-      render: (value: string) => <Tag color={value === "质检通过" ? "green" : value === "训练中" ? "blue" : "gold"}>{value}</Tag>,
-    },
+    { title: "状态", dataIndex: "status", render: (value: string) => <Tag color={value === "ACTIVE" ? "green" : value === "PROCESSING" ? "blue" : "gold"}>{value}</Tag> },
+    { title: "版本数", dataIndex: "versionCount" },
     { title: "样本数", dataIndex: "samples" },
     {
-      title: "质量分",
-      dataIndex: "quality",
-      render: (value: number) => <Progress className="task-progress" percent={value} size="small" />,
+      title: "最新版本下载",
+      dataIndex: "canDownloadLatestVersion",
+      render: (value: boolean, record) => <Tag color={value || (requestApproved && record.key === selectedDataset.key) ? "green" : "red"}>{value || (requestApproved && record.key === selectedDataset.key) ? "已授权" : "待审批"}</Tag>,
     },
     {
       title: "操作",
       render: (_, record) => (
         <Space>
-          <Button size="small" onClick={() => openDetail(record.name, "查看数据版本、质量报告和标注进度。")}>详情</Button>
-          <Button size="small" type="primary" onClick={() => openModal("labeling")}>发起标注</Button>
+          <Button size="small" onClick={() => setSelectedDataset(record)}>详情</Button>
+          <Button size="small" onClick={() => openDetail(`${record.name} 样例预览`, record.samplePreviewType.startsWith("image/") ? `图片样例 ${record.samplePreviewName} 可直接预览。` : `文件 ${record.samplePreviewName} 已上传，但当前仅保证图片预览。`)}>预览</Button>
+          <Button size="small" type="primary" onClick={() => { setSelectedDataset(record); setModalKind("dataset-request"); }}>申请下载</Button>
         </Space>
       ),
     },
   ];
-
-  const runPrimaryAction = () => {
-    openModal(activeModule === "dataset" ? "upload" : activeModule === "inference" ? "deploy" : activeModule === "edge" ? "edge" : "training");
-  };
 
   return (
     <div className="apple-page">
@@ -245,15 +269,7 @@ function PrototypeApp() {
         <button className="apple-mark" type="button" onClick={() => setActiveModule("overview")}>YFI</button>
         <div className="global-nav-links">
           {moduleItems.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={item.key === activeModule ? "apple-nav-link is-active" : "apple-nav-link"}
-              onClick={() => {
-                setActiveModule(item.key);
-                notify(`已切换到：${item.label}`);
-              }}
-            >
+            <button key={item.key} type="button" className={item.key === activeModule ? "apple-nav-link is-active" : "apple-nav-link"} onClick={() => setActiveModule(item.key)}>
               {item.label}
             </button>
           ))}
@@ -270,7 +286,7 @@ function PrototypeApp() {
         </div>
         <Space wrap>
           <Button type="link" onClick={() => openDetail(activeInfo.label, activeInfo.summary)}>查看模块说明</Button>
-          <Button aria-label="启动训练" type="primary" icon={<PlayCircleOutlined />} onClick={() => openModal("training")}>启动训练</Button>
+          <Button aria-label="启动训练" type="primary" icon={<PlayCircleOutlined />} onClick={() => setModalKind("training")}>启动训练</Button>
         </Space>
       </div>
 
@@ -281,7 +297,7 @@ function PrototypeApp() {
             <Title level={1}>YFI 工业 AI 小模型平台原型</Title>
             <Paragraph className="tile-lead">{activeInfo.label} · {activeInfo.summary}</Paragraph>
             <Space wrap className="tile-actions">
-              <Button type="primary" onClick={runPrimaryAction}>执行主操作</Button>
+              <Button type="primary" onClick={() => setModalKind(activeModule === "dataset" ? "upload" : activeModule === "inference" ? "deploy" : "training")}>执行主操作</Button>
               <Button onClick={() => openDetail(activeInfo.label, activeInfo.summary)}>了解更多</Button>
             </Space>
           </div>
@@ -294,67 +310,45 @@ function PrototypeApp() {
           </div>
         </section>
 
-        <section className="module-strip" aria-label="模块快捷入口">
-          {moduleItems.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={item.key === activeModule ? "module-chip is-selected" : "module-chip"}
-              onClick={() => setActiveModule(item.key)}
-            >
-              <span>{item.icon}</span>
-              {item.label}
-              <small>{frontendUser.permissions.includes(moduleRequiredPermissions[item.key]) ? "已放行" : "默认拒绝"}</small>
-            </button>
-          ))}
-        </section>
-
-        {activeModule === "overview" ? (
-          <OverviewPage openDetail={openDetail} openModal={openModal} />
-        ) : activeModule === "identity" ? (
-          <IdentityPage openModal={openModal} openDetail={openDetail} />
-        ) : activeModule === "dataset" ? (
-          <DatasetPage columns={datasetColumns} selectedDataset={selectedDataset} openModal={openModal} openDetail={openDetail} />
-        ) : activeModule === "training" ? (
-          <TrainingPage openModal={openModal} openDetail={openDetail} />
-        ) : activeModule === "inference" ? (
-          <InferencePage deploymentApproved={deploymentApproved} openModal={openModal} openDetail={openDetail} />
-        ) : activeModule === "monitoring" ? (
-          <MonitoringPage openDetail={openDetail} />
-        ) : (
-          <GenericModulePage moduleKey={activeModule} openDetail={openDetail} openModal={openModal} />
+        {activeModule === "overview" && <OverviewPage openDetail={openDetail} onUpload={() => setModalKind("upload")} onTraining={() => setModalKind("training")} onDeploy={() => setModalKind("deploy")} />}
+        {activeModule === "identity" && <IdentityPage openDetail={openDetail} onOpenPermission={() => setModalKind("permission")} />}
+        {activeModule === "dataset" && (
+          <DatasetPage
+            columns={datasetColumns}
+            datasets={filteredDatasets}
+            selectedDataset={selectedDataset}
+            datasetQuery={datasetQuery}
+            setDatasetQuery={setDatasetQuery}
+            datasetStatusFilter={datasetStatusFilter}
+            setDatasetStatusFilter={setDatasetStatusFilter}
+            requestApproved={requestApproved || selectedDataset.canDownloadLatestVersion}
+            openDetail={openDetail}
+            onUpload={() => setModalKind("upload")}
+            onRequest={() => setModalKind("dataset-request")}
+            onApprove={() => setModalKind("dataset-approve")}
+          />
         )}
+        {activeModule === "training" && <TrainingPage onOpen={() => setModalKind("training")} openDetail={openDetail} />}
+        {activeModule === "inference" && <InferencePage openDetail={openDetail} onDeploy={() => setModalKind("deploy")} />}
+        {activeModule === "monitoring" && <MonitoringPage openDetail={openDetail} />}
+        {["labeling", "model", "edge"].includes(activeModule) && <GenericModulePage moduleKey={activeModule} openDetail={openDetail} />}
       </main>
 
       <footer className="apple-footer">
         <Text>所有业务数据均为原型占位。真实接口、权限、模型训练和部署将在后续 feature 中接入。</Text>
       </footer>
 
-      <Drawer
-        title={detail?.title}
-        open={Boolean(detail)}
-        onClose={() => setDetail(null)}
-        width={460}
-        extra={<Button onClick={() => notify("已记录到原型评审清单")}>加入评审清单</Button>}
-      >
+      <Drawer title={detail?.title} open={Boolean(detail)} onClose={() => setDetail(null)} width={460}>
         <Paragraph>{detail?.description}</Paragraph>
-        <Descriptions
-          bordered
-          column={1}
-          size="small"
-          items={detail?.items.map((item) => ({
-            key: item.label,
-            label: item.label,
-            children: item.value,
-          }))}
-        />
+        <Descriptions bordered column={1} size="small" items={(detail?.items ?? []).map((item) => ({ key: item.label, label: item.label, children: item.value }))} />
       </Drawer>
 
-      <Modal title="上传数据集" open={modalKind === "upload"} onCancel={closeModal} onOk={() => { notify("数据集上传任务已创建"); closeModal(); }} okText="创建上传任务" cancelText="取消">
+      <Modal title="上传数据集" open={modalKind === "upload"} onCancel={closeModal} onOk={() => { notify("数据集上传任务已创建，并进入异步预处理队列"); closeModal(); }} okText="创建上传任务" cancelText="取消">
         <Form layout="vertical">
           <Form.Item label="数据集名称" required><Input placeholder="例如：电机温升异常图像集" /></Form.Item>
-          <Form.Item label="数据类型" required><Select defaultValue="image" options={[{ value: "image", label: "图片" }, { value: "audio", label: "音频" }, { value: "text", label: "文本" }]} /></Form.Item>
-          <Form.Item label="说明"><Input.TextArea placeholder="填写采集来源、质检规则和保密等级" /></Form.Item>
+          <Form.Item label="上传类型" required><Select defaultValue="file" options={[{ value: "file", label: "通用文件上传" }, { value: "image", label: "图片样例保障" }]} /></Form.Item>
+          <Form.Item label="去重策略" required><Select defaultValue="SKIP_DUPLICATE" options={[{ value: "SKIP_DUPLICATE", label: "跳过重复文件" }, { value: "WARN_DUPLICATE", label: "提示重复后继续" }]} /></Form.Item>
+          <Form.Item label="说明"><Input.TextArea placeholder="填写采集来源、元数据规则、审批边界和保密等级" /></Form.Item>
         </Form>
       </Modal>
 
@@ -365,18 +359,14 @@ function PrototypeApp() {
           <Paragraph>当前为原型步骤，点击下一步可模拟训练任务配置流程。</Paragraph>
           <Progress percent={[25, 50, 75, 100][trainingStep]} />
         </Card>
-        <Flex justify="space-between">
+        <Space style={{ width: "100%", justifyContent: "space-between" }}>
           <Button disabled={trainingStep === 0} onClick={() => setTrainingStep((step) => step - 1)}>上一步</Button>
-          {trainingStep < 3 ? (
-            <Button type="primary" onClick={() => setTrainingStep((step) => step + 1)}>下一步</Button>
-          ) : (
-            <Button type="primary" onClick={() => { notify("训练任务已提交，等待调度"); closeModal(); }}>提交训练</Button>
-          )}
-        </Flex>
+          {trainingStep < 3 ? <Button type="primary" onClick={() => setTrainingStep((step) => step + 1)}>下一步</Button> : <Button type="primary" onClick={() => { notify("训练任务已提交，等待调度"); closeModal(); }}>提交训练</Button>}
+        </Space>
       </Modal>
 
-      <Modal title="部署模型到推理服务" open={modalKind === "deploy"} onCancel={closeModal} onOk={() => { setDeploymentApproved(true); notify("模型部署申请已提交"); closeModal(); }} okText="确认部署" cancelText="取消">
-        <Result status="info" title="确认发布模型版本 v1.3.0" subTitle="该操作会创建 KServe 推理服务草案，真实集群地址仍需 TODO_CONFIRM。" />
+      <Modal title="部署模型到推理服务" open={modalKind === "deploy"} onCancel={closeModal} onOk={() => { notify("模型部署申请已提交"); closeModal(); }} okText="确认部署" cancelText="取消">
+        <Paragraph>确认发布模型版本 v1.3.0</Paragraph>
       </Modal>
 
       <Modal title="权限与登录原型" open={modalKind === "permission"} onCancel={closeModal} onOk={() => { notify("已模拟登录：平台管理员"); closeModal(); }} okText="模拟登录" cancelText="取消">
@@ -388,18 +378,28 @@ function PrototypeApp() {
         ]} />
       </Modal>
 
-      <Modal title="发起标注任务" open={modalKind === "labeling"} onCancel={closeModal} onOk={() => { notify("标注任务已发送到 Label Studio 占位队列"); closeModal(); }} okText="创建标注任务" cancelText="取消">
-        <Paragraph>选择标注模板、复核比例和负责人。真实 Label Studio 地址将在后续环境确认后接入。</Paragraph>
+      <Modal title="发起数据集下载申请" open={modalKind === "dataset-request"} onCancel={closeModal} onOk={() => { notify("下载申请已提交，等待审批"); closeModal(); }} okText="提交申请" cancelText="取消">
+        <Descriptions bordered column={1} size="small" items={[
+          { key: "dataset", label: "数据集", children: selectedDataset.name },
+          { key: "view", label: "查看权限", children: selectedDataset.canView ? "已放行" : "未放行" },
+          { key: "download", label: "版本下载权限", children: requestApproved || selectedDataset.canDownloadLatestVersion ? "已放行" : "待审批" },
+          { key: "version", label: "申请版本", children: `${selectedDataset.key}-latest` },
+        ]} />
       </Modal>
 
-      <Modal title="边缘下发确认" open={modalKind === "edge"} onCancel={closeModal} onOk={() => { notify("边缘下发任务已进入等待队列"); closeModal(); }} okText="确认下发" cancelText="取消">
-        <Paragraph>将模型包下发到边缘节点，支持断点续传和状态回传。当前为原型模拟。</Paragraph>
+      <Modal title="审批下载申请" open={modalKind === "dataset-approve"} onCancel={closeModal} onOk={() => { setRequestApproved(true); notify(`已批准 ${selectedDataset.name} 最新版本下载权限`); closeModal(); }} okText="批准下载" cancelText="取消">
+        <Paragraph>审批通过后，将为最新版本授予下载权限，但数据集级查看权限保持不变。</Paragraph>
+        <Descriptions bordered column={1} size="small" items={[
+          { key: "dataset", label: "数据集", children: selectedDataset.name },
+          { key: "dedup", label: "去重策略", children: selectedDataset.dedupStrategy },
+          { key: "job", label: "异步任务状态", children: selectedDataset.processingStatus },
+        ]} />
       </Modal>
     </div>
   );
 }
 
-function OverviewPage({ openDetail, openModal }: { openDetail: (title: string, description: string) => void; openModal: (kind: ModalKind) => void }) {
+function OverviewPage({ openDetail, onUpload, onTraining, onDeploy }: { openDetail: (title: string, description: string) => void; onUpload: () => void; onTraining: () => void; onDeploy: () => void }) {
   return (
     <Space direction="vertical" size={0} className="full-width">
       <section className="product-tile product-tile-dark compact-tile">
@@ -407,13 +407,12 @@ function OverviewPage({ openDetail, openModal }: { openDetail: (title: string, d
           <Title level={2}>一条工业 AI 闭环。</Title>
           <Paragraph className="tile-lead">从数据进入平台，到模型发布、边缘下发和监控审计，所有原型节点均可点击。</Paragraph>
           <Space wrap className="tile-actions">
-            <Button type="primary" icon={<CloudUploadOutlined />} onClick={() => openModal("upload")}>上传数据集</Button>
-            <Button icon={<ExperimentOutlined />} onClick={() => openModal("training")}>启动训练</Button>
-            <Button icon={<RocketOutlined />} onClick={() => openModal("deploy")}>部署模型</Button>
+            <Button type="primary" icon={<CloudUploadOutlined />} onClick={onUpload}>上传数据集</Button>
+            <Button icon={<ExperimentOutlined />} onClick={onTraining}>启动训练</Button>
+            <Button icon={<RocketOutlined />} onClick={onDeploy}>部署模型</Button>
           </Space>
         </div>
       </section>
-
       <section className="product-tile product-tile-parchment compact-tile">
         <Title level={2}>MVP 流程</Title>
         <div className="flow-grid">
@@ -425,41 +424,23 @@ function OverviewPage({ openDetail, openModal }: { openDetail: (title: string, d
           ))}
         </div>
       </section>
-
-      <section className="utility-grid-section">
-        <Row gutter={[20, 20]}>
-          {moduleItems.slice(1).map((item) => (
-            <Col xs={24} md={12} xl={6} key={item.key}>
-              <Card hoverable className="utility-card" onClick={() => openDetail(item.label, item.summary)}>
-                <div className="utility-card-icon">{item.icon}</div>
-                <Title level={4}>{item.label}</Title>
-                <Paragraph>{item.summary}</Paragraph>
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      </section>
     </Space>
   );
 }
 
-function IdentityPage({ openModal, openDetail }: { openModal: (kind: ModalKind) => void; openDetail: (title: string, description: string) => void }) {
+function IdentityPage({ openDetail, onOpenPermission }: { openDetail: (title: string, description: string) => void; onOpenPermission: () => void }) {
   return (
     <section className="utility-grid-section">
       <Row gutter={[20, 20]}>
         <Col xs={24} xl={10}>
-          <Card title="当前用户上下文" extra={<Button icon={<LoginOutlined />} onClick={() => openModal("permission")}>模拟登录</Button>}>
-            <Descriptions
-              column={1}
-              size="small"
-              items={[
-                { key: "displayName", label: "用户", children: frontendUser.displayName },
-                { key: "username", label: "账号", children: frontendUser.username },
-                { key: "organization", label: "组织", children: frontendUser.organization },
-                { key: "authMethod", label: "认证方式", children: frontendUser.authMethod },
-                { key: "iamProvider", label: "IAM Provider", children: frontendUser.iamProvider },
-              ]}
-            />
+          <Card title="当前用户上下文" extra={<Button onClick={onOpenPermission}>模拟登录</Button>}>
+            <Descriptions column={1} size="small" items={[
+              { key: "displayName", label: "用户", children: frontendUser.displayName },
+              { key: "username", label: "账号", children: frontendUser.username },
+              { key: "organization", label: "组织", children: frontendUser.organization },
+              { key: "authMethod", label: "认证方式", children: frontendUser.authMethod },
+              { key: "iamProvider", label: "IAM Provider", children: frontendUser.iamProvider },
+            ]} />
           </Card>
         </Col>
         <Col xs={24} xl={14}>
@@ -484,21 +465,37 @@ function IdentityPage({ openModal, openDetail }: { openModal: (kind: ModalKind) 
   );
 }
 
-function DatasetPage({ columns, selectedDataset, openModal, openDetail }: { columns: ColumnsType<Dataset>; selectedDataset: Dataset | null; openModal: (kind: ModalKind) => void; openDetail: (title: string, description: string) => void }) {
+function DatasetPage({ columns, datasets, selectedDataset, datasetQuery, setDatasetQuery, datasetStatusFilter, setDatasetStatusFilter, requestApproved, openDetail, onUpload, onRequest, onApprove }: { columns: ColumnsType<Dataset>; datasets: Dataset[]; selectedDataset: Dataset; datasetQuery: string; setDatasetQuery: (value: string) => void; datasetStatusFilter: string; setDatasetStatusFilter: (value: string) => void; requestApproved: boolean; openDetail: (title: string, description: string) => void; onUpload: () => void; onRequest: () => void; onApprove: () => void }) {
   return (
     <section className="utility-grid-section">
       <Row gutter={[20, 20]}>
         <Col xs={24} xl={16}>
-          <Card title="数据集列表" extra={<Button aria-label="上传数据集" type="primary" onClick={() => openModal("upload")}>上传数据集</Button>}>
+          <Card title="数据集列表" extra={<Button aria-label="上传数据集" type="primary" onClick={onUpload}>上传数据集</Button>}>
+            <Space wrap style={{ marginBottom: 16 }}>
+              <Input aria-label="数据集搜索" placeholder="搜索数据集或负责人" value={datasetQuery} onChange={(event) => setDatasetQuery(event.target.value)} style={{ width: 240 }} />
+              <Select aria-label="数据集状态筛选" value={datasetStatusFilter} onChange={setDatasetStatusFilter} style={{ width: 220 }} options={[{ value: "ALL", label: "全部状态" }, { value: "ACTIVE", label: "ACTIVE" }, { value: "PROCESSING", label: "PROCESSING" }, { value: "PENDING_APPROVAL", label: "PENDING_APPROVAL" }]} />
+              <Button onClick={() => { setDatasetQuery(""); setDatasetStatusFilter("ALL"); }}>重置筛选</Button>
+            </Space>
             <Table columns={columns} dataSource={datasets} pagination={false} />
           </Card>
         </Col>
         <Col xs={24} xl={8}>
           <Card title="当前选择">
-            <Statistic title="样本数" value={selectedDataset?.samples ?? 0} />
-            <Progress percent={selectedDataset?.quality ?? 0} />
-            <Paragraph>{selectedDataset?.name}</Paragraph>
-            <Button block onClick={() => openDetail(selectedDataset?.name ?? "数据集", "查看数据血缘、质量规则和标签分布。")}>查看数据洞察</Button>
+            <Statistic title="样本数" value={selectedDataset.samples} />
+            <Progress percent={selectedDataset.quality} />
+            <Paragraph>{selectedDataset.name}</Paragraph>
+            <Descriptions column={1} size="small" items={[
+              { key: "preview", label: "预览类型", children: selectedDataset.previewType },
+              { key: "view", label: "数据集查看", children: selectedDataset.canView ? "已放行" : "未放行" },
+              { key: "download", label: "版本下载", children: requestApproved || selectedDataset.canDownloadLatestVersion ? "已放行" : "待审批" },
+              { key: "dedup", label: "去重策略", children: selectedDataset.dedupStrategy },
+              { key: "processing", label: "异步任务", children: selectedDataset.processingStatus },
+            ]} />
+            <Space direction="vertical" className="full-width">
+              <Button block onClick={() => openDetail(selectedDataset.name, selectedDataset.samplePreviewType.startsWith("image/") ? `图片样例 ${selectedDataset.samplePreviewName} 可直接预览。` : `文件 ${selectedDataset.samplePreviewName} 已上传，但当前仅保证图片预览。`)}>查看样例预览</Button>
+              <Button block onClick={onRequest}>发起下载申请</Button>
+              <Button block type="primary" onClick={onApprove}>审批下载申请</Button>
+            </Space>
           </Card>
         </Col>
       </Row>
@@ -506,26 +503,13 @@ function DatasetPage({ columns, selectedDataset, openModal, openDetail }: { colu
   );
 }
 
-function TrainingPage({ openModal, openDetail }: { openModal: (kind: ModalKind) => void; openDetail: (title: string, description: string) => void }) {
+function TrainingPage({ onOpen, openDetail }: { onOpen: () => void; openDetail: (title: string, description: string) => void }) {
   return (
     <section className="utility-grid-section">
       <Row gutter={[20, 20]}>
         <Col xs={24} xl={14}>
-          <Card title="训练任务看板" extra={<Button aria-label="启动训练" type="primary" onClick={() => openModal("training")}>启动训练</Button>}>
-            <List
-              dataSource={["轴承缺陷检测 v1", "焊点外观识别 v2", "声音异常检测 PoC"]}
-              renderItem={(item, index) => (
-                <List.Item actions={[<Button key="detail" onClick={() => openDetail(item, "查看训练日志、指标曲线和资源占用。")}>查看</Button>]}> 
-                  <List.Item.Meta title={item} description={`GPU 队列 #${index + 1}`} />
-                  <Progress className="task-progress" percent={[72, 45, 18][index]} />
-                </List.Item>
-              )}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} xl={10}>
-          <Card title="训练流水线">
-            <Timeline items={[{ children: "数据质检完成" }, { children: "算法模板已选择" }, { children: "等待 GPU 调度" }, { children: "评测报告生成" }]} />
+          <Card title="训练任务看板" extra={<Button aria-label="启动训练" type="primary" onClick={onOpen}>启动训练</Button>}>
+            <List dataSource={["轴承缺陷检测 v1", "焊点外观识别 v2", "声音异常检测 PoC"]} renderItem={(item) => <List.Item actions={[<Button key="detail" onClick={() => openDetail(item, "查看训练日志、指标曲线和资源占用。")}>查看</Button>]}><List.Item.Meta title={item} description="GPU 队列占位" /></List.Item>} />
           </Card>
         </Col>
       </Row>
@@ -533,34 +517,13 @@ function TrainingPage({ openModal, openDetail }: { openModal: (kind: ModalKind) 
   );
 }
 
-function InferencePage({ deploymentApproved, openModal, openDetail }: { deploymentApproved: boolean; openModal: (kind: ModalKind) => void; openDetail: (title: string, description: string) => void }) {
+function InferencePage({ openDetail, onDeploy }: { openDetail: (title: string, description: string) => void; onDeploy: () => void }) {
   const maxQps = Math.max(...inferenceMetrics.map((item) => item.qps));
-
   return (
     <Space direction="vertical" size={0} className="full-width">
       <section className="utility-grid-section">
-        <Row gutter={[20, 20]}>
-          <Col xs={24} xl={12}>
-            <Card title="模型服务" extra={<Button aria-label="部署模型" type="primary" onClick={() => openModal("deploy")}>部署模型</Button>}>
-              <List
-                dataSource={["bearing-detector", "weld-inspector", "audio-anomaly"]}
-                renderItem={(item) => (
-                  <List.Item actions={[<Button key="view" onClick={() => openDetail(item, "查看服务版本、流量、探活和回滚入口。")}>查看</Button>]}> 
-                    <List.Item.Meta title={item} description={deploymentApproved ? "部署申请已提交" : "运行中 / KServe 占位"} />
-                    <Tag color={deploymentApproved ? "processing" : "green"}>{deploymentApproved ? "审批中" : "健康"}</Tag>
-                  </List.Item>
-                )}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} xl={12}>
-            <Card title="灰度策略">
-              <Steps direction="vertical" current={1} items={[{ title: "模型注册" }, { title: "灰度 10%" }, { title: "全量发布" }, { title: "边缘同步" }]} />
-            </Card>
-          </Col>
-        </Row>
+        <Card title="模型服务" extra={<Button aria-label="部署模型" type="primary" onClick={onDeploy}>部署模型</Button>} />
       </section>
-
       <section className="product-tile product-tile-dark compact-tile">
         <div className="tile-copy wide-copy">
           <Title level={2}>推理服务调用趋势</Title>
@@ -568,13 +531,7 @@ function InferencePage({ deploymentApproved, openModal, openDetail }: { deployme
         </div>
         <div className="inference-chart" role="img" aria-label="推理服务调用趋势图表">
           {inferenceMetrics.map((item) => (
-            <button
-              type="button"
-              key={item.label}
-              className="chart-bar"
-              style={{ height: `${Math.round((item.qps / maxQps) * 170)}px` }}
-              onClick={() => openDetail(`${item.label} 推理指标`, `QPS ${item.qps}，P95 延迟 ${item.latency}ms，成功率 ${item.success}%。`)}
-            >
+            <button key={item.label} type="button" className="chart-bar" style={{ height: `${Math.round((item.qps / maxQps) * 170)}px` }} onClick={() => openDetail(`${item.label} 推理指标`, `QPS ${item.qps}，P95 延迟 ${item.latency}ms，成功率 ${item.success}%。`)}>
               <span className="chart-value">{item.qps}</span>
               <span className="chart-label">{item.label}</span>
             </button>
@@ -589,53 +546,21 @@ function MonitoringPage({ openDetail }: { openDetail: (title: string, descriptio
   return (
     <section className="utility-grid-section">
       <Row gutter={[20, 20]}>
-        {["训练失败告警", "推理延迟升高", "边缘节点离线", "权限变更审计"].map((item, index) => (
-          <Col xs={24} md={12} key={item}>
-            <Card hoverable className="utility-card" onClick={() => openDetail(item, "查看指标、日志、Trace ID 和审计上下文。")}>
-              <Statistic title={item} value={[2, 128, 1, 6][index]} suffix={index === 1 ? "ms" : "条"} />
-            </Card>
-          </Col>
+        {["训练失败告警", "推理延迟升高", "边缘节点离线", "权限变更审计"].map((item) => (
+          <Col xs={24} md={12} key={item}><Card hoverable onClick={() => openDetail(item, "查看指标、日志、Trace ID 和审计上下文。")}><Statistic title={item} value={1} /></Card></Col>
         ))}
       </Row>
     </section>
   );
 }
 
-function GenericModulePage({ moduleKey, openDetail, openModal }: { moduleKey: ModuleKey; openDetail: (title: string, description: string) => void; openModal: (kind: ModalKind) => void }) {
+function GenericModulePage({ moduleKey, openDetail }: { moduleKey: ModuleKey; openDetail: (title: string, description: string) => void }) {
   const module = moduleItems.find((item) => item.key === moduleKey)!;
-  const actions: Array<{ label: string; kind: ModalKind }> = [
-    { label: "配置权限", kind: "permission" },
-    { label: "创建任务", kind: moduleKey === "edge" ? "edge" : moduleKey === "labeling" ? "labeling" : "training" },
-  ];
-
   return (
     <section className="utility-grid-section">
-      <Row gutter={[20, 20]}>
-        <Col xs={24} xl={14}>
-          <Card title={`${module.label}工作台`}>
-            <List
-              dataSource={["待处理", "进行中", "已完成"]}
-              renderItem={(item, index) => (
-                <List.Item actions={[<Button key="detail" onClick={() => openDetail(`${module.label} - ${item}`, "查看当前状态、负责人、时间线和下一步操作。")}>详情</Button>]}> 
-                  <List.Item.Meta title={`${module.label}${item}事项`} description={`原型记录 ${index + 1}`} />
-                  <Tag color={index === 0 ? "gold" : index === 1 ? "blue" : "green"}>{item}</Tag>
-                </List.Item>
-              )}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} xl={10}>
-          <Card title="模块操作">
-            <Space direction="vertical" className="full-width">
-              {actions.map((action) => (
-                <Button key={action.label} block onClick={() => openModal(action.kind)}>{action.label}</Button>
-              ))}
-              <Button block icon={<EyeOutlined />} onClick={() => openDetail(module.label, module.summary)}>查看原型说明</Button>
-              <Button block icon={<SettingOutlined />} onClick={() => openDetail("待确认配置", "真实环境值仍保持 TODO_CONFIRM_*，避免误填。")}>环境配置</Button>
-            </Space>
-          </Card>
-        </Col>
-      </Row>
+      <Card title={`${module.label}工作台`}>
+        <Button onClick={() => openDetail(module.label, module.summary)}>查看原型说明</Button>
+      </Card>
     </section>
   );
 }
