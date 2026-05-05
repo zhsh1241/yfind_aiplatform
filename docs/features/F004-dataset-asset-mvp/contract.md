@@ -6,7 +6,7 @@
 - Status: implemented
 - Owner: contract-architect
 - Created: 2026-05-04
-- Updated: 2026-05-04
+- Updated: 2026-05-05
 
 ## Requirement Summary
 - User goal: 为平台提供统一的数据资产中心，支持上传、版本、预览、申请审批与受控下载。
@@ -34,7 +34,7 @@
 - New contract surface added only because existing contracts cannot be reused:
   - 当前无正式数据集、版本、文件、申请审批与处理任务契约，必须新增
 - Compatibility / migration notes:
-  - 首版以内存数据为主，不承诺数据库兼容迁移；SQL 仅记录设计说明
+  - 当前为本地事件日志持久化，不承诺数据库兼容迁移；SQL 仅记录后续数据库化设计说明
 
 ## API Contract
 
@@ -121,4 +121,4 @@
 | 500 | Internal error | Internal error |
 
 ## Notes
-- 首版 contract 已以实际实现状态落地，后续若引入数据库或对象存储需更新版本。
+- 当前实现采用本地事件日志持久化恢复数据集变更，后续若引入真实数据库或对象存储需升级 contract 版本并补充迁移策略。

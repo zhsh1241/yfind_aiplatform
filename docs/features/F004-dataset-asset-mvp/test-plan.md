@@ -5,10 +5,11 @@
 - Status: completed
 - Contract: `docs/features/F004-dataset-asset-mvp/contract.md`
 - Trace Tag: `TASK-dataset-asset-mvp`
+- Updated: 2026-05-05
 
 ## Test Scope
 - 后端数据集列表、详情、上传、申请审批 API。
-- 后端 hash、去重策略、异步任务状态与权限分层输出。
+- 后端 hash、去重策略、异步任务状态、权限分层输出与本地事件日志回放。
 - 前端数据资产页搜索、上传弹窗、详情/预览、申请审批交互。
 
 ## Reuse Regression Focus
@@ -30,21 +31,23 @@
 | T3 | AC-01/AC-03 上传接口生成新版本并返回 hash/去重/任务状态 | MockMvc `POST /api/datasets/upload` |
 | T4 | AC-01/AC-02 审批接口将申请更新为 approved 并授予版本下载 | MockMvc `POST /api/datasets/access-requests/{id}/approve` |
 | T5 | AC-04 前端数据资产页面支持搜索、上传弹窗、申请与审批入口 | Vitest + Testing Library |
+| T6 | AC-03/AC-06 服务重启后通过本地事件日志回放恢复数据集状态 | JUnit `DatasetServicePersistenceTest` |
 
 ## P1
 | ID | Scenario | Verification |
 |----|----------|--------------|
-| T6 | AC-04 图片样例预览与非图片退化展示 | Vitest + Testing Library |
-| T7 | AC-05 既有 F003 交互继续通过 | Vitest 原有回归用例 |
-| T8 | AC-06 feature gate 通过 | `node tools/ai-scaffold/dist/cli.js gate --feature-dir docs/features/F004-dataset-asset-mvp` |
+| T7 | AC-04 图片样例预览与非图片退化展示 | Vitest + Testing Library |
+| T8 | AC-05 既有 F003 交互继续通过 | Vitest 原有回归用例 |
+| T9 | AC-04/AC-06 真实浏览器验证搜索、上传入口、申请审批闭环 | Playwright `frontend/e2e/dataset-asset.spec.ts` |
+| T10 | AC-06 feature gate 通过 | `node tools/ai-scaffold/dist/cli.js gate --feature-dir docs/features/F004-dataset-asset-mvp` |
 
 ## Traceability
 - AC-01 -> T1, T2, T3, T4
 - AC-02 -> T2, T4
-- AC-03 -> T3
-- AC-04 -> T5, T6
-- AC-05 -> T1, T2, T3, T4, T5, T6, T7
-- AC-06 -> T8
+- AC-03 -> T3, T6
+- AC-04 -> T5, T7, T9
+- AC-05 -> T1, T2, T3, T4, T5, T7, T8
+- AC-06 -> T6, T9, T10
 
 ## Execution Notes
 - Automated tests for this feature include `TASK-dataset-asset-mvp`.
@@ -52,4 +55,4 @@
 - SQL notes are stored under `docs/features/F004-dataset-asset-mvp/sql/`.
 - Backend: `mvn -f backend/pom.xml test`
 - Frontend: `Push-Location frontend; npm run lint; npm run test:ci; npm run build; Pop-Location`
-- E2E: 当前仓库仍使用 placeholder 命令，限制需在验证报告记录。
+- E2E: `Push-Location frontend; npm run e2e; Pop-Location`

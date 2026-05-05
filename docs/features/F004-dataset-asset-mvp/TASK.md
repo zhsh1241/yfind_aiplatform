@@ -8,7 +8,7 @@
 - 前置条件：`plan.md` 已批准（`plan_status: approved`）
 - Owner：codex
 - 创建日期：2026-05-04
-- 更新日期：2026-05-04
+- 更新日期：2026-05-05
 
 ## 1. 需求摘要
 
@@ -32,7 +32,7 @@
 - [x] 数据集级查看权限与版本级下载权限。
 - [x] 权限申请、审批与状态追踪。
 - [x] hash、去重策略、异步预处理任务状态展示。
-- [x] 后端存储接口抽象，默认本地文件系统实现。
+- [x] 后端最小持久化落地（本地事件日志回放），并保留后续本地文件系统 / 对象存储演进方向。
 
 ### Out of Scope
 
@@ -93,7 +93,7 @@
 - [x] 复用审查已完成，并在 `Reuse Plan` 中记录复用与新增 seam 原因
 - [x] 新增功能所需数据权限已复用 `dataset:read` / `dataset:manage`
 - [x] 前端变更已补充自动化测试
-- [x] Playwright 本轮仍使用 placeholder 命令，限制已在验证报告说明
+- [x] Playwright 已补充真实端到端浏览器用例，覆盖搜索、上传入口、申请与审批闭环
 - [x] 合并前通过 `node tools/ai-scaffold/dist/cli.js gate --feature-dir docs/features/F004-dataset-asset-mvp`
 
 ## 5. Dependencies
@@ -124,9 +124,9 @@
 | 需求分析 | completed | codex | 已完成 deep-interview 与 plan 收敛 |
 | 契约冻结 | completed | codex | contract 已回填并实现落地 |
 | 测试计划 | completed | codex | test-plan 已覆盖全部 AC |
-| 后端开发 | completed | codex | 数据集 API 与 MockMvc 测试完成 |
-| 前端开发 | completed | codex | 数据资产页交互增强与 Vitest 覆盖完成 |
-| 联调检查 | completed | codex | 通过本地 gate 验证 |
+| 后端开发 | completed | codex | 数据集 API、事件日志持久化与测试完成 |
+| 前端开发 | completed | codex | 数据资产页交互增强、Vitest 与 Playwright 覆盖完成 |
+| 联调检查 | completed | codex | 通过本地 gate 与真实 E2E 验证 |
 | 代码审查 | completed | codex | `reports/code-review-report.md` 已落档，Verdict: PASS |
 | QA验收 | completed | codex | lint/test/build/gate 通过 |
 
@@ -145,7 +145,7 @@
 
 ### Decisions
 
-- 采用内存型 MVP 数据服务，优先验证领域边界与交互闭环。
+- 采用本地事件日志持久化 + 启动回放，先在不引入数据库前提下解决状态丢失。
 - 采用存储接口抽象 + 默认本地文件系统策略，避免对象存储环境前置阻塞。
 - 图片预览作为首版保证能力，其他类型文件统一退化为元数据展示。
 

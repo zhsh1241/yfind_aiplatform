@@ -14,7 +14,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import java.util.UUID;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -29,6 +32,11 @@ class DatasetControllerTest {
 
   @Autowired
   private MockMvc mockMvc;
+
+  @DynamicPropertySource
+  static void datasetProperties(DynamicPropertyRegistry registry) {
+    registry.add("dataset.storage.event-log", () -> System.getProperty("java.io.tmpdir") + "/yfind-dataset-events-" + UUID.randomUUID() + ".jsonl");
+  }
 
   @Test
   @DisplayName("TASK-dataset-asset-mvp AC-01 lists dataset summaries with permissions")

@@ -6,7 +6,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -18,8 +17,10 @@ public class DatasetService {
 
   private final List<DatasetRecord> datasets = new ArrayList<>();
   private final LocalDatasetStorage storage = new LocalDatasetStorage();
+  private final DatasetEventStore eventStore;
 
-  public DatasetService() {
+  public DatasetService(DatasetEventStore eventStore) {
+    this.eventStore = eventStore;
     datasets.add(DatasetRecord.seed(
       "motor-thermal",
       "电机温升异常图像集",
@@ -64,6 +65,8 @@ public class DatasetService {
       List.of(),
       List.of(ProcessingJobRecord.create("job-2101", "HASH_SCAN", "RUNNING", "WARN_DUPLICATE", "正在扫描重复音频文件"))
     ));
+
+    eventStore.load().forEach(this::applyEvent);
   }
 
   public DatasetListResponse list(String query, String status) {
@@ -86,8 +89,56 @@ public class DatasetService {
   public DatasetUploadResponse upload(DatasetUploadRequest request) {
     validateUpload(request);
     String datasetKey = toDatasetKey(request.datasetName());
-    DatasetRecord existing = datasets.stream().filter(record -> record.key().equals(datasetKey)).findFirst().orElse(null);
-    List<FileRecord> uploadedFiles = request.files().stream()
+    eventStore.append(DatasetMutationEvent.upload(datasetKey, request));
+    applyEvent(DatasetMutationEvent.upload(datasetKey, request));
+    DatasetRecord dataset = find(datasetKey);
+    String versionKey = dataset.versions().get(0).versionKey();
+    return new DatasetUploadResponse(datasetKey, versionKey, "SKIP_DUPLICATE", "QUEUED", FEATURE_TRACE);
+  }
+
+  public DatasetAccessRequestActionResponse createAccessRequest(String datasetKey, DatasetAccessRequestCreateRequest request) {
+    find(datasetKey);
+    String requestId = UUID.randomUUID().toString();
+    DatasetMutationEvent event = DatasetMutationEvent.accessRequestCreated(datasetKey, requestId, request, DEFAULT_REQUESTER);
+    eventStore.append(event);
+    applyEvent(event);
+    return new DatasetAccessRequestActionResponse(requestId, "PENDING", request.versionKey(), false, FEATURE_TRACE);
+  }
+
+  public DatasetAccessRequestActionResponse approve(String requestId) {
+    if (datasets.stream().flatMap(dataset -> dataset.accessRequests().stream()).noneMatch(request -> request.requestId().equals(requestId))) {
+      throw new DatasetNotFoundException("未找到访问申请: " + requestId);
+    }
+    eventStore.append(DatasetMutationEvent.accessRequestApproved(requestId));
+    return applyApproveEvent(requestId);
+  }
+
+  public DatasetAccessRequestListResponse listRequests() {
+    List<DatasetAccessRequestSummary> items = datasets.stream()
+      .flatMap(dataset -> dataset.accessRequests().stream())
+      .sorted(Comparator.comparing(AccessRequestRecord::requestId).reversed())
+      .map(this::toRequestSummary)
+      .toList();
+    return new DatasetAccessRequestListResponse(items, FEATURE_TRACE);
+  }
+
+  private void applyEvent(DatasetMutationEvent event) {
+    if ("UPLOAD".equals(event.type())) {
+      applyUploadEvent(event);
+      return;
+    }
+    if ("ACCESS_REQUEST_CREATED".equals(event.type())) {
+      applyAccessRequestCreatedEvent(event);
+      return;
+    }
+    if ("ACCESS_REQUEST_APPROVED".equals(event.type())) {
+      applyApproveEvent(event.requestId());
+    }
+  }
+
+  private void applyUploadEvent(DatasetMutationEvent event) {
+    DatasetRecord existing = datasets.stream().filter(record -> record.key().equals(event.datasetKey())).findFirst().orElse(null);
+    List<FileRecord> uploadedFiles = event.files().stream()
       .map(file -> new FileRecord(
         UUID.randomUUID().toString(),
         file.name(),
@@ -100,17 +151,16 @@ public class DatasetService {
       ))
       .toList();
 
-    String versionKey;
     if (existing == null) {
-      versionKey = datasetKey + "-v1";
+      String versionKey = event.datasetKey() + "-v1";
       DatasetRecord created = DatasetRecord.seed(
-        datasetKey,
-        request.datasetName(),
-        request.owner(),
+        event.datasetKey(),
+        event.datasetName(),
+        event.owner(),
         "ACTIVE",
         previewType(uploadedFiles),
         "由上传接口创建的数据集",
-        request.tags() == null ? List.of() : request.tags(),
+        event.tags() == null ? List.of() : event.tags(),
         true,
         true,
         List.of(VersionRecord.create(versionKey, "v1", "AVAILABLE", uploadedFiles.size(), uploadedFiles.size(), false, "SKIP_DUPLICATE", "QUEUED")),
@@ -119,34 +169,31 @@ public class DatasetService {
         List.of(ProcessingJobRecord.create(UUID.randomUUID().toString(), "METADATA_SCAN", "QUEUED", "SKIP_DUPLICATE", "等待异步预处理"))
       );
       datasets.add(created);
-    } else {
-      int nextVersion = existing.versions().size() + 1;
-      versionKey = datasetKey + "-v" + nextVersion;
-      existing.versions().add(0, VersionRecord.create(versionKey, "v" + nextVersion, "AVAILABLE", uploadedFiles.size(), uploadedFiles.size(), false, "SKIP_DUPLICATE", "QUEUED"));
-      existing.files().addAll(0, uploadedFiles);
-      existing.processingJobs().add(0, ProcessingJobRecord.create(UUID.randomUUID().toString(), "METADATA_SCAN", "QUEUED", "SKIP_DUPLICATE", "等待异步预处理"));
-      existing.status = "ACTIVE";
+      return;
     }
 
-    return new DatasetUploadResponse(datasetKey, versionKey, "SKIP_DUPLICATE", "QUEUED", FEATURE_TRACE);
+    int nextVersion = existing.versions().size() + 1;
+    String versionKey = event.datasetKey() + "-v" + nextVersion;
+    existing.versions().add(0, VersionRecord.create(versionKey, "v" + nextVersion, "AVAILABLE", uploadedFiles.size(), uploadedFiles.size(), false, "SKIP_DUPLICATE", "QUEUED"));
+    existing.files().addAll(0, uploadedFiles);
+    existing.processingJobs().add(0, ProcessingJobRecord.create(UUID.randomUUID().toString(), "METADATA_SCAN", "QUEUED", "SKIP_DUPLICATE", "等待异步预处理"));
+    existing.status = "ACTIVE";
   }
 
-  public DatasetAccessRequestActionResponse createAccessRequest(String datasetKey, DatasetAccessRequestCreateRequest request) {
-    DatasetRecord dataset = find(datasetKey);
-    String requestId = UUID.randomUUID().toString();
+  private void applyAccessRequestCreatedEvent(DatasetMutationEvent event) {
+    DatasetRecord dataset = find(event.datasetKey());
     dataset.accessRequests().add(0, AccessRequestRecord.create(
-      requestId,
-      request.requester() == null || request.requester().isBlank() ? DEFAULT_REQUESTER : request.requester(),
-      datasetKey,
-      request.versionKey(),
+      event.requestId(),
+      event.requester(),
+      event.datasetKey(),
+      event.versionKey(),
       "PENDING",
-      request.reason(),
+      event.reason(),
       null
     ));
-    return new DatasetAccessRequestActionResponse(requestId, "PENDING", request.versionKey(), false, FEATURE_TRACE);
   }
 
-  public DatasetAccessRequestActionResponse approve(String requestId) {
+  private DatasetAccessRequestActionResponse applyApproveEvent(String requestId) {
     for (DatasetRecord dataset : datasets) {
       for (AccessRequestRecord request : dataset.accessRequests()) {
         if (request.requestId().equals(requestId)) {
@@ -161,15 +208,6 @@ public class DatasetService {
       }
     }
     throw new DatasetNotFoundException("未找到访问申请: " + requestId);
-  }
-
-  public DatasetAccessRequestListResponse listRequests() {
-    List<DatasetAccessRequestSummary> items = datasets.stream()
-      .flatMap(dataset -> dataset.accessRequests().stream())
-      .sorted(Comparator.comparing(AccessRequestRecord::requestId).reversed())
-      .map(this::toRequestSummary)
-      .toList();
-    return new DatasetAccessRequestListResponse(items, FEATURE_TRACE);
   }
 
   private void validateUpload(DatasetUploadRequest request) {
