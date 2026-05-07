@@ -1,4 +1,4 @@
-﻿# Project Guide: yfind_aiplatform
+# Project Guide: yfind_aiplatform
 
 This repository hosts the YFI Industrial AI Small Model Platform. The project is planned as a 6-month MVP for a private Kubernetes environment, using mature AI/MLOps components for platform capabilities and custom application code for business workflow, governance, permissions, and audit.
 
@@ -87,6 +87,17 @@ Configured backend commands, executed from `backend/`:
 - Test: `mvn test -q`
 - Verify: `mvn verify`
 - Verify without integration: `mvn verify -DskipITs=true`
+
+> å½åæºå¨é»è®¤ `mvn` å¯è½ä»ä½¿ç¨ Java 8ï¼è¿è¡ `backend/` å½ä»¤åè¯·åå¨ PowerShell ä¼è¯åæ¢ï¼
+>
+> ```powershell
+> $env:JAVA_HOME='C:\java\jdk-21.0.6'
+> $env:Path="C:\java\jdk-21.0.6\bin;" + [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
+> java -version
+> mvn -version
+> ```
+>
+> ç¡®è®¤ä¸¤èé½æ¾ç¤º `21.0.6` ååè¿è¡ compile / test / verify / gateã
 
 Configured AI adapter commands, executed from `ai-adapter/`:
 
@@ -188,8 +199,6 @@ Before closing a feature:
 - PostgreSQL, Redis, object storage, SSO, Kubernetes, model registry, inference, and edge environments are not confirmed.
 - CI provider is not confirmed.
 - Real test accounts and E2E tenant values are not confirmed.
-- The default system Java may be Java 8 on this machine; backend verification for Java 21 uses `JAVA_HOME=C:\Java\jdk-21.0.6`.
+- The default system `java` and `mvn` on this machine currently resolve to Java 8; backend verification must first switch the session to `C:\java\jdk-21.0.6`.
 
 These gaps are expected before domain features. Do not replace `TODO_CONFIRM_*` placeholders with guesses.
-
-

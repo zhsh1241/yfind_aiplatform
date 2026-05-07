@@ -1,4 +1,4 @@
-﻿# yfind_aiplatform
+# yfind_aiplatform
 
 AI platform project workspace.
 
@@ -40,6 +40,26 @@ node tools/ai-scaffold/dist/cli.js sync-codex
 npm --prefix tools/ai-scaffold test
 ```
 
+## æ¬æº Java 21 ç¯å¢
+
+å½åæºå¨é»è®¤ `java` / `mvn` å¯è½æå **Java 8**ï¼è `backend/` éè¦ **Java 21**ãè¿è¡ backend verify æ gate åï¼è¯·åå¨å½å PowerShell ä¼è¯åæ¢å° JDK 21ï¼
+
+```powershell
+$env:JAVA_HOME='C:\java\jdk-21.0.6'
+$env:Path="C:\java\jdk-21.0.6\bin;" + [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
+java -version
+mvn -version
+```
+
+ç¡®è®¤ `java -version` å `mvn -version` åæ¾ç¤º **21.0.6**ï¼ä¸è¦æ¾ç¤º `1.8.x`ã
+
+å¸¸ç¨éªè¯å½ä»¤ï¼
+
+```powershell
+mvn -f backend\pom.xml test -q
+mvn -f backend\pom.xml verify -DskipITs=true
+```
+
 Create a feature artifact:
 
 ```powershell
@@ -66,8 +86,8 @@ Fill confirmed values in `ai-scaffold.config.json` and mirror the same facts in 
 ## Backend / frontend smoke
 
 ```powershell
-$env:JAVA_HOME = "C:\Java\jdk-21.0.6"
-$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+$env:JAVA_HOME='C:\java\jdk-21.0.6'
+$env:Path="C:\java\jdk-21.0.6\bin;" + [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
 mvn -f backend\pom.xml verify -DskipITs=true
 
 Push-Location ai-adapter
@@ -83,5 +103,3 @@ npm run build
 npm run e2e
 Pop-Location
 ```
-
-

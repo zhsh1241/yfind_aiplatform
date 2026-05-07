@@ -100,7 +100,7 @@ export const frontendUser = {
   organization: "YFI 智造中心（本地占位）",
   authMethod: "LOCAL_DEV_PRINCIPAL",
   iamProvider: "TODO_CONFIRM_IAM_PROVIDER",
-  permissions: ["identity:role:manage", "dataset:manage", "inference:deploy", "audit:read"],
+  permissions: ["identity:role:manage", "dataset:manage", "training:execute", "model:manage", "inference:deploy", "audit:read"],
 };
 
 export const moduleRequiredPermissions: Record<ModuleKey, string> = {
@@ -120,9 +120,106 @@ export function makeDetail(title: string, description: string): Detail {
     title,
     description,
     items: [
-      { label: "原型状态", value: "已接入点击反馈" },
-      { label: "真实接口", value: "后续 feature 接入" },
+      { label: "运行状态", value: "已接入后端 API 与数据库持久化" },
+      { label: "数据来源", value: "优先读取后端服务；后端不可用时使用本地 fallback" },
+      { label: "外部依赖", value: "SSO、对象存储、KServe、边缘 agent 等仍保留 TODO_CONFIRM_* 占位" },
       { label: "设计语言", value: "Apple 风格：低 chrome、单一蓝色交互、满屏产品 tile" },
     ],
   };
 }
+
+export type ModelMetric = {
+  name: string;
+  value: string;
+};
+
+export type ModelVersion = {
+  key: string;
+  name: string;
+  trainingJobKey: string;
+  artifactUri: string;
+  checksum: string;
+  status: string;
+  approvalStatus: string;
+  deployable: boolean;
+  metrics: ModelMetric[];
+  approvedBy?: string;
+  rejectReason?: string;
+};
+
+export type RegistryModel = {
+  key: string;
+  name: string;
+  domain: string;
+  owner: string;
+  description: string;
+  versions: ModelVersion[];
+};
+
+export const registryModels: RegistryModel[] = [
+  {
+    key: "bearing-defect-detector",
+    name: "轴承缺陷检测模型",
+    domain: "视觉质检",
+    owner: "算法组",
+    description: "承接 F005 train-bearing-v1 的轻量视觉缺陷检测模型",
+    versions: [
+      {
+        key: "bearing-defect-detector-v1",
+        name: "v1.0.0",
+        trainingJobKey: "train-bearing-v1",
+        artifactUri: "TODO_CONFIRM_MODEL_ARTIFACT_URI/train-bearing-v1",
+        checksum: "sha256:train-bearing-v1",
+        status: "APPROVED",
+        approvalStatus: "APPROVED",
+        deployable: true,
+        metrics: [
+          { name: "accuracy", value: "90%" },
+          { name: "latency", value: "42ms" },
+          { name: "modelSize", value: "18.5MB" },
+        ],
+        approvedBy: "local.admin",
+      },
+      {
+        key: "bearing-defect-detector-v0",
+        name: "v0.9.0",
+        trainingJobKey: "train-audio-poc",
+        artifactUri: "TODO_CONFIRM_MODEL_ARTIFACT_URI/train-audio-poc",
+        checksum: "sha256:train-audio-poc",
+        status: "REJECTED",
+        approvalStatus: "REJECTED",
+        deployable: false,
+        metrics: [
+          { name: "accuracy", value: "71%" },
+          { name: "latency", value: "61ms" },
+          { name: "modelSize", value: "24.1MB" },
+        ],
+        rejectReason: "accuracy 低于 MVP 示例阈值",
+      },
+    ],
+  },
+  {
+    key: "audio-anomaly-lite",
+    name: "声音异常检测模型",
+    domain: "预测性维护",
+    owner: "设备组",
+    description: "承接 F005 声音异常检测 PoC 的轻量音频模型",
+    versions: [
+      {
+        key: "audio-anomaly-lite-v1",
+        name: "v1.0.0-rc1",
+        trainingJobKey: "train-audio-poc",
+        artifactUri: "TODO_CONFIRM_MODEL_ARTIFACT_URI/train-audio-poc",
+        checksum: "sha256:audio-anomaly-lite-v1",
+        status: "APPROVAL_PENDING",
+        approvalStatus: "APPROVAL_PENDING",
+        deployable: false,
+        metrics: [
+          { name: "accuracy", value: "84%" },
+          { name: "latency", value: "55ms" },
+          { name: "modelSize", value: "11.2MB" },
+        ],
+      },
+    ],
+  },
+];

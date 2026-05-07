@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: yfind-aiplatform-postgres
+    environment:
+      POSTGRES_DB: yfind_aiplatform
+      POSTGRES_USER: yfind
+      POSTGRES_PASSWORD: yfind_local_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - yfind_aiplatform_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yfind -d yfind_aiplatform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  yfind_aiplatform_pgdata:

@@ -1,5 +1,6 @@
 ﻿node_modules/
 dist/
+backend/data/
 .omx/
 .codex/tasks/tmp/
 .codex/worktrees/*

@@ -1,6 +1,14 @@
 spring:
   application:
     name: yfind-aiplatform-backend
+  datasource:
+    url: ${POSTGRES_JDBC_URL:jdbc:h2:file:./data/yfind-aiplatform;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE}
+    driver-class-name: ${DB_DRIVER:org.h2.Driver}
+    username: ${POSTGRES_USER:sa}
+    password: ${POSTGRES_PASSWORD:}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
 
 server:
   port: 8080

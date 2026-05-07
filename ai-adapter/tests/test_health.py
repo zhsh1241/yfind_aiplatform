@@ -42,6 +42,30 @@ class HealthApiTest(unittest.TestCase):
         self.assertTrue(all(item["status"] == "pending-confirmation" for item in capabilities))
         self.assertTrue(all(item["endpoint"].startswith("TODO_CONFIRM_") for item in capabilities))
 
+    def test_training_templates_are_exposed_for_f005(self) -> None:
+        response = self.client.get("/internal/training/templates")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("small-cnn-vision", {item["template_key"] for item in response.json()})
+
+    def test_training_submit_returns_placeholder_adapter_submission(self) -> None:
+        response = self.client.post(
+            "/internal/training/submit",
+            json={
+                "job_key": "train-bearing-v1",
+                "dataset_key": "motor-thermal",
+                "dataset_version_key": "motor-thermal-v3",
+                "template_key": "small-cnn-vision",
+                "accelerator": "GPU",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["submission_id"], "adapter-sim-train-bearing-v1")
+        self.assertEqual(payload["feature"], "TASK-training-job-mvp")
+        self.assertTrue(payload["artifact_root"].startswith("TODO_CONFIRM_MODEL_ARTIFACT_URI"))
+
 
 if __name__ == "__main__":
     unittest.main()
