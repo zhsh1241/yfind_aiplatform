@@ -2,8 +2,10 @@
 import type { ColumnsType } from "antd/es/table";
 import { useEffect, useMemo, useState } from "react";
 import {
+  approveBackendIdentityRequest,
   approveIdentityRequest,
   loadIdentity,
+  loginWithApprovedAuthorization,
   restoreIdentitySession,
   signOutIdentitySession,
   type loadIdentity as LoadIdentityType,
@@ -65,6 +67,13 @@ export default function IdentityPage({ modules, openDetail, onOpenPermission }: 
   };
 
   const handleApprove = async (requestId: string) => {
+    if (identity.source === "backend") {
+      await approveBackendIdentityRequest(requestId);
+      await loginWithApprovedAuthorization(requestId);
+      await refreshIdentity();
+      void message.success("已批准授权并切换到目标登录态");
+      return;
+    }
     const result = approveIdentityRequest(requestId, identity.user.username);
     if (!result) return;
     await refreshIdentity();

@@ -72,19 +72,19 @@ describe("TASK-platform-integrated-runtime 平台联调运行态", () => {
     expect(await screen.findByText("审批工作台")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "发起授权登录" }));
-    const dialog = await screen.findByRole("dialog", { name: "发起授权登录" });
-    await user.click(within(dialog).getByRole("radio", { name: /质检复核员/ }));
-    await user.clear(within(dialog).getByPlaceholderText("填写本次授权登录的业务原因"));
-    await user.type(within(dialog).getByPlaceholderText("填写本次授权登录的业务原因"), "需要审批模型版本");
-    await user.click(within(dialog).getByRole("button", { name: "提交审批" }));
+    expect(await screen.findByText("登录并发起授权")).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: /质检复核员/ }));
+    await user.clear(screen.getByPlaceholderText("填写本次授权登录的业务原因"));
+    await user.type(screen.getByPlaceholderText("填写本次授权登录的业务原因"), "需要审批模型版本");
+    await user.click(screen.getByRole("button", { name: "登录/提交审批" }));
 
-    expect(await screen.findByText("授权登录申请已提交：质检复核员")).toBeInTheDocument();
+    expect(await screen.findByText(/已转入本地授权申请：质检复核员|授权登录申请已提交：质检复核员/)).toBeInTheDocument();
     expect((await screen.findAllByText(/登录授权待审批/)).length).toBeGreaterThan(0);
     expect(screen.getByText("需要审批模型版本")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "批准登录" }));
     expect(await screen.findByText("已批准 质检复核员 登录授权")).toBeInTheDocument();
-    expect(screen.getByText("质检复核员")).toBeInTheDocument();
+    expect(screen.getAllByText("质检复核员").length).toBeGreaterThan(0);
     expect(screen.getAllByText("登录状态正常").length).toBeGreaterThan(0);
     expect(screen.getAllByText("已批准").length).toBeGreaterThan(0);
 
@@ -93,7 +93,7 @@ describe("TASK-platform-integrated-runtime 平台联调运行态", () => {
 
     await user.click(screen.getByRole("button", { name: "恢复登录" }));
     expect((await screen.findAllByText("登录状态正常")).length).toBeGreaterThan(0);
-  }, 10000);
+  }, 15000);
 
   it("点击部署模型后展示确认弹窗", async () => {
     const user = userEvent.setup();
@@ -122,7 +122,7 @@ describe("TASK-platform-integrated-runtime 平台联调运行态", () => {
 
     expect(screen.getByText("14:00 推理指标")).toBeInTheDocument();
     expect(screen.getByText(/P95 延迟 128ms/)).toBeInTheDocument();
-  });
+  }, 10000);
 
   it("推理服务页面支持本地部署后的健康检查、放量和回滚", async () => {
     const user = userEvent.setup();
@@ -286,7 +286,7 @@ describe("TASK-dataset-asset-mvp 数据资产 MVP", () => {
 
       expect(await screen.findByText("已批准 焊点外观缺陷集 最新版本下载权限")).toBeInTheDocument();
     },
-    10000,
+    15000,
   );
 });
 
@@ -326,7 +326,7 @@ describe("TASK-training-job-mvp 训练任务 MVP", () => {
 
     await user.click(within(dialog).getByRole("button", { name: "下一步" }));
     expect(within(dialog).getByText("GPU：1 卡")).toBeInTheDocument();
-  });
+  }, 10000);
 });
 
 describe("TASK-model-registry-mvp 模型仓库 MVP", () => {

@@ -41,3 +41,31 @@
 - 角色、权限、审计事件暂为服务内 MVP 基线数据，未写入 PostgreSQL。
 - 本地 E2E 仍使用 F001 placeholder；真实 Playwright 场景应在后续 UI feature 中补齐。
 - 按当前系统限制，本轮未启动独立 code-review 子代理；门禁使用 `--skip-code-review-verdict`，合并前应补一次正式代码审查报告。
+
+## 2026-05-07 生产可用登录授权加固
+
+### 新增能力
+
+- 后端新增 `BACKEND_SESSION_TOKEN` 登录会话，`POST /api/auth/login` 成功后签发 32 字节随机 Bearer Token，过期时间为 8 小时。
+- `GET /api/auth/me`、数据资产、训练、模型仓库等关键 API 不再接受硬编码本地开发 Token，统一通过后端会话解析当前用户并按权限默认拒绝。
+- 新增授权申请闭环：提交授权申请、管理员审批、使用已批准申请切换登录态；授权事件写入 `platform_domain_events`，可随数据库持久化。
+- 前端组织权限页改为真实登录 + 授权申请入口；所有业务 API 客户端统一从 `authSession` 获取 Bearer Token。
+
+### 内置启动账号
+
+| 账号 | 默认密码来源 | 角色 | 用途 |
+| --- | --- | --- | --- |
+| `admin@yfind.local` | `YFIND_BOOTSTRAP_ADMIN_PASSWORD`，未设置时测试默认 `admin123!` | `platform-admin` | 初始平台管理员、审批授权 |
+| `reviewer@yfind.local` | `YFIND_BOOTSTRAP_REVIEWER_PASSWORD`，未设置时测试默认 `reviewer123!` | `quality-reviewer` | 数据/标注/模型审批复核 |
+| `engineer@yfind.local` | `YFIND_BOOTSTRAP_ENGINEER_PASSWORD`，未设置时测试默认 `engineer123!` | `algorithm-engineer` | 训练与模型读取 |
+
+生产部署必须通过环境变量覆盖默认密码；默认密码仅用于本地自动化测试和无外部 IAM 的演示环境。
+
+### 本轮回归验证
+
+| 命令 | 结果 | 说明 |
+| --- | --- | --- |
+| `mvn test -q` | 通过 | 覆盖登录、未授权 401、授权审批、数据/训练/模型权限拒绝。 |
+| `npm run lint` | 通过 | 前端静态检查通过。 |
+| `npx vitest run src/api/platformApis.test.ts src/api/modelRegistryApi.test.ts --config vitest.config.ts --reporter verbose` | 通过 | API 客户端 Bearer Token 头回归。 |
+| `npx vitest run src/App.test.tsx --config vitest.config.ts --testNamePattern "组织权限页面支持" --reporter verbose` | 通过 | 授权登录、审批、切换登录态 UI 回归。 |

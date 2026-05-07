@@ -24,8 +24,9 @@ import { addSimulatedTrainingJob, markDatasetDownloadGranted, setSimulatedInfere
 import { createTrainingJobSimulation } from "./api/trainingApi";
 import type { UploadDatasetFormValue } from "./modals/UploadDatasetModal";
 import type { DatasetRequestFormValue } from "./modals/DatasetRequestModal";
+import PermissionModal from "./modals/PermissionModal";
 import type { TrainingFormValue } from "./modals/TrainingModal";
-import { createIdentityApprovalRequest } from "./api/identityApi";
+import { createBackendIdentityApprovalRequest, createIdentityApprovalRequest, loginWithPassword } from "./api/identityApi";
 import type { IdentityProfileKey } from "./simulationStore";
 
 const { Title, Paragraph, Text } = Typography;
@@ -43,7 +44,6 @@ const GenericModulePage = lazy(() => import("./pages/GenericModulePage"));
 const UploadDatasetModal = lazy(() => import("./modals/UploadDatasetModal"));
 const TrainingModal = lazy(() => import("./modals/TrainingModal"));
 const DeployModal = lazy(() => import("./modals/DeployModal"));
-const PermissionModal = lazy(() => import("./modals/PermissionModal"));
 const DatasetRequestModal = lazy(() => import("./modals/DatasetRequestModal"));
 const DatasetApproveModal = lazy(() => import("./modals/DatasetApproveModal"));
 
@@ -241,10 +241,18 @@ function PlatformApp() {
       .finally(() => closeModal());
   };
 
-  const handlePermissionSwitch = (payload: { profileKey: IdentityProfileKey; reason: string }) => {
-    const request = createIdentityApprovalRequest({ requestedRole: payload.profileKey, reason: payload.reason }, "local.admin");
-    notify(`授权登录申请已提交：${request.requestedRoleLabel}`);
-    closeModal();
+  const handlePermissionSwitch = (payload: { profileKey: IdentityProfileKey; reason: string; username: string; password: string }) => {
+    void loginWithPassword(payload.username, payload.password)
+      .then(() => createBackendIdentityApprovalRequest({ requestedRole: payload.profileKey, reason: payload.reason }))
+      .then((request) => {
+        notify(`授权登录申请已提交：${request.requestedRoleLabel}`);
+        closeModal();
+      })
+      .catch(() => {
+        const request = createIdentityApprovalRequest({ requestedRole: payload.profileKey, reason: payload.reason }, payload.username || "local.admin");
+        notify(`后端登录不可用，已转入本地授权申请：${request.requestedRoleLabel}`);
+        closeModal();
+      });
   };
 
   const datasetColumns: ColumnsType<Dataset> = [

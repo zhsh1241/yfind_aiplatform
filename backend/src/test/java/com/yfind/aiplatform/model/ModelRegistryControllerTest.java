@@ -20,7 +20,19 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 class ModelRegistryControllerTest {
 
-  private static final String AUTHORIZATION = "Bearer " + ModelRegistryAuthorizationService.LOCAL_DEV_TOKEN;
+  private String authorization() throws Exception {
+    String token = com.jayway.jsonpath.JsonPath.read(
+      mockMvc.perform(post("/api/auth/login")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content("{\"username\":\"admin@yfind.local\",\"password\":\"admin123!\"}"))
+        .andExpect(status().isOk())
+        .andReturn()
+        .getResponse()
+        .getContentAsString(),
+      "$.accessToken"
+    );
+    return "Bearer " + token;
+  }
 
   @Autowired
   private MockMvc mockMvc;
@@ -28,7 +40,7 @@ class ModelRegistryControllerTest {
   @Test
   @DisplayName("TASK-model-registry-mvp AC-01 AC-04 lists models with read permission trace")
   void listModels() throws Exception {
-    mockMvc.perform(get("/api/models").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(get("/api/models").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.featureTrace", is("TASK-model-registry-mvp")))
       .andExpect(jsonPath("$.items[0].permission", is("model:read")))
@@ -38,7 +50,7 @@ class ModelRegistryControllerTest {
   @Test
   @DisplayName("TASK-model-registry-mvp AC-02 AC-03 detail includes lineage metrics checksum and deployable")
   void detailIncludesVersionLineageAndMetrics() throws Exception {
-    mockMvc.perform(get("/api/models/bearing-defect-detector").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(get("/api/models/bearing-defect-detector").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.featureTrace", is("TASK-model-registry-mvp")))
       .andExpect(jsonPath("$.versions[*].trainingJobKey", hasItem("train-bearing-v1")))
@@ -64,7 +76,7 @@ class ModelRegistryControllerTest {
       """;
 
     mockMvc.perform(post("/api/models/bearing-defect-detector/versions")
-        .header("Authorization", AUTHORIZATION)
+        .header("Authorization", authorization())
         .contentType(MediaType.APPLICATION_JSON)
         .content(payload))
       .andExpect(status().isOk())
@@ -77,7 +89,7 @@ class ModelRegistryControllerTest {
   @Test
   @DisplayName("TASK-model-registry-mvp AC-01 AC-03 approves version as deployable")
   void approveVersion() throws Exception {
-    mockMvc.perform(post("/api/models/bearing-defect-detector/versions/bearing-defect-detector-v0/approve").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(post("/api/models/bearing-defect-detector/versions/bearing-defect-detector-v0/approve").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.status", is("APPROVED")))
       .andExpect(jsonPath("$.approvalStatus", is("APPROVED")))
@@ -87,12 +99,12 @@ class ModelRegistryControllerTest {
   @Test
   @DisplayName("TASK-model-registry-mvp AC-01 AC-03 rejects and archives version as not deployable")
   void rejectAndArchiveVersion() throws Exception {
-    mockMvc.perform(post("/api/models/audio-anomaly-lite/versions/audio-anomaly-lite-v1/reject").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(post("/api/models/audio-anomaly-lite/versions/audio-anomaly-lite-v1/reject").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.status", is("REJECTED")))
       .andExpect(jsonPath("$.deployable", is(false)));
 
-    mockMvc.perform(post("/api/models/audio-anomaly-lite/versions/audio-anomaly-lite-v1/archive").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(post("/api/models/audio-anomaly-lite/versions/audio-anomaly-lite-v1/archive").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.status", is("ARCHIVED")))
       .andExpect(jsonPath("$.deployable", is(false)));
@@ -105,9 +117,19 @@ class ModelRegistryControllerTest {
       .andExpect(status().isUnauthorized())
       .andExpect(jsonPath("$.errorCode", is("AUTH_UNAUTHORIZED")));
 
+    String token = com.jayway.jsonpath.JsonPath.read(
+      mockMvc.perform(post("/api/auth/login")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content("{\"username\":\"engineer@yfind.local\",\"password\":\"engineer123!\"}"))
+        .andExpect(status().isOk())
+        .andReturn()
+        .getResponse()
+        .getContentAsString(),
+      "$.accessToken"
+    );
+
     mockMvc.perform(post("/api/models/bearing-defect-detector/versions/bearing-defect-detector-v1/approve")
-        .header("Authorization", AUTHORIZATION)
-        .header("X-Platform-Permissions", "model:read"))
+        .header("Authorization", "Bearer " + token))
       .andExpect(status().isForbidden())
       .andExpect(jsonPath("$.errorCode", is("MODEL_FORBIDDEN")));
   }
@@ -115,7 +137,7 @@ class ModelRegistryControllerTest {
   @Test
   @DisplayName("TASK-model-registry-mvp AC-03 AC-07 lists deployable model versions")
   void listDeployableModels() throws Exception {
-    mockMvc.perform(get("/api/models/deployable").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(get("/api/models/deployable").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.items[0].deployable", is(true)))
       .andExpect(jsonPath("$.items[0].latestVersionKey", notNullValue()));

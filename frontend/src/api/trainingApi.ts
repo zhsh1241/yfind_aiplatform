@@ -1,5 +1,6 @@
-﻿const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8080";
-const TRAINING_HEADERS = { Authorization: "Bearer LOCAL_DEV_TOKEN", "X-Platform-Permissions": "training:read,training:execute,training:manage" };
+﻿import { authHeaders } from "./authSession";
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8080";
 
 type TrainingJobListResponse = { items: TrainingJobSummaryResponse[]; featureTrace: string };
 type TrainingJobSummaryResponse = { jobKey: string; name: string; datasetKey: string; templateKey: string; status: string; accelerator: string; progress: number; permission: string; featureTrace: string };
@@ -12,7 +13,7 @@ export type TrainingJobView = { key: string; name: string; dataset: string; temp
 export type TrainingLoadResult = { jobs: TrainingJobView[]; templates: string[]; metricPoints: Array<{ epoch: number; loss: number; accuracy: number }>; source: "backend" | "fallback" };
 
 async function requestJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, { headers: TRAINING_HEADERS });
+  const response = await fetch(`${API_BASE_URL}${path}`, { headers: await authHeaders() });
   if (!response.ok) throw new Error(`训练 API 请求失败：${response.status}`);
   return await response.json() as T;
 }

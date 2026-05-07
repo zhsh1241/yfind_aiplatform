@@ -1,6 +1,5 @@
+import { authHeaders } from "./authSession";
 ﻿const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8080";
-const AUTH_HEADERS = { Authorization: "Bearer LOCAL_DEV_TOKEN", "X-Platform-Permissions": "edge:read,edge:deploy,edge:manage" };
-
 export type EdgeDispatchRecord = {
   dispatchKey: string;
   modelVersionKey: string;
@@ -64,7 +63,7 @@ const fallbackNodes: EdgeNodeView[] = [
 
 export async function loadEdgeNodes(): Promise<{ nodes: EdgeNodeView[]; source: "backend" | "fallback"; featureTrace: string }> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/edge-nodes`, { headers: AUTH_HEADERS });
+    const response = await fetch(`${API_BASE_URL}/api/edge-nodes`, { headers: await authHeaders() });
     if (!response.ok) throw new Error(`边缘节点 API 请求失败：${response.status}`);
     const body = (await response.json()) as { items: Array<Omit<EdgeNodeView, "releaseHistory">>; featureTrace: string };
     return {
@@ -94,7 +93,7 @@ export async function loadEdgeNodes(): Promise<{ nodes: EdgeNodeView[]; source: 
 export async function dispatchEdgeModel(nodeKey: string, modelVersionKey = "bearing-defect-detector-v1", packageVersion?: number) {
   const response = await fetch(`${API_BASE_URL}/api/edge-nodes/dispatches`, {
     method: "POST",
-    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
     body: JSON.stringify({ nodeKey, modelVersionKey, packageVersion }),
   });
   if (!response.ok) throw new Error(`边缘下发 API 请求失败：${response.status}`);

@@ -1,8 +1,8 @@
 ﻿import { inferenceMetrics } from "../prototype-data";
 import { getSimulatedInferenceServices } from "../simulationStore";
+import { authHeaders } from "./authSession";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8080";
-const AUTH_HEADERS = { Authorization: "Bearer LOCAL_DEV_TOKEN", "X-Platform-Permissions": "inference:read,inference:deploy,inference:manage" };
 
 export type InferenceMetricView = { label: string; qps: number; latency: number; success: number };
 export type InferenceReleaseRecord = {
@@ -106,7 +106,7 @@ function mapService(item: InferenceServiceResponse): InferenceServiceView {
 export async function loadInferenceServices(): Promise<{ services: InferenceServiceView[]; source: "backend" | "fallback"; featureTrace: string }> {
   const simulated = getSimulatedInferenceServices();
   try {
-    const response = await fetch(`${API_BASE_URL}/api/inference-services`, { headers: AUTH_HEADERS });
+    const response = await fetch(`${API_BASE_URL}/api/inference-services`, { headers: await authHeaders() });
     if (!response.ok) throw new Error(`推理服务 API 请求失败：${response.status}`);
     const body = (await response.json()) as InferenceListResponse;
     const backendServices = body.items.map(mapService);
@@ -123,7 +123,7 @@ export async function deployDefaultInferenceService(values?: Partial<InferenceDe
   const trafficPercent = values?.trafficPercent ?? 10;
   const response = await fetch(`${API_BASE_URL}/api/inference-services/deployments`, {
     method: "POST",
-    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
     body: JSON.stringify({ modelKey: "bearing-defect-detector", versionKey: "bearing-defect-detector-v1", replicas, trafficPercent }),
   });
   if (!response.ok) throw new Error(`推理部署 API 请求失败：${response.status}`);

@@ -33,6 +33,20 @@ class DatasetControllerTest {
   @Autowired
   private MockMvc mockMvc;
 
+  private String authHeader() throws Exception {
+    String token = com.jayway.jsonpath.JsonPath.read(
+      mockMvc.perform(post("/api/auth/login")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content("{\"username\":\"admin@yfind.local\",\"password\":\"admin123!\"}"))
+        .andExpect(status().isOk())
+        .andReturn()
+        .getResponse()
+        .getContentAsString(),
+      "$.accessToken"
+    );
+    return "Bearer " + token;
+  }
+
   @DynamicPropertySource
   static void datasetProperties(DynamicPropertyRegistry registry) {
     registry.add("dataset.storage.event-log", () -> System.getProperty("java.io.tmpdir") + "/yfind-dataset-events-" + UUID.randomUUID() + ".jsonl");
@@ -41,7 +55,7 @@ class DatasetControllerTest {
   @Test
   @DisplayName("TASK-dataset-asset-mvp AC-01 lists dataset summaries with permissions")
   void listDatasetsReturnsSummaries() throws Exception {
-    mockMvc.perform(get("/api/datasets").param("query", "电机"))
+    mockMvc.perform(get("/api/datasets").header("Authorization", authHeader()).param("query", "电机"))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.featureTrace", is("TASK-dataset-asset-mvp")))
       .andExpect(jsonPath("$.items[0].key", is("motor-thermal")))
@@ -52,7 +66,7 @@ class DatasetControllerTest {
   @Test
   @DisplayName("TASK-dataset-asset-mvp AC-01 AC-02 detail returns versions files requests and jobs")
   void datasetDetailReturnsNestedState() throws Exception {
-    mockMvc.perform(get("/api/datasets/motor-thermal"))
+    mockMvc.perform(get("/api/datasets/motor-thermal").header("Authorization", authHeader()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.key", is("motor-thermal")))
       .andExpect(jsonPath("$.canView", is(true)))
@@ -66,7 +80,7 @@ class DatasetControllerTest {
   @Test
   @DisplayName("TASK-dataset-asset-mvp AC-01 AC-03 upload creates version with hash and queued job")
   void uploadCreatesNewVersion() throws Exception {
-    mockMvc.perform(post("/api/datasets/upload")
+    mockMvc.perform(post("/api/datasets/upload").header("Authorization", authHeader())
         .contentType(MediaType.APPLICATION_JSON)
         .content("""
           {
@@ -89,7 +103,7 @@ class DatasetControllerTest {
       .andExpect(jsonPath("$.dedupStrategy", is("SKIP_DUPLICATE")))
       .andExpect(jsonPath("$.jobStatus", is("QUEUED")));
 
-    mockMvc.perform(get("/api/datasets/rotor-thermal-images"))
+    mockMvc.perform(get("/api/datasets/rotor-thermal-images").header("Authorization", authHeader()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.sampleFiles[0].sha256", is("sha256:rotor-001")))
       .andExpect(jsonPath("$.processingJobs[0].status", is("QUEUED")));
@@ -98,7 +112,7 @@ class DatasetControllerTest {
   @Test
   @DisplayName("TASK-dataset-asset-mvp AC-01 AC-02 access request approve grants download")
   void approveRequestGrantsDownload() throws Exception {
-    String requestId = mockMvc.perform(post("/api/datasets/motor-thermal/access-requests")
+    String requestId = mockMvc.perform(post("/api/datasets/motor-thermal/access-requests").header("Authorization", authHeader())
         .contentType(MediaType.APPLICATION_JSON)
         .content("""
           {
@@ -114,12 +128,12 @@ class DatasetControllerTest {
       .getContentAsString()
       .replaceAll(".*\"requestId\":\"([^\"]+)\".*", "$1");
 
-    mockMvc.perform(post("/api/datasets/access-requests/{requestId}/approve", requestId))
+    mockMvc.perform(post("/api/datasets/access-requests/{requestId}/approve", requestId).header("Authorization", authHeader()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.status", is("APPROVED")))
       .andExpect(jsonPath("$.downloadGranted", is(true)));
 
-    mockMvc.perform(get("/api/datasets/motor-thermal"))
+    mockMvc.perform(get("/api/datasets/motor-thermal").header("Authorization", authHeader()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.accessRequests[*].status", hasItem("APPROVED")));
   }
@@ -127,7 +141,7 @@ class DatasetControllerTest {
   @Test
   @DisplayName("TASK-dataset-asset-mvp AC-01 exposes request list")
   void requestListIsAvailable() throws Exception {
-    mockMvc.perform(get("/api/datasets/access-requests"))
+    mockMvc.perform(get("/api/datasets/access-requests").header("Authorization", authHeader()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.featureTrace", is("TASK-dataset-asset-mvp")))
       .andExpect(jsonPath("$.items.length()", greaterThanOrEqualTo(1)));

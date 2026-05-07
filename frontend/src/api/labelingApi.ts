@@ -1,8 +1,7 @@
+import { authHeaders } from "./authSession";
 ﻿import { getSimulatedLabelingTasks } from "../simulationStore";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8080";
-const AUTH_HEADERS = { Authorization: "Bearer LOCAL_DEV_TOKEN", "X-Platform-Permissions": "labeling:read,labeling:manage" };
-
 export type LabelingReviewRecord = {
   reviewKey: string;
   status: "REVIEWING" | "APPROVED" | "CHANGES_REQUESTED" | "DELIVERED";
@@ -61,7 +60,7 @@ const fallbackTasks: LabelingTaskView[] = [
 export async function loadLabelingTasks(): Promise<{ tasks: LabelingTaskView[]; source: "backend" | "fallback"; featureTrace: string }> {
   const simulated = getSimulatedLabelingTasks();
   try {
-    const response = await fetch(`${API_BASE_URL}/api/labeling-tasks`, { headers: AUTH_HEADERS });
+    const response = await fetch(`${API_BASE_URL}/api/labeling-tasks`, { headers: await authHeaders() });
     if (!response.ok) throw new Error(`标注任务 API 请求失败：${response.status}`);
     const body = (await response.json()) as { items: Array<Omit<LabelingTaskView, "releaseHistory">>; featureTrace: string };
     const tasks = body.items.map((item) => ({
@@ -83,7 +82,7 @@ export async function loadLabelingTasks(): Promise<{ tasks: LabelingTaskView[]; 
 }
 
 export async function approveLabelingTask(taskKey: string) {
-  const response = await fetch(`${API_BASE_URL}/api/labeling-tasks/${taskKey}/approve`, { method: "POST", headers: AUTH_HEADERS });
+  const response = await fetch(`${API_BASE_URL}/api/labeling-tasks/${taskKey}/approve`, { method: "POST", headers: await authHeaders() });
   if (!response.ok) throw new Error(`标注审批 API 请求失败：${response.status}`);
   return (await response.json()) as { taskKey: string; status: string; featureTrace: string };
 }

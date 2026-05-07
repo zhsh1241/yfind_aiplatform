@@ -55,7 +55,7 @@ describe("TASK-model-registry-mvp 前后端模型仓库 API 集成层", () => {
     expect(result.models[0].versions[0].trainingJobKey).toBe("train-audio-poc");
     expect(result.models[0].versions[0].metrics[0]).toEqual({ name: "accuracy", value: "84%" });
     expect(fetchMock).toHaveBeenCalledWith("http://localhost:8080/api/models", expect.objectContaining({
-      headers: expect.objectContaining({ Authorization: "Bearer LOCAL_DEV_TOKEN" }),
+      headers: expect.objectContaining({ Authorization: expect.stringMatching(/^Bearer /) }),
     }));
   });
 

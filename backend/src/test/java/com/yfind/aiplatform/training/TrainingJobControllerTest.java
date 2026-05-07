@@ -20,7 +20,19 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 class TrainingJobControllerTest {
 
-  private static final String AUTHORIZATION = "Bearer " + TrainingAuthorizationService.LOCAL_DEV_TOKEN;
+  private String authorization() throws Exception {
+    String token = com.jayway.jsonpath.JsonPath.read(
+      mockMvc.perform(post("/api/auth/login")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content("{\"username\":\"admin@yfind.local\",\"password\":\"admin123!\"}"))
+        .andExpect(status().isOk())
+        .andReturn()
+        .getResponse()
+        .getContentAsString(),
+      "$.accessToken"
+    );
+    return "Bearer " + token;
+  }
 
   @Autowired
   private MockMvc mockMvc;
@@ -28,7 +40,7 @@ class TrainingJobControllerTest {
   @Test
   @DisplayName("TASK-training-job-mvp AC-01 lists training jobs with trace and permission")
   void listTrainingJobs() throws Exception {
-    mockMvc.perform(get("/api/training-jobs").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(get("/api/training-jobs").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.featureTrace", is("TASK-training-job-mvp")))
       .andExpect(jsonPath("$.items[0].permission", is("training:read")))
@@ -38,7 +50,7 @@ class TrainingJobControllerTest {
   @Test
   @DisplayName("TASK-training-job-mvp AC-02 AC-03 exposes detail metrics logs and artifacts")
   void detailIncludesMetricsLogsAndArtifacts() throws Exception {
-    mockMvc.perform(get("/api/training-jobs/train-bearing-v1").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(get("/api/training-jobs/train-bearing-v1").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.datasetKey", is("motor-thermal")))
       .andExpect(jsonPath("$.queueStatus", is("SUBMITTED_TO_ADAPTER")))
@@ -64,7 +76,7 @@ class TrainingJobControllerTest {
       }
       """;
 
-    mockMvc.perform(post("/api/training-jobs").header("Authorization", AUTHORIZATION).contentType(MediaType.APPLICATION_JSON).content(payload))
+    mockMvc.perform(post("/api/training-jobs").header("Authorization", authorization()).contentType(MediaType.APPLICATION_JSON).content(payload))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.status", is("QUEUED")))
       .andExpect(jsonPath("$.queueStatus", is("SUBMITTED_TO_ADAPTER")))
@@ -75,7 +87,7 @@ class TrainingJobControllerTest {
   @Test
   @DisplayName("TASK-training-job-mvp AC-04 AC-07 exposes adapter-ready templates and feature traceability")
   void templatesExposeAdapterReadyOptions() throws Exception {
-    mockMvc.perform(get("/api/training-jobs/templates").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(get("/api/training-jobs/templates").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$[?(@.templateKey == 'small-cnn-vision')].framework", hasItem("PyTorch")));
   }
@@ -83,7 +95,7 @@ class TrainingJobControllerTest {
   @Test
   @DisplayName("TASK-training-job-mvp AC-01 supports cancellation")
   void cancelTrainingJob() throws Exception {
-    mockMvc.perform(post("/api/training-jobs/train-audio-poc/cancel").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(post("/api/training-jobs/train-audio-poc/cancel").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.status", is("CANCELLED")))
       .andExpect(jsonPath("$.queueStatus", is("CANCEL_REQUESTED")));
@@ -115,9 +127,19 @@ class TrainingJobControllerTest {
       }
       """;
 
+    String token = com.jayway.jsonpath.JsonPath.read(
+      mockMvc.perform(post("/api/auth/login")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content("{\"username\":\"reviewer@yfind.local\",\"password\":\"reviewer123!\"}"))
+        .andExpect(status().isOk())
+        .andReturn()
+        .getResponse()
+        .getContentAsString(),
+      "$.accessToken"
+    );
+
     mockMvc.perform(post("/api/training-jobs")
-        .header("Authorization", AUTHORIZATION)
-        .header("X-Platform-Permissions", "training:read")
+        .header("Authorization", "Bearer " + token)
         .contentType(MediaType.APPLICATION_JSON)
         .content(payload))
       .andExpect(status().isForbidden())
@@ -125,4 +147,3 @@ class TrainingJobControllerTest {
   }
 
 }
-

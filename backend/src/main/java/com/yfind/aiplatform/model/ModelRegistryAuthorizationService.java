@@ -1,39 +1,28 @@
 package com.yfind.aiplatform.model;
 
-import java.util.Arrays;
-import java.util.Set;
-import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
-import com.yfind.aiplatform.permission.PermissionService;
+import com.yfind.aiplatform.identity.AuthForbiddenException;
+import com.yfind.aiplatform.identity.AuthUnauthorizedException;
+import com.yfind.aiplatform.identity.PlatformAuthorizationService;
 
 @Service
 public class ModelRegistryAuthorizationService {
 
   public static final String LOCAL_DEV_TOKEN = "LOCAL_DEV_TOKEN";
 
-  private final PermissionService permissionService;
+  private final PlatformAuthorizationService platformAuthorizationService;
 
-  public ModelRegistryAuthorizationService(PermissionService permissionService) {
-    this.permissionService = permissionService;
+  public ModelRegistryAuthorizationService(PlatformAuthorizationService platformAuthorizationService) {
+    this.platformAuthorizationService = platformAuthorizationService;
   }
 
   public void require(String authorizationHeader, String permissionHeader, String requiredPermission) {
-    if (authorizationHeader == null || !authorizationHeader.equals("Bearer " + LOCAL_DEV_TOKEN)) {
-      throw new ModelRegistryUnauthorizedException("模型仓库 API 需要有效 Authorization: Bearer LOCAL_DEV_TOKEN");
+    try {
+      platformAuthorizationService.require(authorizationHeader, requiredPermission);
+    } catch (AuthUnauthorizedException exception) {
+      throw new ModelRegistryUnauthorizedException(exception.getMessage());
+    } catch (AuthForbiddenException exception) {
+      throw new ModelRegistryForbiddenException(exception.getMessage());
     }
-    Set<String> grantedPermissions = resolveGrantedPermissions(permissionHeader);
-    if (!grantedPermissions.contains(requiredPermission)) {
-      throw new ModelRegistryForbiddenException("当前主体缺少模型仓库权限: " + requiredPermission);
-    }
-  }
-
-  private Set<String> resolveGrantedPermissions(String permissionHeader) {
-    if (permissionHeader == null || permissionHeader.isBlank()) {
-      return Set.copyOf(permissionService.localAdminPermissionKeys());
-    }
-    return Arrays.stream(permissionHeader.split(","))
-      .map(String::trim)
-      .filter(value -> !value.isBlank())
-      .collect(Collectors.toSet());
   }
 }

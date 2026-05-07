@@ -1,5 +1,6 @@
 ﻿import { datasets as fallbackDatasets, type Dataset } from "../prototype-data";
 import { getSimulatedDatasets } from "../simulationStore";
+import { authJsonHeaders } from "./authSession";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8080";
 
@@ -22,7 +23,7 @@ export type CreateDatasetPayload = {
 export type DatasetLoadResult = { datasets: Dataset[]; source: "backend" | "fallback"; featureTrace: string };
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) } });
+  const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers: { ...(await authJsonHeaders()), ...(init?.headers ?? {}) } });
   if (!response.ok) throw new Error(`数据资产 API 请求失败：${response.status}`);
   return await response.json() as T;
 }

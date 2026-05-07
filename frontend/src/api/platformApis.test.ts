@@ -51,7 +51,8 @@ describe("TASK-platform-frontend-backend-integration 其它页面 API 接入", (
   it("组织权限页拉取当前用户和权限定义", async () => {
     vi.stubGlobal("fetch", vi.fn()
       .mockReturnValueOnce(jsonResponse({ username: "local.admin", displayName: "本地平台管理员", organization: { name: "YFI 智造中心（本地占位）" }, authMethod: "LOCAL_DEV_PRINCIPAL", iamProvider: "TODO_CONFIRM_IAM_PROVIDER", permissions: ["dataset:manage"], featureTrace: "TASK-identity-org-permission" }))
-      .mockReturnValueOnce(jsonResponse([{ key: "dataset:manage", module: "dataset", action: "manage", description: "管理数据资产", highRisk: true }])));
+      .mockReturnValueOnce(jsonResponse([{ key: "dataset:manage", module: "dataset", action: "manage", description: "管理数据资产", highRisk: true }]))
+      .mockReturnValueOnce(jsonResponse({ items: [], featureTrace: "TASK-identity-org-permission" })));
 
     const result = await loadIdentity();
 

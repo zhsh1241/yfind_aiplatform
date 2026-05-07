@@ -20,13 +20,18 @@ public class PermissionService {
   }
 
   public PermissionCheckResponse check(String permissionKey) {
+    return check(permissionKey, localAdminPermissionKeys());
+  }
+
+  public PermissionCheckResponse check(String permissionKey, List<String> grantedPermissionKeys) {
+    Set<String> grantedPermissions = Set.copyOf(grantedPermissionKeys);
     return PlatformPermission.fromKey(permissionKey)
       .map(permission -> new PermissionCheckResponse(
         permissionKey,
         true,
-        LOCAL_ADMIN_PERMISSIONS.contains(permission),
-        LOCAL_ADMIN_PERMISSIONS.contains(permission) ? "ALLOW" : "DENY",
-        LOCAL_ADMIN_PERMISSIONS.contains(permission) ? "本地开发管理员拥有该 MVP 权限" : "当前主体缺少该权限",
+        grantedPermissions.contains(permission.key()),
+        grantedPermissions.contains(permission.key()) ? "ALLOW" : "DENY",
+        grantedPermissions.contains(permission.key()) ? "当前登录用户拥有该权限" : "当前主体缺少该权限",
         "TASK-identity-org-permission"
       ))
       .orElseGet(() -> new PermissionCheckResponse(

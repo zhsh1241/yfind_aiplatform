@@ -1,11 +1,7 @@
 ﻿import { registryModels, type ModelMetric, type ModelVersion, type RegistryModel } from "../prototype-data";
+import { authHeaders } from "./authSession";
 
 const DEFAULT_API_BASE_URL = "http://localhost:8080";
-const MODEL_AUTH_HEADERS = {
-  Authorization: "Bearer LOCAL_DEV_TOKEN",
-  "X-Platform-Permissions": "model:read,model:manage",
-};
-
 type ModelListResponse = {
   items: ModelSummaryResponse[];
   featureTrace: string;
@@ -85,7 +81,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl()}${path}`, {
     ...init,
     headers: {
-      ...MODEL_AUTH_HEADERS,
+      ...(await authHeaders()),
       ...(init?.headers ?? {}),
     },
   });

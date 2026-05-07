@@ -7,7 +7,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.yfind.aiplatform.training.TrainingAuthorizationService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,7 +18,19 @@ import org.springframework.test.web.servlet.MockMvc;
 @SpringBootTest
 @AutoConfigureMockMvc
 class RemainingIntegrationControllerTest {
-  private static final String AUTHORIZATION = "Bearer " + TrainingAuthorizationService.LOCAL_DEV_TOKEN;
+  private String authorization() throws Exception {
+    String token = com.jayway.jsonpath.JsonPath.read(
+      mockMvc.perform(post("/api/auth/login")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content("{\"username\":\"admin@yfind.local\",\"password\":\"admin123!\"}"))
+        .andExpect(status().isOk())
+        .andReturn()
+        .getResponse()
+        .getContentAsString(),
+      "$.accessToken"
+    );
+    return "Bearer " + token;
+  }
 
   @Autowired
   private MockMvc mockMvc;
@@ -38,14 +49,14 @@ class RemainingIntegrationControllerTest {
   @Test
   @DisplayName("TASK-inference-service-integration lists and deploys inference services")
   void inferenceServiceIntegration() throws Exception {
-    mockMvc.perform(get("/api/inference-services").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(get("/api/inference-services").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.featureTrace", is("TASK-inference-service-integration")))
       .andExpect(jsonPath("$.items[0].permission", is("inference:read")))
       .andExpect(jsonPath("$.items[0].metrics[*].label", hasItem("14:00")));
 
     mockMvc.perform(post("/api/inference-services/deployments")
-        .header("Authorization", AUTHORIZATION)
+        .header("Authorization", authorization())
         .contentType(MediaType.APPLICATION_JSON)
         .content("{\"modelKey\":\"bearing-defect-detector\",\"versionKey\":\"bearing-defect-detector-v1\",\"replicas\":2,\"trafficPercent\":10}"))
       .andExpect(status().isOk())
@@ -56,12 +67,12 @@ class RemainingIntegrationControllerTest {
   @Test
   @DisplayName("TASK-labeling-workflow-integration lists and approves labeling tasks")
   void labelingTaskIntegration() throws Exception {
-    mockMvc.perform(get("/api/labeling-tasks").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(get("/api/labeling-tasks").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.items[*].taskKey", hasItem("label-welding-v2")))
       .andExpect(jsonPath("$.featureTrace", is("TASK-labeling-workflow-integration")));
 
-    mockMvc.perform(post("/api/labeling-tasks/label-welding-v2/approve").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(post("/api/labeling-tasks/label-welding-v2/approve").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.status", is("APPROVED")));
   }
@@ -69,13 +80,13 @@ class RemainingIntegrationControllerTest {
   @Test
   @DisplayName("TASK-edge-dispatch-integration lists and dispatches edge nodes")
   void edgeDispatchIntegration() throws Exception {
-    mockMvc.perform(get("/api/edge-nodes").header("Authorization", AUTHORIZATION))
+    mockMvc.perform(get("/api/edge-nodes").header("Authorization", authorization()))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.items[*].nodeKey", hasItem("edge-suzhou-line-01")))
       .andExpect(jsonPath("$.featureTrace", is("TASK-edge-dispatch-integration")));
 
     mockMvc.perform(post("/api/edge-nodes/dispatches")
-        .header("Authorization", AUTHORIZATION)
+        .header("Authorization", authorization())
         .contentType(MediaType.APPLICATION_JSON)
         .content("{\"nodeKey\":\"edge-suzhou-line-01\",\"modelVersionKey\":\"bearing-defect-detector-v1\"}"))
       .andExpect(status().isOk())
@@ -89,9 +100,19 @@ class RemainingIntegrationControllerTest {
       .andExpect(status().isUnauthorized())
       .andExpect(jsonPath("$.errorCode", is("AUTH_UNAUTHORIZED")));
 
+    String token = com.jayway.jsonpath.JsonPath.read(
+      mockMvc.perform(post("/api/auth/login")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content("{\"username\":\"reviewer@yfind.local\",\"password\":\"reviewer123!\"}"))
+        .andExpect(status().isOk())
+        .andReturn()
+        .getResponse()
+        .getContentAsString(),
+      "$.accessToken"
+    );
+
     mockMvc.perform(post("/api/edge-nodes/dispatches")
-        .header("Authorization", AUTHORIZATION)
-        .header("X-Platform-Permissions", "edge:read")
+        .header("Authorization", "Bearer " + token)
         .contentType(MediaType.APPLICATION_JSON)
         .content("{\"nodeKey\":\"edge-suzhou-line-01\",\"modelVersionKey\":\"bearing-defect-detector-v1\"}"))
       .andExpect(status().isForbidden())
