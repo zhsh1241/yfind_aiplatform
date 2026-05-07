@@ -6,9 +6,9 @@ This service is the main platform backend and owns enterprise API state,
 permissions, metadata, and audit records. Python-first AI/MLOps SDK integration
 belongs in `../ai-adapter/` and should be called through internal APIs.
 
-## ç¯å¢è¦æ±
+## 环境要求
 
-åç«¯åºçº¿ä¸º **Java 21 / Spring Boot 3**ãå¦æç³»ç»é»è®¤ `mvn` ä»ä½¿ç¨ Java 8ï¼è¯·åå¨å½å PowerShell ä¼è¯åæ¢ JDKï¼
+后端基线为 **Java 21 / Spring Boot 3**。如果系统默认 `mvn` 仍使用 Java 8，请先在当前 PowerShell 会话切换 JDK：
 
 ```powershell
 $env:JAVA_HOME='C:\java\jdk-21.0.6'
@@ -17,7 +17,7 @@ java -version
 mvn -version
 ```
 
-ä¸¤æ¡å½ä»¤é½åºæ¾ç¤º **21.0.6** ååè¿è¡æµè¯ã
+两条命令都应显示 **21.0.6** 后再运行测试。
 
 ## Commands
 
@@ -27,7 +27,7 @@ mvn -f backend/pom.xml test -q
 mvn -f backend/pom.xml verify
 ```
 
-å¸¸ç¨æ¬å°éªè¯ï¼
+常用本地验证：
 
 ```powershell
 mvn -f backend/pom.xml test -q
@@ -46,10 +46,11 @@ Business modules start in later features. Do not add domain schema or external i
 
 本地默认使用文件型 H2 数据库，路径为 `backend/data/yfind-aiplatform.mv.db`，便于无外部依赖直接启动；该目录已加入 `.gitignore`。
 
-如需切换 PostgreSQL，可先启动本地数据库：
+本地 PostgreSQL 使用 Docker Compose 启动：
 
 ```powershell
-docker compose -f deploy/docker-compose.postgres.yml up -d
+docker compose --env-file deploy/env/postgres.local.example.env -f deploy/docker-compose.postgres.yml up -d
+docker exec yfind-aiplatform-postgres pg_isready -U yfind -d yfind_aiplatform
 $env:POSTGRES_JDBC_URL='jdbc:postgresql://localhost:5432/yfind_aiplatform'
 $env:DB_DRIVER='org.postgresql.Driver'
 $env:POSTGRES_USER='yfind'
@@ -64,4 +65,15 @@ $env:Path="$env:JAVA_HOME\bin;C:\Apache\Maven\bin;$env:Path"
 Push-Location backend
 mvn spring-boot:run
 Pop-Location
+```
+
+如需在 PostgreSQL 上运行后端测试：
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE='postgres'
+$env:POSTGRES_TEST_JDBC_URL='jdbc:postgresql://localhost:5432/yfind_aiplatform_test'
+Push-Location backend
+mvn test -q
+Pop-Location
+Remove-Item Env:\SPRING_PROFILES_ACTIVE
 ```

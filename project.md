@@ -196,7 +196,7 @@ Before closing a feature:
 ## Current Known Gaps
 
 - `plan.md` for `F001-platform-architecture-baseline` remains `plan_status: draft` pending human review, while the owner-requested repository bootstrap has been implemented and smoke-verified.
-- PostgreSQL, Redis, object storage, SSO, Kubernetes, model registry, inference, and edge environments are not confirmed.
+- PostgreSQL local Docker environment is confirmed for development (`yfind-aiplatform-postgres`, `yfind_aiplatform`, `yfind_aiplatform_test`); Redis, object storage, SSO, Kubernetes, model registry, inference, and edge environments are not confirmed.
 - CI provider is not confirmed.
 - Real test accounts and E2E tenant values are not confirmed.
 - The default system `java` and `mvn` on this machine currently resolve to Java 8; backend verification must first switch the session to `C:\java\jdk-21.0.6`.

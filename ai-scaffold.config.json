@@ -90,10 +90,10 @@
     }
   ],
   "database": {
-    "testName": "TODO_CONFIRM_POSTGRES_TEST_DB",
-    "user": "TODO_CONFIRM_POSTGRES_USER",
-    "password": "TODO_CONFIRM_POSTGRES_PASSWORD",
-    "dockerContainer": "TODO_CONFIRM_POSTGRES_CONTAINER"
+    "testName": "yfind_aiplatform_test",
+    "user": "yfind",
+    "password": "yfind_local_password",
+    "dockerContainer": "yfind-aiplatform-postgres"
   },
   "e2e": {
     "username": "TODO_CONFIRM_E2E_USERNAME",
