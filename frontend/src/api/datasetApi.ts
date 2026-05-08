@@ -22,6 +22,73 @@ export type CreateDatasetPayload = {
 
 export type DatasetLoadResult = { datasets: Dataset[]; source: "backend" | "fallback"; featureTrace: string };
 
+export type PreparationStage = {
+  stageKey: string;
+  stageName: string;
+  status: string;
+  qualityScore: number;
+  gatePassed: boolean;
+  message: string;
+};
+
+export type PreparationJob = {
+  jobId: string;
+  datasetKey: string;
+  datasetName: string;
+  status: string;
+  currentStage: string;
+  progressPercent: number;
+  blocked: boolean;
+  blockedReason: string;
+  qualityScore: number;
+  rerunCount: number;
+  outputSnapshotKey: string;
+  stages: PreparationStage[];
+  outputSnapshot: {
+    snapshotKey: string;
+    loaderType: string;
+    readyForTraining: boolean;
+    trainSplitCount: number;
+    validationSplitCount: number;
+    testSplitCount: number;
+  };
+};
+
+type PreparationJobListResponse = { items: Array<Omit<PreparationJob, "stages" | "outputSnapshot">>; featureTrace: string };
+type PreparationJobDetailResponse = PreparationJob & { featureTrace: string };
+type PreparationActionResponse = { jobId: string; status: string; currentStage: string; blocked: boolean; rerunCount: number; featureTrace: string };
+
+export const fallbackPreparationJobs: PreparationJob[] = [{
+  jobId: "prep-motor-thermal-v3",
+  datasetKey: "motor-thermal",
+  datasetName: "电机温升异常图像集",
+  status: "BLOCKED",
+  currentStage: "LABELING",
+  progressPercent: 38,
+  blocked: true,
+  blockedReason: "标注一致性低于阈值",
+  qualityScore: 72,
+  rerunCount: 1,
+  outputSnapshotKey: "motor-thermal-train-snapshot-v4",
+  stages: [
+    { stageKey: "COLLECTION", stageName: "数据收集", status: "SUCCEEDED", qualityScore: 96, gatePassed: true, message: "来源登记与样本清单完成" },
+    { stageKey: "CLEANING", stageName: "数据清洗", status: "SUCCEEDED", qualityScore: 93, gatePassed: true, message: "去重和缺失值处理完成" },
+    { stageKey: "LABELING", stageName: "数据标注", status: "FAILED", qualityScore: 72, gatePassed: false, message: "标注一致性低于阈值" },
+    { stageKey: "SPLIT", stageName: "数据划分", status: "PENDING", qualityScore: 0, gatePassed: false, message: "等待标注通过" },
+    { stageKey: "PREPROCESSING", stageName: "数据预处理", status: "PENDING", qualityScore: 0, gatePassed: false, message: "等待数据划分" },
+    { stageKey: "AUGMENTATION", stageName: "数据增强", status: "PENDING", qualityScore: 0, gatePassed: false, message: "等待预处理" },
+    { stageKey: "FORMAT_LOADING", stageName: "格式转换与加载", status: "PENDING", qualityScore: 0, gatePassed: false, message: "等待增强" },
+  ],
+  outputSnapshot: {
+    snapshotKey: "motor-thermal-train-snapshot-v4",
+    loaderType: "PAI_DLC_DATA_LOADER",
+    readyForTraining: false,
+    trainSplitCount: 8988,
+    validationSplitCount: 1926,
+    testSplitCount: 1926,
+  },
+}];
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers: { ...(await authJsonHeaders()), ...(init?.headers ?? {}) } });
   if (!response.ok) throw new Error(`数据资产 API 请求失败：${response.status}`);
@@ -108,4 +175,29 @@ export async function createDataset(payload: CreateDatasetPayload): Promise<Data
     samplePreviewName: payload.uploadType === "image" ? "upload-preview.jpg" : "upload-preview.zip",
     samplePreviewType: payload.uploadType === "image" ? "image/jpeg" : "application/zip",
   };
+}
+
+
+export async function loadPreparationJobs(): Promise<PreparationJob[]> {
+  if (import.meta.env.MODE === "test") return fallbackPreparationJobs;
+  try {
+    const list = await requestJson<PreparationJobListResponse>("/api/datasets/preparation-jobs");
+    return await Promise.all(list.items.map((item) => requestJson<PreparationJobDetailResponse>(`/api/datasets/preparation-jobs/${item.jobId}`)));
+  } catch (error) {
+    console.warn("数据准备流水线后端不可用，已回退到本地 fallback 数据。", error);
+    return fallbackPreparationJobs;
+  }
+}
+
+export async function rerunPreparationJob(jobId: string): Promise<PreparationActionResponse> {
+  return await requestJson<PreparationActionResponse>(`/api/datasets/preparation-jobs/${jobId}/rerun-blocked-stage`, {
+    method: "POST",
+    body: JSON.stringify({
+      operator: "local.admin",
+      reason: "来源登记与样本清单完成",
+      qualityScoreOverride: 91,
+      labelAgreementOverride: 0.95,
+      duplicateRateOverride: 0.01,
+    }),
+  });
 }

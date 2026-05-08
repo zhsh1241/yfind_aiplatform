@@ -20,5 +20,11 @@ public class DatasetApiExceptionHandler {
     return new ErrorResponse(404, exception.getMessage(), DatasetService.FEATURE_TRACE);
   }
 
+  @ExceptionHandler(DatasetPreparationConflictException.class)
+  @ResponseStatus(HttpStatus.CONFLICT)
+  public ErrorResponse handlePreparationConflict(DatasetPreparationConflictException exception) {
+    return new ErrorResponse(409, exception.getMessage(), DatasetPreparationDtos.FEATURE_TRACE);
+  }
+
   public record ErrorResponse(int code, String message, String featureTrace) {}
 }

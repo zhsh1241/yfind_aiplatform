@@ -15,10 +15,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class DatasetController {
 
   private final DatasetService datasetService;
+  private final DatasetPreparationService preparationService;
   private final PlatformAuthorizationService authorizationService;
 
-  public DatasetController(DatasetService datasetService, PlatformAuthorizationService authorizationService) {
+  public DatasetController(DatasetService datasetService, DatasetPreparationService preparationService, PlatformAuthorizationService authorizationService) {
     this.datasetService = datasetService;
+    this.preparationService = preparationService;
     this.authorizationService = authorizationService;
   }
 
@@ -59,5 +61,44 @@ public class DatasetController {
   public DatasetAccessRequestListResponse requests(@RequestHeader(value = "Authorization", required = false) String authorization) {
     authorizationService.require(authorization, "dataset:manage");
     return datasetService.listRequests();
+  }
+
+  @GetMapping("/preparation-jobs")
+  public DatasetPreparationDtos.PreparationJobListResponse listPreparationJobs(
+      @RequestParam(value = "datasetKey", required = false) String datasetKey,
+      @RequestParam(value = "status", required = false) String status,
+      @RequestHeader(value = "Authorization", required = false) String authorization) {
+    authorizationService.require(authorization, "dataset:read");
+    return preparationService.list(datasetKey, status);
+  }
+
+  @GetMapping("/preparation-jobs/{jobId}")
+  public DatasetPreparationDtos.PreparationJobDetailResponse preparationJobDetail(@PathVariable String jobId, @RequestHeader(value = "Authorization", required = false) String authorization) {
+    authorizationService.require(authorization, "dataset:read");
+    return preparationService.detail(jobId);
+  }
+
+  @PostMapping("/preparation-jobs")
+  public DatasetPreparationDtos.PreparationJobActionResponse createPreparationJob(@RequestBody DatasetPreparationDtos.CreatePreparationJobRequest request, @RequestHeader(value = "Authorization", required = false) String authorization) {
+    authorizationService.require(authorization, "dataset:manage");
+    return preparationService.create(request);
+  }
+
+  @PostMapping("/preparation-jobs/{jobId}/run-next-stage")
+  public DatasetPreparationDtos.PreparationJobActionResponse runNextPreparationStage(@PathVariable String jobId, @RequestBody(required = false) DatasetPreparationDtos.RunStageRequest request, @RequestHeader(value = "Authorization", required = false) String authorization) {
+    authorizationService.require(authorization, "dataset:manage");
+    return preparationService.runNextStage(jobId, request);
+  }
+
+  @PostMapping("/preparation-jobs/{jobId}/rerun-blocked-stage")
+  public DatasetPreparationDtos.PreparationJobActionResponse rerunBlockedPreparationStage(@PathVariable String jobId, @RequestBody DatasetPreparationDtos.RerunBlockedStageRequest request, @RequestHeader(value = "Authorization", required = false) String authorization) {
+    authorizationService.require(authorization, "dataset:manage");
+    return preparationService.rerunBlockedStage(jobId, request);
+  }
+
+  @GetMapping("/training-datasets/{artifactKey}")
+  public DatasetPreparationDtos.TrainingDatasetArtifactResponse trainingDatasetArtifact(@PathVariable String artifactKey, @RequestHeader(value = "Authorization", required = false) String authorization) {
+    authorizationService.require(authorization, "dataset:read");
+    return preparationService.artifact(artifactKey);
   }
 }
