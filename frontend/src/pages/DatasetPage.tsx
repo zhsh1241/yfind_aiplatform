@@ -1,9 +1,21 @@
 import { Alert, Button, Card, Col, Descriptions, Progress, Row, Space, Statistic, Steps, Tag, Timeline, Typography } from "antd";
-import type { PreparationJob } from "../api/datasetApi";
+import { useMemo, useState } from "react";
+import type { PreparationJob, PreparationStage } from "../api/datasetApi";
 
 const { Paragraph, Title, Text } = Typography;
 
 type Props = { source: "backend" | "fallback"; preparationJobs: PreparationJob[]; openDetail: (title: string, description: string) => void; onRerunPreparationJob: (jobId: string) => void; };
+type StageInfo = { name: string; objective: string; input: string; actions: string; gate: string; output: string };
+
+const stageInfos: Record<string, StageInfo> = {
+  COLLECTION: { name: "数据收集", objective: "登记多来源原始样本并形成可审计清单", input: "来源链接、样本清单、许可说明", actions: "来源登记、字段映射、样本抽检", gate: "来源合规、样本数不为 0", output: "原始样本清单" },
+  CLEANING: { name: "数据清洗", objective: "去除重复、噪声、缺失和格式异常", input: "原始样本清单、清洗规则", actions: "去重、缺失值处理、格式统一", gate: "重复率和缺失率低于阈值", output: "清洗后样本集" },
+  LABELING: { name: "数据标注", objective: "维护标签结构并接入标注结果", input: "清洗样本、标签体系、标注结果", actions: "标签校验、一致性检查、人工修正", gate: "标注一致性达标", output: "已标注样本集" },
+  SPLIT: { name: "数据划分", objective: "生成训练、验证和测试集快照", input: "已标注样本、划分比例", actions: "分层抽样、泄漏检查、分布对比", gate: "测试集不参与训练或调参", output: "训练/验证/测试快照" },
+  PREPROCESSING: { name: "数据预处理", objective: "将样本转为训练可消费的基础形态", input: "划分快照、预处理规则", actions: "图像归一化、文本编码、尺寸标准化", gate: "输出张量或序列格式合法", output: "预处理样本快照" },
+  AUGMENTATION: { name: "数据增强", objective: "按任务需要扩展训练样本多样性", input: "预处理样本、增强策略", actions: "裁剪、翻转、旋转、文本扩增", gate: "不污染测试集且增强比例可追溯", output: "增强后训练集" },
+  FORMAT_LOADING: { name: "格式转换与加载", objective: "生成训练框架可直接加载的数据产物", input: "处理后快照、加载器类型", actions: "格式转换、DataLoader 元数据生成、样本计数核对", gate: "加载配置完整且样本计数一致", output: "可训练数据集快照" }
+};
 
 const sourceTypes = [
   { title: "公开数据集", description: "登记来源、许可证、版本与样本清单，作为收集阶段输入。" },
@@ -19,26 +31,52 @@ const gateRules = [
 ];
 
 function statusColor(status: string) { if (status === "SUCCEEDED") return "green"; if (status === "FAILED") return "red"; if (status === "RUNNING") return "blue"; return "default"; }
-function buildStepStatus(stage: { status: string }) { if (stage.status === "SUCCEEDED") return "finish" as const; if (stage.status === "FAILED") return "error" as const; if (stage.status === "RUNNING") return "process" as const; return "wait" as const; }
+function buildStepStatus(stage: PreparationStage) { if (stage.status === "SUCCEEDED") return "finish" as const; if (stage.status === "FAILED") return "error" as const; if (stage.status === "RUNNING") return "process" as const; return "wait" as const; }
 
-function PreparationJobPanel({ job, openDetail, onRerunPreparationJob }: { job: PreparationJob; openDetail: Props["openDetail"]; onRerunPreparationJob: Props["onRerunPreparationJob"] }) {
+function StageProcessingPage({ stage, job, info, onBack, onRerunPreparationJob }: { stage: PreparationStage; job: PreparationJob; info: StageInfo; onBack: () => void; onRerunPreparationJob: (jobId: string) => void }) {
+  return <Card className="dataset-main-card" title={<Space wrap><Button onClick={onBack}>返回流水线总览</Button><Tag color={statusColor(stage.status)}>{stage.status}</Tag><span>{info.name}处理页</span></Space>}>
+    <Space direction="vertical" size="large" className="full-width">
+      <Alert type={stage.status === "FAILED" ? "error" : "info"} showIcon message={stage.status === "FAILED" ? `阻断原因：${job.blockedReason}` : `${info.name}处理页`} description={stage.message} />
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={12}><Descriptions bordered column={1} size="small" items={[
+          { key: "objective", label: "阶段目标", children: info.objective },
+          { key: "input", label: "输入材料", children: info.input },
+          { key: "actions", label: "功能处理", children: info.actions },
+        ]} /></Col>
+        <Col xs={24} lg={12}><Descriptions bordered column={1} size="small" items={[
+          { key: "gate", label: "质量门禁", children: info.gate },
+          { key: "output", label: "阶段产出", children: info.output },
+          { key: "quality", label: "质量分", children: `${stage.qualityScore} / 100` },
+          { key: "status", label: "当前状态", children: stage.status },
+        ]} /></Col>
+      </Row>
+      <Space wrap>{stage.status === "FAILED" && <Button type="primary" danger onClick={() => onRerunPreparationJob(job.jobId)}>人工修正后重跑</Button>}<Button onClick={onBack}>返回流水线总览</Button></Space>
+    </Space>
+  </Card>;
+}
+
+function PreparationJobPanel({ job, openDetail, onRerunPreparationJob, onOpenStage }: { job: PreparationJob; openDetail: Props["openDetail"]; onRerunPreparationJob: Props["onRerunPreparationJob"]; onOpenStage: (stageKey: string) => void }) {
   return <Card className="dataset-main-card" title={<Space wrap><span>{job.datasetName}</span><Tag color="blue">TASK-dataset-preparation-pipeline</Tag></Space>}><Space direction="vertical" size="large" className="full-width">
     <Alert type={job.blocked ? "error" : "success"} showIcon message={job.blocked ? `阻断原因：${job.blockedReason}` : "流水线可继续推进"} description="平台内置覆盖数据收集、清洗、标注、划分、预处理、增强、格式转换与加载 7 个训练前步骤；失败即阻断，人工修正后重跑。" />
     <Progress percent={job.progressPercent} status={job.blocked ? "exception" : "active"} />
-    <Steps responsive current={Math.max(0, job.stages.findIndex((stage) => stage.stageKey === job.currentStage))} items={job.stages.map((stage) => ({ title: stage.stageName, status: buildStepStatus(stage), description: `${stage.status} ? 质量分 ${stage.qualityScore}` }))} />
-    <Row gutter={[16, 16]}><Col xs={24} lg={14}><Card size="small" title="阶段质量门禁"><Timeline items={job.stages.map((stage) => ({ color: statusColor(stage.status), children: <Space direction="vertical" size={2}><Text strong>{stage.stageName} ? {stage.status}</Text><Text type="secondary">{stage.message}</Text></Space> }))} /></Card></Col>
+    <Steps responsive current={Math.max(0, job.stages.findIndex((stage) => stage.stageKey === job.currentStage))} items={job.stages.map((stage) => ({ title: stage.stageName, status: buildStepStatus(stage), description: `${stage.status} · 质量分 ${stage.qualityScore}` }))} />
+    <Card size="small" title="七阶段独立处理页"><Space wrap>{job.stages.map((stage) => <Button key={stage.stageKey} onClick={() => onOpenStage(stage.stageKey)}>进入{stage.stageName}处理页</Button>)}</Space></Card>
+    <Row gutter={[16, 16]}><Col xs={24} lg={14}><Card size="small" title="质量门禁"><Timeline items={job.stages.map((stage) => ({ color: statusColor(stage.status), children: <Space direction="vertical" size={2}><Text strong>{stage.stageName} · {stage.status}</Text><Text type="secondary">{stage.message}</Text></Space> }))} /></Card></Col>
     <Col xs={24} lg={10}><Card size="small" title="训练数据集产物"><Descriptions column={1} size="small" items={[{ key: "snapshot", label: "快照", children: job.outputSnapshot.snapshotKey }, { key: "loader", label: "加载器", children: job.outputSnapshot.loaderType }, { key: "split", label: "训练/验证/测试", children: `${job.outputSnapshot.trainSplitCount}/${job.outputSnapshot.validationSplitCount}/${job.outputSnapshot.testSplitCount}` }, { key: "rerun", label: "重跑次数", children: job.rerunCount }]} />
-    <Space wrap className="dataset-side-actions"><Button type="primary" danger={job.blocked} onClick={() => onRerunPreparationJob(job.jobId)}>人工修正后重跑</Button><Button onClick={() => openDetail("训练加载配置", `产物 ${job.outputSnapshot.snapshotKey} 使用 ${job.outputSnapshot.loaderType}?训练/验证/测试样本数为 ${job.outputSnapshot.trainSplitCount}/${job.outputSnapshot.validationSplitCount}/${job.outputSnapshot.testSplitCount}?`)}>查看边界</Button></Space></Card></Col></Row>
+    <Space wrap className="dataset-side-actions"><Button type="primary" danger={job.blocked} onClick={() => onRerunPreparationJob(job.jobId)}>人工修正后重跑</Button><Button onClick={() => openDetail("训练加载配置", `产物 ${job.outputSnapshot.snapshotKey} 使用 ${job.outputSnapshot.loaderType}，训练/验证/测试样本数为 ${job.outputSnapshot.trainSplitCount}/${job.outputSnapshot.validationSplitCount}/${job.outputSnapshot.testSplitCount}。`)}>查看加载配置</Button></Space></Card></Col></Row>
   </Space></Card>;
 }
 
 export default function DatasetPage({ source, preparationJobs, openDetail, onRerunPreparationJob }: Props) {
+  const firstJob = preparationJobs[0];
+  const [selectedStageKey, setSelectedStageKey] = useState<string | null>(null);
+  const selectedStage = useMemo(() => firstJob?.stages.find((stage) => stage.stageKey === selectedStageKey) ?? null, [firstJob, selectedStageKey]);
   const blockedCount = preparationJobs.filter((job) => job.blocked).length;
   const totalStages = preparationJobs.reduce((sum, job) => sum + job.stages.length, 0);
   const passedStages = preparationJobs.flatMap((job) => job.stages).filter((stage) => stage.gatePassed).length;
-  const firstJob = preparationJobs[0];
-  return <section className="utility-grid-section dataset-page-shell"><section className="dataset-hero-card"><div className="dataset-hero-copy"><Space wrap><Tag color={source === "backend" ? "green" : "gold"}>{source === "backend" ? "后端 API 已连接" : "本地 fallback"}</Tag><Tag color="blue">独立工作台</Tag></Space><div className="section-kicker">F008 / 训练前数据工程</div><Title level={2}>数据准备流水线工作台</Title><Paragraph className="tight-paragraph">这是重做后的独立数据准备页面，不再沿用原数据资产列表页；页面聚焦多来源接入、阶段门禁、失败阻断、人工修正重跑与训练数据集快照交付。</Paragraph></div><div className="dataset-hero-actions">{firstJob && <Button type="primary" danger={firstJob.blocked} onClick={() => onRerunPreparationJob(firstJob.jobId)}>处理当前阻断</Button>}<Button onClick={() => openDetail("F008 页面边界", "数据准备页面只产出可训练数据集快照和加载配置，不发起训练任务，也不承载原数据资产目录操作。")}>查看边界</Button></div></section>
-  <div className="stats-grid compact dataset-kpi-grid"><Card className="dataset-kpi-card"><Statistic title="准备任务" value={preparationJobs.length} /></Card><Card className="dataset-kpi-card"><Statistic title="阻断任务" value={blockedCount} /></Card><Card className="dataset-kpi-card"><Statistic title="已过门禁阶段" value={passedStages} suffix={`/ ${totalStages}`} /></Card><Card className="dataset-kpi-card"><Statistic title="输出边界" value="Snapshot" /></Card></div>
+  if (firstJob && selectedStage) return <section className="utility-grid-section dataset-page-shell"><StageProcessingPage stage={selectedStage} job={firstJob} info={stageInfos[selectedStage.stageKey]} onBack={() => setSelectedStageKey(null)} onRerunPreparationJob={onRerunPreparationJob} /></section>;
+  return <section className="utility-grid-section dataset-page-shell"><section className="dataset-hero-card"><div className="dataset-hero-copy"><Space wrap><Tag color={source === "backend" ? "green" : "gold"}>{source === "backend" ? "后端 API 已连接" : "本地 fallback"}</Tag><Tag color="blue">独立工作台</Tag></Space><div className="section-kicker">F008 / 训练前数据工程</div><Title level={2}>数据准备流水线工作台</Title><Paragraph className="tight-paragraph">这是重做后的独立数据准备页面；每一个数据准备阶段都有独立处理页，分别承载该阶段的输入、操作、门禁与产出。<Text strong> 不再沿用原数据资产列表页</Text></Paragraph></div><div className="dataset-hero-actions">{firstJob && <Button type="primary" danger={firstJob.blocked} onClick={() => onRerunPreparationJob(firstJob.jobId)}>人工修正后重跑</Button>}</div></section>
+  <div className="stats-grid compact dataset-kpi-grid"><Card className="dataset-kpi-card"><Statistic title="准备任务" value={preparationJobs.length} /></Card><Card className="dataset-kpi-card"><Statistic title="阻断任务" value={blockedCount} /></Card><Card className="dataset-kpi-card"><Statistic title="独立阶段页" value={7} /></Card><Card className="dataset-kpi-card"><Statistic title="已过门禁" value={passedStages} suffix={`/ ${totalStages}`} /></Card></div>
   <Row gutter={[20, 20]}><Col xs={24} xl={9}><Card title="多来源接入编排" className="dataset-side-card"><Space direction="vertical" size="middle" className="full-width">{sourceTypes.map((item) => <div key={item.title} className="monitoring-alert-card"><div className="monitoring-alert-header"><strong>{item.title}</strong><Tag>来源登记</Tag></div><span>{item.description}</span></div>)}</Space></Card></Col><Col xs={24} xl={15}><Card title="质量门禁与交付规则" className="dataset-main-card"><Descriptions column={1} bordered size="small" items={gateRules.map((rule) => ({ key: rule.label, label: rule.label, children: rule.value }))} /></Card></Col></Row>
-  <Space direction="vertical" size="large" className="full-width">{preparationJobs.map((job) => <PreparationJobPanel key={job.jobId} job={job} openDetail={openDetail} onRerunPreparationJob={onRerunPreparationJob} />)}</Space></section>;
+  <Space direction="vertical" size="large" className="full-width">{preparationJobs.map((job) => <PreparationJobPanel key={job.jobId} job={job} openDetail={openDetail} onRerunPreparationJob={onRerunPreparationJob} onOpenStage={setSelectedStageKey} />)}</Space></section>;
 }

@@ -53,7 +53,15 @@ vi.mock("./api/datasetApi", () => ({
     qualityScore: 72,
     rerunCount: 1,
     outputSnapshotKey: "motor-thermal-train-snapshot-v4",
-    stages: ["数据收集", "数据清洗", "数据标注", "数据划分", "数据预处理", "数据增强", "格式转换与加载"].map((stageName) => ({ stageKey: stageName, stageName, status: stageName === "数据标注" ? "FAILED" : "PENDING", qualityScore: 80, gatePassed: stageName !== "数据标注", message: "等待增强" })),
+    stages: [
+      ["COLLECTION", "数据收集"],
+      ["CLEANING", "数据清洗"],
+      ["LABELING", "数据标注"],
+      ["SPLIT", "数据划分"],
+      ["PREPROCESSING", "数据预处理"],
+      ["AUGMENTATION", "数据增强"],
+      ["FORMAT_LOADING", "格式转换与加载"],
+    ].map(([stageKey, stageName]) => ({ stageKey, stageName, status: stageKey === "LABELING" ? "FAILED" : "PENDING", qualityScore: 80, gatePassed: stageKey !== "LABELING", message: "等待增强" })),
     outputSnapshot: { snapshotKey: "motor-thermal-train-snapshot-v4", loaderType: "PAI_DLC_DATA_LOADER", readyForTraining: false, trainSplitCount: 8988, validationSplitCount: 1926, testSplitCount: 1926 },
   }]),
   rerunPreparationJob: vi.fn(async () => ({ jobId: "prep-motor-thermal-v3", status: "RUNNING", currentStage: "SPLIT", blocked: false, rerunCount: 2, featureTrace: "TASK-dataset-preparation-pipeline" })),
@@ -184,13 +192,14 @@ describe("训练平台控制台", () => {
 });
 
 describe("TASK-dataset-preparation-pipeline", () => {
-  it("AC-01 AC-02 AC-05 AC-07 展示独立重做的数据准备工作台、阻断原因和重跑入口", async () => {
+  it("AC-01 AC-02 AC-05 AC-07 展示七阶段独立处理页、阻断原因和重跑入口", async () => {
     const user = userEvent.setup();
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "数据准备" }));
     expect(await screen.findByRole("heading", { name: "数据准备流水线工作台" })).toBeInTheDocument();
     expect(screen.getByText("独立工作台")).toBeInTheDocument();
+    expect(screen.getByText(/每一个数据准备阶段都有独立处理页/)).toBeInTheDocument();
     expect(screen.getByText(/不再沿用原数据资产列表页/)).toBeInTheDocument();
     expect(screen.getByText("TASK-dataset-preparation-pipeline")).toBeInTheDocument();
     expect(screen.getByText("平台内置覆盖数据收集、清洗、标注、划分、预处理、增强、格式转换与加载 7 个训练前步骤；失败即阻断，人工修正后重跑。")).toBeInTheDocument();
@@ -198,10 +207,20 @@ describe("TASK-dataset-preparation-pipeline", () => {
     expect(screen.getByText("阻断原因：标注一致性低于阈值")).toBeInTheDocument();
     expect(screen.getByText(/PAI_DLC_DATA_LOADER/)).toBeInTheDocument();
     for (const stage of ["数据收集", "数据清洗", "数据标注", "数据划分", "数据预处理", "数据增强", "格式转换与加载"]) {
-      expect(screen.getAllByText(new RegExp(stage)).length).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: `进入${stage}处理页` })).toBeInTheDocument();
     }
 
-    await user.click(screen.getByRole("button", { name: "人工修正后重跑" }));
+    await user.click(screen.getByRole("button", { name: "进入数据标注处理页" }));
+    expect(await screen.findByText("数据标注处理页")).toBeInTheDocument();
+    expect(screen.getByText("阶段目标")).toBeInTheDocument();
+    expect(screen.getByText("输入材料")).toBeInTheDocument();
+    expect(screen.getByText("功能处理")).toBeInTheDocument();
+    expect(screen.getByText("质量门禁")).toBeInTheDocument();
+    expect(screen.getByText("阶段产出")).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "返回流水线总览" })[0]);
+    expect(await screen.findByRole("heading", { name: "数据准备流水线工作台" })).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole("button", { name: "人工修正后重跑" })[0]);
     expect(await screen.findByText("数据准备阶段已人工修正并重跑通过")).toBeInTheDocument();
   });
 });

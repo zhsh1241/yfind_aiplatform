@@ -1,4 +1,4 @@
-﻿# Test Plan: 数据准备流水线
+# Test Plan: 数据准备流水线
 
 ## Metadata
 - Feature: F008-dataset-preparation-pipeline
@@ -42,17 +42,17 @@
 ## 3. Frontend Test Strategy
 
 ### Vitest
-- File: `frontend/src/App.test.tsx` 或新增页面级测试。
+- File: `frontend/src/App.test.tsx` 或新增页面级测试。覆盖总览页与 7 个阶段独立处理页入口。
 - Scenarios:
   - 数据资产页展示“数据准备流水线”。
-  - 展示 7 阶段名称、进度、质量门禁、阻断原因。
+  - 展示 7 阶段名称、进度、质量门禁、阻断原因，并进入单阶段独立处理页校验输入、功能处理、质量门禁与产出。
   - 重跑按钮可见且可触发 API fallback 状态刷新。
 
 ### Playwright E2E
 - File: `frontend/e2e/dataset-asset.spec.ts`
 - Scenarios:
   - 打开数据资产页，看到数据准备流水线区块。
-  - 校验 7 阶段文本。
+  - 校验 7 阶段文本与 7 个独立处理页入口。
   - 校验阻断原因与“人工修正后重跑”入口。
   - 校验训练数据集产物摘要不出现训练提交动作。
 
@@ -84,4 +84,4 @@ node C:/GIT/yfind_aiplatform/tools/ai-scaffold/dist/cli.js gate --feature-dir do
 
 - 确认企业内部系统和网络采集仅保留 `TODO_CONFIRM_*`，未伪造真实外部资源。
 - 确认 F008 不提供训练任务提交按钮或接口。
-- 确认新增能力复用 dataset domain、权限和页面入口。
+- 确认新增能力复用 dataset domain、权限和页面入口，并确认每个阶段进入独立处理页后可查看阶段输入、功能处理、质量门禁与产出。
