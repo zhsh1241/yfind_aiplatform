@@ -6,7 +6,6 @@ import {
   SafetyCertificateOutlined,
 } from "@ant-design/icons";
 import { App as AntdApp, Button, ConfigProvider, Descriptions, Drawer, Input, Space, Tag, Typography, theme } from "antd";
-import type { ColumnsType } from "antd/es/table";
 import type { ReactNode } from "react";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { approveDatasetAccessRequest, createDataset, createDatasetAccessRequest, loadDatasets, loadPreparationJobs, rerunPreparationJob, type PreparationJob } from "./api/datasetApi";
@@ -247,16 +246,6 @@ function PlatformApp() {
       });
   };
 
-  const datasetColumns: ColumnsType<Dataset> = [
-    { title: "数据集", dataIndex: "name", render: (value: string, record) => <Button type="link" onClick={() => setSelectedDataset(record)}>{value}</Button> },
-    { title: "负责人", dataIndex: "owner" },
-    { title: "状态", dataIndex: "status", render: (value: string) => <Tag color={value === "ACTIVE" ? "green" : value === "PROCESSING" ? "blue" : "gold"}>{value}</Tag> },
-    { title: "版本数", dataIndex: "versionCount" },
-    { title: "样本量", dataIndex: "samples" },
-    { title: "下载权限", dataIndex: "canDownloadLatestVersion", render: (value: boolean, record) => <Tag color={value || (requestApproved && selectedDataset?.key === record.key) ? "green" : "red"}>{value || (requestApproved && selectedDataset?.key === record.key) ? "已放行" : "未放行"}</Tag> },
-    { title: "操作", render: (_, record) => <Space><Button size="small" onClick={() => setSelectedDataset(record)}>查看</Button><Button size="small" onClick={() => openDetail(`${record.name} 预览`, record.samplePreviewType.startsWith("image/") ? `当前样例文件 ${record.samplePreviewName} 可用于视觉质检。` : `当前样例文件 ${record.samplePreviewName} 仅展示资产登记信息。`)}>预览</Button><Button size="small" type="primary" onClick={() => { setSelectedDataset(record); setModalKind("dataset-request"); }}>申请下载</Button></Space> },
-  ];
-
   return (
     <div className="saas-shell">
       <aside className="saas-sidebar" aria-label="平台导航">
@@ -304,7 +293,7 @@ function PlatformApp() {
           <Suspense fallback={loadingFallback}>
             {activeModule === "overview" && <OverviewPage openDetail={openDetail} onUpload={() => setModalKind("upload")} onTraining={() => setModalKind("training")} />}
             {activeModule === "identity" && <IdentityPage modules={moduleItems.filter((item) => item.key !== "overview").map(({ key, label }) => ({ key, label }))} openDetail={openDetail} onOpenPermission={() => setModalKind("permission")} />}
-            {activeModule === "data-prep" && selectedDataset && <DatasetPage columns={datasetColumns} datasets={filteredDatasets} selectedDataset={selectedDataset} datasetQuery={datasetQuery} setDatasetQuery={setDatasetQuery} datasetStatusFilter={datasetStatusFilter} setDatasetStatusFilter={setDatasetStatusFilter} requestApproved={requestApproved || selectedDataset.canDownloadLatestVersion} source={datasetSource} enableBulkSelection={true} preparationJobs={preparationJobs} openDetail={openDetail} onUpload={() => setModalKind("upload")} onRequest={() => setModalKind("dataset-request")} onApprove={() => setModalKind("dataset-approve")} onDownload={handleDownloadDataset} onRerunPreparationJob={handleRerunPreparationJob} />}
+            {activeModule === "data-prep" && <DatasetPage source={datasetSource} preparationJobs={preparationJobs} openDetail={openDetail} onRerunPreparationJob={handleRerunPreparationJob} />}
             {activeModule === "training" && <TrainingPage onOpen={() => setModalKind("training")} openDetail={openDetail} />}
             {activeModule === "model" && <ModelPage openDetail={openDetail} />}
             {activeModule === "governance" && <GovernancePage openDetail={openDetail} />}

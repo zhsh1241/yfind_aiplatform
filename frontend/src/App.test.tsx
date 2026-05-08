@@ -184,13 +184,17 @@ describe("训练平台控制台", () => {
 });
 
 describe("TASK-dataset-preparation-pipeline", () => {
-  it("AC-01 AC-02 AC-05 AC-07 展示七阶段数据准备、阻断原因和重跑入口", async () => {
+  it("AC-01 AC-02 AC-05 AC-07 展示独立重做的数据准备工作台、阻断原因和重跑入口", async () => {
     const user = userEvent.setup();
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "数据准备" }));
-    expect(await screen.findByText("TASK-dataset-preparation-pipeline")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "数据准备流水线工作台" })).toBeInTheDocument();
+    expect(screen.getByText("独立工作台")).toBeInTheDocument();
+    expect(screen.getByText(/不再沿用原数据资产列表页/)).toBeInTheDocument();
+    expect(screen.getByText("TASK-dataset-preparation-pipeline")).toBeInTheDocument();
     expect(screen.getByText("平台内置覆盖数据收集、清洗、标注、划分、预处理、增强、格式转换与加载 7 个训练前步骤；失败即阻断，人工修正后重跑。")).toBeInTheDocument();
+    expect(screen.queryByText("数据集列表")).not.toBeInTheDocument();
     expect(screen.getByText("阻断原因：标注一致性低于阈值")).toBeInTheDocument();
     expect(screen.getByText(/PAI_DLC_DATA_LOADER/)).toBeInTheDocument();
     for (const stage of ["数据收集", "数据清洗", "数据标注", "数据划分", "数据预处理", "数据增强", "格式转换与加载"]) {

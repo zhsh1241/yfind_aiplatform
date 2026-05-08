@@ -43,7 +43,7 @@
 - API: 在 `/api/datasets/preparation-jobs` 下提供列表、详情、创建、执行下一阶段、人工修正重跑等接口。
 
 ### Frontend
-- Pages: 复用并扩展 `frontend/src/pages/DatasetPage.tsx`，在数据资产页面加入数据准备流水线视图。
+- Pages: 按用户要求重做 `frontend/src/pages/DatasetPage.tsx` 为独立数据准备流水线工作台，不沿用原数据资产列表页。
 - Components: 优先使用现有 Ant Design `Card`、`Table`、`Descriptions`、`Progress`、`Tag`、`Button` 组合，不引入新依赖。
 - Stores/API: 扩展 `frontend/src/api/datasetApi.ts`，保留 fallback 体验。
 
@@ -58,7 +58,7 @@
   - `backend/src/main/java/com/yfind/aiplatform/identity/PlatformAuthorizationService.java`：复用 `dataset:read` / `dataset:manage` 权限校验。
   - `backend/src/main/java/com/yfind/aiplatform/training/*`：仅作为训练数据集输出边界参考，不复刻训练逻辑。
 - Existing frontend seams to reuse:
-  - `frontend/src/pages/DatasetPage.tsx`：作为数据资产入口承载流水线摘要与详情。
+  - `frontend/src/pages/DatasetPage.tsx`：保留导航入口但重做为独立流水线工作台，不复用原数据资产列表布局。
   - `frontend/src/api/datasetApi.ts`：扩展数据准备 API 和 fallback 映射。
   - `frontend/src/prototype-data.ts` / `simulationStore.ts`：必要时复用本地演示数据策略。
 - Existing SQL / permissions / test fixtures to reuse:
@@ -76,7 +76,7 @@
 - [ ] **AC-03**: 后端支持创建数据准备任务，保存来源配置、规则快照、质量门禁阈值和训练数据集输出目标。
 - [ ] **AC-04**: 任一阶段质量门禁失败时，后端状态机阻断后续阶段，返回失败原因、人工修正要求和重跑入口。
 - [ ] **AC-05**: 后端支持人工修正后重跑失败阶段，并记录重跑次数、操作者、原因和审计摘要。
-- [ ] **AC-06**: 前端在数据资产页展示数据准备流水线任务、7 阶段进度、质量结果、阻断提示和重跑操作。
+- [ ] **AC-06**: 前端以独立数据准备流水线工作台展示任务、7 阶段进度、质量结果、阻断提示和重跑操作，不沿用原数据资产列表页。
 - [ ] **AC-07**: F008 产物边界止于可训练数据集快照 / 加载配置，不提交训练任务、不实现模型治理或推理部署。
 - [ ] **AC-08**: 所有新增接口复用 `dataset:read` / `dataset:manage` 权限，自动化测试包含 `TASK-dataset-preparation-pipeline` 与对应 `AC-xx` 标签。
 
