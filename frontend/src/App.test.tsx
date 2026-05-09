@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+﻿import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -199,7 +199,7 @@ describe("TASK-dataset-preparation-pipeline", () => {
     await user.click(screen.getByRole("button", { name: "数据准备" }));
     expect(await screen.findByRole("heading", { name: "数据准备流水线工作台" })).toBeInTheDocument();
     expect(screen.getByText("独立工作台")).toBeInTheDocument();
-    expect(screen.getByText(/每一个数据准备阶段都有独立处理页/)).toBeInTheDocument();
+    expect(screen.getByText(/每一个数据准备阶段都有独立处理页和本页专属功能/)).toBeInTheDocument();
     expect(screen.getByText(/不再沿用原数据资产列表页/)).toBeInTheDocument();
     expect(screen.getByText("TASK-dataset-preparation-pipeline")).toBeInTheDocument();
     expect(screen.getByText("平台内置覆盖数据收集、清洗、标注、划分、预处理、增强、格式转换与加载 7 个训练前步骤；失败即阻断，人工修正后重跑。")).toBeInTheDocument();
@@ -217,6 +217,10 @@ describe("TASK-dataset-preparation-pipeline", () => {
     expect(screen.getByText("功能处理")).toBeInTheDocument();
     expect(screen.getByText("质量门禁")).toBeInTheDocument();
     expect(screen.getByText("阶段产出")).toBeInTheDocument();
+    expect(screen.getByText("数据标注本页功能")).toBeInTheDocument();
+    expect(screen.getByText("标签体系校验")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "启动标注一致性复核" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开人工修正队列" })).toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: "返回流水线总览" })[0]);
     expect(await screen.findByRole("heading", { name: "数据准备流水线工作台" })).toBeInTheDocument();
 
@@ -224,3 +228,4 @@ describe("TASK-dataset-preparation-pipeline", () => {
     expect(await screen.findByText("数据准备阶段已人工修正并重跑通过")).toBeInTheDocument();
   });
 });
+

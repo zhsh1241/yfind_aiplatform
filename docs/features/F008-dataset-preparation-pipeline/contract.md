@@ -1,4 +1,4 @@
-# Feature Contract: 数据准备流水线
+﻿# Feature Contract: 数据准备流水线
 
 ## Contract Metadata
 - Feature: F008-dataset-preparation-pipeline
@@ -318,7 +318,7 @@ F008 在现有 `dataset` domain 内提供训练前数据准备流水线能力，
 | AC-03 | create job request 覆盖来源配置、规则快照、质量门槛、输出目标 |
 | AC-04 | run-next-stage gate failed / BLOCKED 语义 |
 | AC-05 | rerun-blocked-stage、rerunRecords、auditTrail |
-| AC-06 | 前端可消费 list/detail schema，并以 7 个阶段独立处理页呈现阶段输入、功能处理、质量门禁与产出 |
+| AC-06 | 前端可消费 list/detail schema，并以 7 个阶段独立处理页呈现阶段输入、功能处理、质量门禁、产出与本页专属操作 |
 | AC-07 | outputSnapshot 仅到训练数据集快照 / loader 元数据 |
 | AC-08 | permission 声明与 featureTrace |
 
@@ -334,3 +334,4 @@ F008 在现有 `dataset` domain 内提供训练前数据准备流水线能力，
 - 扩展 `datasetApi.ts` 类型与 fallback。
 - 在 `DatasetPage.tsx` 添加数据准备流水线卡片/表格/详情，不引入新依赖。
 - Playwright 覆盖 7 阶段文案、阻断原因、重跑入口。
+
