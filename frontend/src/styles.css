@@ -1409,3 +1409,96 @@ textarea {
     width: 100%;
   }
 }
+
+
+.dataset-console-shell {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  min-height: 620px;
+  overflow: hidden;
+  background: #f4f8ff;
+  border: 1px solid #d7e7ff;
+  border-radius: 22px;
+  box-shadow: var(--shadow-panel);
+}
+
+.dataset-console-side {
+  padding: 14px 10px;
+  background: #e7f1ff;
+  border-right: 1px solid #d7e7ff;
+}
+
+.dataset-side-title {
+  margin: 10px 8px 8px;
+  color: #1e3a5f;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dataset-side-link {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  color: #355070;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+}
+
+.dataset-side-link.is-active,
+.dataset-side-link:hover {
+  color: #2563eb;
+  background: #dbeafe;
+}
+
+.dataset-console-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: 18px;
+  background: #ffffff;
+}
+
+.dataset-console-card {
+  min-height: 360px;
+}
+
+.dataset-console-form {
+  gap: 14px 18px;
+  margin-bottom: 26px;
+}
+
+.dataset-console-input {
+  width: 280px;
+}
+
+.dataset-console-select {
+  width: 250px;
+}
+
+.dataset-console-actions {
+  margin-bottom: 12px;
+}
+
+.dataset-console-table .ant-table-thead > tr > th {
+  background: #f8fafc !important;
+}
+
+.dataset-row-link {
+  padding: 0;
+}
+
+@media (max-width: 1024px) {
+  .dataset-console-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .dataset-console-side {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+}

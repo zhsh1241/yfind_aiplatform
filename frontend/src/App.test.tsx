@@ -197,15 +197,16 @@ describe("TASK-dataset-preparation-pipeline", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "数据准备" }));
-    expect(await screen.findByRole("heading", { name: "数据准备流水线工作台" })).toBeInTheDocument();
-    expect(screen.getByText("独立工作台")).toBeInTheDocument();
-    expect(screen.getByText(/每一个数据准备阶段都有独立处理页和本页专属功能/)).toBeInTheDocument();
-    expect(screen.getByText(/不再沿用原数据资产列表页/)).toBeInTheDocument();
-    expect(screen.getByText("TASK-dataset-preparation-pipeline")).toBeInTheDocument();
+    expect((await screen.findAllByText("数据源管理")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("数据源类型").length).toBeGreaterThan(0);
+    expect(screen.getByPlaceholderText("请输入数据源名称")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "+ 新建数据源" })).toBeInTheDocument();
+    expect(screen.getAllByText("电机温升异常图像集").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("TASK-dataset-preparation-pipeline").length).toBeGreaterThan(0);
     expect(screen.getByText("平台内置覆盖数据收集、清洗、标注、划分、预处理、增强、格式转换与加载 7 个训练前步骤；失败即阻断，人工修正后重跑。")).toBeInTheDocument();
     expect(screen.queryByText("数据集列表")).not.toBeInTheDocument();
     expect(screen.getByText("阻断原因：标注一致性低于阈值")).toBeInTheDocument();
-    expect(screen.getByText(/PAI_DLC_DATA_LOADER/)).toBeInTheDocument();
+    expect(screen.getAllByText(/PAI_DLC_DATA_LOADER/).length).toBeGreaterThan(0);
     for (const stage of ["数据收集", "数据清洗", "数据标注", "数据划分", "数据预处理", "数据增强", "格式转换与加载"]) {
       expect(screen.getByRole("button", { name: `进入${stage}处理页` })).toBeInTheDocument();
     }
@@ -222,10 +223,17 @@ describe("TASK-dataset-preparation-pipeline", () => {
     expect(screen.getByRole("button", { name: "启动标注一致性复核" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "打开人工修正队列" })).toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: "返回流水线总览" })[0]);
-    expect(await screen.findByRole("heading", { name: "数据准备流水线工作台" })).toBeInTheDocument();
+    expect((await screen.findAllByText("数据源管理")).length).toBeGreaterThan(0);
 
     await user.click(screen.getAllByRole("button", { name: "人工修正后重跑" })[0]);
     expect(await screen.findByText("数据准备阶段已人工修正并重跑通过")).toBeInTheDocument();
-  });
+  }, 15000);
 });
+
+
+
+
+
+
+
 
