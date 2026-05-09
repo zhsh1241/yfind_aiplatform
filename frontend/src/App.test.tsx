@@ -197,11 +197,18 @@ describe("TASK-dataset-preparation-pipeline", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "数据准备" }));
-    expect((await screen.findAllByText("数据源管理")).length).toBeGreaterThan(0);
+    expect(await screen.findByPlaceholderText("请输入数据源名称")).toBeInTheDocument();
     expect(screen.getAllByText("数据源类型").length).toBeGreaterThan(0);
     expect(screen.getByPlaceholderText("请输入数据源名称")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "+ 新建数据源" })).toBeInTheDocument();
     expect(screen.getAllByText("电机温升异常图像集").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "数据集管理" }));
+    expect(screen.getByRole("button", { name: "+ 新建数据集" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "标签管理" }));
+    expect(screen.getByRole("button", { name: "+ 新建标签体系" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "数据源接入" }));
+    await user.click(screen.getByRole("button", { name: "+ 新建数据源" }));
+    expect((await screen.findAllByText("+ 新建数据源")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("TASK-dataset-preparation-pipeline").length).toBeGreaterThan(0);
     expect(screen.getByText("平台内置覆盖数据收集、清洗、标注、划分、预处理、增强、格式转换与加载 7 个训练前步骤；失败即阻断，人工修正后重跑。")).toBeInTheDocument();
     expect(screen.queryByText("数据集列表")).not.toBeInTheDocument();
@@ -223,17 +230,12 @@ describe("TASK-dataset-preparation-pipeline", () => {
     expect(screen.getByRole("button", { name: "启动标注一致性复核" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "打开人工修正队列" })).toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: "返回流水线总览" })[0]);
-    expect((await screen.findAllByText("数据源管理")).length).toBeGreaterThan(0);
+    expect(await screen.findByPlaceholderText("请输入数据源名称")).toBeInTheDocument();
 
     await user.click(screen.getAllByRole("button", { name: "人工修正后重跑" })[0]);
     expect(await screen.findByText("数据准备阶段已人工修正并重跑通过")).toBeInTheDocument();
-  }, 15000);
+  }, 25000);
 });
-
-
-
-
-
 
 
 

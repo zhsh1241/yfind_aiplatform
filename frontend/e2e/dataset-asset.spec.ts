@@ -6,6 +6,7 @@ test.describe("TASK-dataset-asset-mvp 数据准备入口", () => {
     await page.getByRole("button", { name: "数据准备" }).click();
     await expect(page.getByText("数据源管理").first()).toBeVisible();
     await expect(page.getByText("数据源类型").first()).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(page.getByPlaceholder("请输入数据源名称")).toBeVisible();
     await expect(page.getByRole("button", { name: "+ 新建数据源" })).toBeVisible();
     await expect(page.getByText("电机温升异常图像集").first()).toBeVisible();
@@ -22,6 +23,14 @@ test.describe("TASK-dataset-preparation-pipeline", () => {
     await expect(page.getByPlaceholder("请输入数据源名称")).toBeVisible();
     await expect(page.getByRole("button", { name: "+ 新建数据源" })).toBeVisible();
     await expect(page.getByText("电机温升异常图像集").first()).toBeVisible();
+    await page.getByRole("button", { name: "数据集管理" }).click();
+    await expect(page.getByRole("button", { name: "+ 新建数据集" })).toBeVisible();
+    await page.getByRole("button", { name: "标签管理" }).click();
+    await expect(page.getByRole("button", { name: "+ 新建标签体系" })).toBeVisible();
+    await page.getByRole("button", { name: "数据源接入" }).click();
+    await page.getByRole("button", { name: "+ 新建数据源" }).click();
+    await expect(page.getByText("+ 新建数据源").last()).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(page.getByText("TASK-dataset-preparation-pipeline").first()).toBeVisible();
     await expect(page.getByText("平台内置覆盖数据收集、清洗、标注、划分、预处理、增强、格式转换与加载 7 个训练前步骤；失败即阻断，人工修正后重跑。")).toBeVisible();
     await expect(page.getByText("数据集列表")).toHaveCount(0);
@@ -47,8 +56,4 @@ test.describe("TASK-dataset-preparation-pipeline", () => {
     await expect(page.getByText("数据准备阶段已记录为本地重跑通过")).toBeVisible();
   });
 });
-
-
-
-
 
