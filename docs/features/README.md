@@ -2,6 +2,8 @@
 
 本目录用于正式功能交付包：`F{nnn}-{slug}`。
 
+后续功能编号与拆解清单见 `docs/features/FEATURE_BREAKDOWN.md`。该清单保留 `F003`～`F020` 编号，并作为创建正式 feature 目录前的准备索引。
+
 当前旧功能包已清空。后续每个功能必须基于 `docs/business/` 与 `docs/prototype/` 重新规划，并包含：
 
 - `plan.md`：方案与范围，必须 `plan_status: approved` 后才可实现。

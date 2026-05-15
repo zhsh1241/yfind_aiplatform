@@ -110,6 +110,8 @@
 
 ## 5. 建议功能包序列
 
+详细功能拆解、子功能编号和 feature 创建准备清单见 `docs/features/FEATURE_BREAKDOWN.md`。
+
 | 建议编号 | 功能包 | 优先级 | 依赖 | 关键范围 |
 |---|---|---|---|---|
 | F003 | `backend-foundation` | P0 | R0 | Spring Boot 4.0.x 多模块、统一响应、异常、OpenAPI、Flyway、基础测试 |
