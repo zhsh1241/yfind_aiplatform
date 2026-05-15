@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: smp-backend
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:TODO_CONFIRM_POSTGRES_HOST}:${DB_PORT:5432}/${DB_NAME:TODO_CONFIRM_POSTGRES_DB}
+    username: ${DB_USER:TODO_CONFIRM_POSTGRES_USER}
+    password: ${DB_PASSWORD:TODO_CONFIRM_POSTGRES_PASSWORD}
+  flyway:
+    enabled: true
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+server:
+  port: ${SERVER_PORT:8080}

@@ -4,7 +4,10 @@
   "bugfixRoot": "docs/bugfix",
   "codeLikeRoots": [
     "ai-adapter/",
-    "docs/db/"
+    "docs/db/",
+    "backend/",
+    "frontend/",
+    "deploy/"
   ],
   "scaffoldRoots": [
     "tools/ai-scaffold/",
@@ -80,7 +83,7 @@
     "path": "backend",
     "changeRoot": "backend/",
     "modulePathPrefix": "backend/",
-    "enabled": false,
+    "enabled": true,
     "commands": {
       "compile": {
         "command": "mvn",
@@ -116,7 +119,7 @@
       "name": "web",
       "path": "frontend",
       "changeRoot": "frontend/",
-      "enabled": false,
+      "enabled": true,
       "commands": {
         "lint": {
           "command": "npm",

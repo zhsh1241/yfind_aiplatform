@@ -1,0 +1,6 @@
+apiVersion: v2
+name: smp-platform
+description: YFI SMP 工业 AI 小模型平台 Helm 部署骨架
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

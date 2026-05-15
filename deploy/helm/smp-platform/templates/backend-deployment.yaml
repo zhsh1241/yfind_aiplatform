@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smp-backend
+  labels:
+    app.kubernetes.io/name: smp-backend
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: smp-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: smp-backend
+    spec:
+      containers:
+        - name: smp-backend
+          image: {{ .Values.backend.image | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+{{- range $name, $value := .Values.backend.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+{{- end }}
+          ports:
+            - containerPort: {{ .Values.backend.service.port }}
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: {{ .Values.backend.service.port }}
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: {{ .Values.backend.service.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: smp-backend
+spec:
+  selector:
+    app.kubernetes.io/name: smp-backend
+  ports:
+    - port: {{ .Values.backend.service.port }}
+      targetPort: {{ .Values.backend.service.port }}

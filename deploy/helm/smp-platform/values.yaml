@@ -1,0 +1,26 @@
+global:
+  imagePullPolicy: IfNotPresent
+  namespace: TODO_CONFIRM_K8S_NAMESPACE
+
+backend:
+  image: TODO_CONFIRM_REGISTRY/smp-backend:0.1.0
+  replicas: 1
+  service:
+    port: 8080
+  env:
+    DB_HOST: TODO_CONFIRM_POSTGRES_HOST
+    DB_PORT: "5432"
+    DB_NAME: TODO_CONFIRM_POSTGRES_DB
+    DB_USER: TODO_CONFIRM_POSTGRES_USER
+    DB_PASSWORD: TODO_CONFIRM_POSTGRES_PASSWORD
+    LDAP_URL: TODO_CONFIRM_LDAP_URL
+
+frontend:
+  image: TODO_CONFIRM_REGISTRY/smp-frontend:0.1.0
+  replicas: 1
+  service:
+    port: 80
+
+ingress:
+  enabled: false
+  host: TODO_CONFIRM_INGRESS_HOST
