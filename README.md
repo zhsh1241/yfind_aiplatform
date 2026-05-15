@@ -1,105 +1,88 @@
 # yfind_aiplatform
 
-AI platform project workspace.
+本仓库承载 **YFI / 延锋 SMP 工业 AI 小模型平台** 的需求资料、交互原型、AI 工程脚手架与后续实现工作面。现阶段已清空旧版业务实现，当前基线以 `docs/business/` 和 `docs/prototype/` 为权威输入，后续功能必须先规划再实现。
 
-This repository has been initialized with the portable AI development scaffold from:
+## 当前仓库状态
 
-`C:\GIT\newwms_copy\_temp\ai-scaffold-portable-20260428-095328`
+- **权威业务资料**：`docs/business/`
+- **权威交互原型**：`docs/prototype/SMP工业AI平台-原型v2.html` 与 `SMP工业AI平台-原型v2-compiled.html`
+- **仍保留可验证服务**：`ai-adapter/`（内部 Python/FastAPI AI/MLOps 适配器基线）
+- **已清空待重建**：`backend/`、`frontend/`、`deploy/` 的旧实现不再作为事实来源
+- **AI 脚手架**：`tools/ai-scaffold/`、`.agents/`、`.codex/`
 
-## Scaffold Status
+## 项目理解速览
 
-Installed scaffold surfaces:
+SMP 是面向工业场景的小模型平台，目标覆盖从数据接入、数据加工、标注、训练/调优、评估、模型市场、推理服务、边端下发，到监控、权限、审计与运营报表的完整闭环。
 
-- `AGENTS.md`
-- `project.md`
-- `ai-scaffold.config.json`
-- `.agents/`
-- `.codex/`
-- `docs/features/`
-- `docs/bugfix/`
-- `tools/ai-scaffold/`
-- `scripts/check-*`
+## 技术栈基线
 
-Backend, FastAPI AI adapter, frontend, and deploy skeletons are initialized by `F001-platform-architecture-baseline`. External database, E2E, AI/MLOps, Kubernetes, registry, SSO, and CI values remain TODO placeholders until confirmed.
+完整技术栈已锁定在 `docs/architecture/01-technology-stack-baseline.md`，并同步到 `ai-scaffold.config.json` 的 `technologyStack`。当前基线：
 
-## Baseline Roots
+| 层级 | 已确定技术栈 |
+|---|---|
+| 主后端 | Java 21 LTS + Spring Boot 4.0.x + Spring Data JPA/Hibernate + Flyway + OpenAPI 3.1 |
+| 前端 | React 19 + TypeScript 6.x + Vite 8 + Ant Design 6 + TanStack Query 5 + Zustand 5 |
+| AI 适配器 | Python 3.12 + FastAPI 0.136.x + Pydantic 2.13.x + Uvicorn + uv |
+| 数据/中间件 | PostgreSQL 18 + Valkey 8.1 + Kafka 4.0 + MinIO(S3) + OpenSearch 3.x |
+| MLOps | Label Studio + MLflow 3.x + Argo Workflows 4.x + KServe 0.16+ |
+| 部署运维 | Docker/OCI + Kubernetes 1.35.x + Helm 4 + Argo CD 3.x + OpenTelemetry/Prometheus/Grafana/Loki |
+| 身份安全 | YF LDAP + Spring Security + RBAC/必要 ABAC + 审计不可篡改 |
 
-- `backend/`: Java 21 + Spring Boot 3 baseline with `GET /api/health`.
-- `ai-adapter/`: Python 3.12 + FastAPI internal adapter with `GET /internal/health`.
-- `frontend/`: React + TypeScript + Ant Design Pro baseline shell.
-- `deploy/`: Helm/Kubernetes baseline for frontend, backend, and ai-adapter with `TODO_CONFIRM_*` placeholders.
-- `docs/features/F001-platform-architecture-baseline/`: baseline feature documentation and verification report.
+> 注意：技术栈已确定，但 `backend/`、`frontend/`、`deploy/` 产品实现仍处于清空待重建状态；不得把旧实现当作事实来源。
 
-## Common Commands
+### 五大业务域
+
+| 领域 | 主要能力 | 关键资料 |
+|---|---|---|
+| 数据域 DATA | 数据源、数据集、标注、审核、血缘、Pipeline、算子、数据资产门户 | `docs/business/bizdocs/03-01-系统功能-数据管理.md`、`docs/business/domain/01-领域对象-数据域.md`、`docs/business/rules/01-数据管理规则.md` |
+| 模型域 MODEL | 开发环境、训练、实验、评估、模型市场、模型工程化 | `docs/business/bizdocs/03-02-系统功能-模型开发.md`、`docs/business/domain/02-领域对象-模型域.md`、`docs/business/rules/02-模型开发规则.md` |
+| 推理域 INFERENCE | 在线推理、批量推理、边端管理、第三方服务纳管、灰度与回滚 | `docs/business/bizdocs/03-03-系统功能-模型部署.md`、`docs/business/domain/05-领域对象-推理域.md`、`docs/business/rules/03-推理部署规则.md` |
+| 资源域 RESOURCE | 集群、GPU/NPU、资源池、存储、镜像、安全扫描、调度策略 | `docs/business/domain/03-领域对象-资源域.md`、`docs/business/rules/04-资源管理规则.md` |
+| 平台域 PLATFORM | 多租户、用户、角色、权限、SSO、审计、通知、系统配置、报表 | `docs/business/bizdocs/03-04-系统功能-平台管理.md`、`docs/business/domain/04-领域对象-平台域.md`、`docs/business/rules/05-平台与权限规则.md` |
+
+### 原型覆盖
+
+`docs/prototype/SMP工业AI平台-原型v2.html` 是 JSX 源原型，`SMP工业AI平台-原型v2-compiled.html` 是可直接打开的编译版。主导航共 25 个页面：
+
+- 工作台：`dash`
+- 数据管理：`ds`、`ann`、`datasrc`、`annreview`、`lineage`、`pipeline`、`opmarket`、`portal`
+- 模型开发：`devenv`、`train`、`exp`、`eval`、`hub`、`infer`、`batch`
+- 运营中心：`sched`、`edge`、`report`
+- 平台管理：`resource`、`usermgmt`、`org`、`perm`、`alert`、`sys`
+
+截图资产位于 `docs/prototype/*.png`，用于视觉验收和后续前端复刻。
+
+## 重要约束
+
+- 所有正式文档、计划、报告、评审说明和交付内容默认使用中文。
+- 不得再把旧 `backend/` / `frontend/` 代码当作复用事实；当前只有业务资料、原型、AI 脚手架和 `ai-adapter/` 是有效基线。
+- 未确认外部系统参数必须保留 `TODO_CONFIRM_*`，不得臆造。
+- 后续正式功能仍使用 `docs/features/F{nnn}-{slug}/`，但需要先恢复/创建对应 feature 模板和编号文件。
+- `docs/business/` 与 `docs/prototype/` 是 reference roots，不应被 `check-work-item-link` 当成代码改动强制绑定 feature。
+
+## 常用命令
 
 ```powershell
-npm --prefix tools/ai-scaffold ci
-npm --prefix tools/ai-scaffold run build
+# 查看脚手架对当前基线的理解
+node tools/ai-scaffold/dist/cli.js scaffold-status
 node tools/ai-scaffold/dist/cli.js doctor
-node tools/ai-scaffold/dist/cli.js sync-codex
+
+# 验证 AI 脚手架自身
+npm --prefix tools/ai-scaffold run build
 npm --prefix tools/ai-scaffold test
-```
 
-## æ¬æº Java 21 ç¯å¢
-
-å½åæºå¨é»è®¤ `java` / `mvn` å¯è½æå **Java 8**ï¼è `backend/` éè¦ **Java 21**ãè¿è¡ backend verify æ gate åï¼è¯·åå¨å½å PowerShell ä¼è¯åæ¢å° JDK 21ï¼
-
-```powershell
-$env:JAVA_HOME='C:\java\jdk-21.0.6'
-$env:Path="C:\java\jdk-21.0.6\bin;" + [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
-java -version
-mvn -version
-```
-
-ç¡®è®¤ `java -version` å `mvn -version` åæ¾ç¤º **21.0.6**ï¼ä¸è¦æ¾ç¤º `1.8.x`ã
-
-å¸¸ç¨éªè¯å½ä»¤ï¼
-
-```powershell
-mvn -f backend\pom.xml test -q
-mvn -f backend\pom.xml verify -DskipITs=true
-```
-
-Create a feature artifact:
-
-```powershell
-node tools/ai-scaffold/dist/cli.js init-feature --slug <slug> --title "<title>"
-```
-
-Render an agent prompt:
-
-```powershell
-node tools/ai-scaffold/dist/cli.js render-agent-prompt --role backend-tdd-engineer --feature-dir docs/features/F001-example --task "Describe task" --summary
-```
-
-## Before Real Feature Work
-
-Fill confirmed values in `ai-scaffold.config.json` and mirror the same facts in `project.md`:
-
-- backend path and compile/test/verify commands
-- frontend path(s) and lint/test/build/E2E commands
-- database test name, user, password, and container name
-- E2E account and tenant settings
-- CI workflow rules, if used
-
-
-## Backend / frontend smoke
-
-```powershell
-$env:JAVA_HOME='C:\java\jdk-21.0.6'
-$env:Path="C:\java\jdk-21.0.6\bin;" + [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
-mvn -f backend\pom.xml verify -DskipITs=true
-
+# 验证当前仍启用的 ai-adapter
 Push-Location ai-adapter
 python -m compileall app tests
 python -m unittest discover -s tests -v
 Pop-Location
 
-Push-Location frontend
-npm install
-npm run lint
-npm run test:ci
-npm run build
-npm run e2e
-Pop-Location
+# 当前 gate：backend/frontend 已禁用，仅执行启用服务与可用门禁
+node tools/ai-scaffold/dist/cli.js gate --skip-backend-integration
 ```
+
+## 下一步建议
+
+1. 基于 `docs/business/` 和 `docs/prototype/` 制定新的 `docs/features/` 功能切分与里程碑。
+2. 先重建 `backend/`、`frontend/`、`deploy/` 的最小生产级基线，再逐域实现。
+3. 每个功能按 `plan.md` → `TASK.md` → `contract.md` → `test-plan.md` → 实现 → review/QA/gate 的顺序推进。

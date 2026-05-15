@@ -6,6 +6,11 @@ backend/data/
 .codex/worktrees/*
 !.codex/worktrees/README.md
 _temp/
+backend/
+frontend/
+deploy/
+frontend/node_modules/
+frontend/.vite/
 target/
 coverage/
 .vite/

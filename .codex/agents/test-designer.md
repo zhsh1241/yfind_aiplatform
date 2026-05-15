@@ -95,9 +95,10 @@ skills: [tdd-workflow, e2e-testing]
 - 框架: JUnit 5 + Spring Boot Test
 - 位置: `src/test/java/`
 - 命令: `mvn test`
+- 集成依赖: Testcontainers 覆盖 PostgreSQL/Kafka/对象存储等外部依赖替身
 
 ### 前端测试
-- 框架: Vitest
+- 框架: Vitest + React Testing Library；E2E 使用 Playwright
 - 位置: 按 `ai-scaffold.config.json` 中的 frontend `path` 定位，例如 `<frontend>/src/__tests__/`
 - 命令: `npm run test`
 ```

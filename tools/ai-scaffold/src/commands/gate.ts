@@ -13,6 +13,7 @@ import {
   loadScaffoldConfig,
   resolveCommand,
   resolveConfigPath,
+  type BackendConfig,
   type CommandSpec,
   type FrontendConfig,
   type ScaffoldConfig,
@@ -20,7 +21,7 @@ import {
 
 const AC_PATTERN = /([A-Z0-9]+-)?AC-[0-9]+/gu;
 const REUSE_EVIDENCE_PATTERN =
-  /\b(?:backend\/|frontend\/|docs\/db\/|docs\/features\/|[A-Z][A-Za-z0-9]+(?:Service|Controller|Mapper|Repository|Request|Response|DTO|Dto|Panel|Store|Api|Page|Spec|Test)|\/api\/v[0-9]+\/|[a-z]+:[\w:-]+|(?:public|platform|masterdata|config|wms)\.[a-z][\w]*|(?:sys|wms|pda|inbound|outbound|inventory|receiving)_[a-z][\w]*|CREATE TABLE|\.spec\.ts|\.test\.(?:ts|tsx|java))\b/iu;
+  /\b(?:backend\/|frontend\/|ai-adapter(?:\/|\b)|docs\/db(?:\/|\b)|docs\/features(?:\/|\b)|docs\/business(?:\/|\b)|docs\/prototype(?:\/|\b)|tools\/ai-scaffold(?:\/|\b)|[A-Z][A-Za-z0-9]+(?:Service|Controller|Mapper|Repository|Request|Response|DTO|Dto|Panel|Store|Api|Page|Spec|Test)|\/api\/v[0-9]+\/|[a-z]+:[\w:-]+|(?:public|platform|masterdata|config|wms)\.[a-z][\w]*|(?:sys|wms|pda|inbound|outbound|inventory|receiving)_[a-z][\w]*|CREATE TABLE|\.spec\.ts|\.test\.(?:ts|tsx|java))\b/iu;
 const TEMPLATE_PLACEHOLDER_PATTERN =
   /^\s*-?\s*(Existing (backend|frontend|SQL).*:|New seams allowed only if existing seams cannot be reused, because:|Existing services \/ components \/ DTOs \/ SQL \/ permissions \/ test fixtures:)\s*$/imu;
 
@@ -41,7 +42,7 @@ export async function gateCommand(args: string[], context: { repoRoot: string })
     console.log("");
   }
 
-  console.log("Running quality gate (backend verify + services + frontend lint/test:ci/build).");
+  console.log("Running quality gate (configured backend/services/frontend checks).");
 
   const originalJavaHome = process.env.JAVA_HOME;
   const originalPath = process.env.Path ?? process.env.PATH ?? "";
@@ -60,28 +61,17 @@ export async function gateCommand(args: string[], context: { repoRoot: string })
 
     const backendDir = resolveConfigPath(context.repoRoot, config.backend.path);
     const serviceEntries = config.services
+      .filter((service) => service.enabled !== false)
       .map((service) => ({ config: service, dir: resolveConfigPath(context.repoRoot, service.path) }))
       .filter((entry) => fs.existsSync(entry.dir));
     const frontendEntries = config.frontends
+      .filter((frontend) => frontend.enabled !== false)
       .map((frontend) => ({ config: frontend, dir: resolveConfigPath(context.repoRoot, frontend.path) }))
       .filter((entry) => fs.existsSync(entry.dir));
     const mavenRepo = path.join(context.repoRoot, ".m2", "repository");
     ensureDir(mavenRepo);
 
-    console.log("");
-    console.log(`Backend: ${config.backend.path} ...`);
-    if (skipBackendIntegration) {
-      runConfiguredCommand(
-        commandOrDefault(config.backend.commands?.verifyWithoutIntegration, { command: "mvn", args: ["verify", "-Dtest=!*IntegrationTest*"] }),
-        backendDir,
-        "Backend verify failed.",
-        { mavenRepo },
-      );
-    } else {
-      runConfiguredCommand(commandOrDefault(config.backend.commands?.verify, { command: "mvn", args: ["verify"] }), backendDir, "Backend verify failed.", {
-        mavenRepo,
-      });
-    }
+    runBackendGate(config.backend, backendDir, skipBackendIntegration, mavenRepo);
 
     for (const { config: serviceConfig, dir: serviceDir } of serviceEntries) {
       const serviceName = path.relative(context.repoRoot, serviceDir);
@@ -349,22 +339,37 @@ export function getTaggedTestFiles(repoRoot: string, featureName: string, featur
   const results = new Set<string>();
   const config = loadScaffoldConfig(repoRoot);
 
-  const backendFiles = listFilesRecursive(resolveConfigPath(repoRoot, config.backend.path), (fullPath) =>
-    fullPath.endsWith(".java") && fullPath.includes(`${path.sep}src${path.sep}test${path.sep}`),
-  );
-  for (const filePath of backendFiles) {
-    const content = readText(filePath);
-    if (content.includes(traceTag) || content.includes(featureName)) {
-      results.add(filePath);
+  if (config.backend.enabled !== false) {
+    const backendFiles = listFilesRecursive(resolveConfigPath(repoRoot, config.backend.path), (fullPath) =>
+      fullPath.endsWith(".java") && fullPath.includes(`${path.sep}src${path.sep}test${path.sep}`),
+    );
+    for (const filePath of backendFiles) {
+      const content = readText(filePath);
+      if (content.includes(traceTag) || content.includes(featureName)) {
+        results.add(filePath);
+      }
     }
   }
 
-  const frontendRoots = config.frontends.flatMap((frontend) => [
+  const frontendRoots = config.frontends.filter((frontend) => frontend.enabled !== false).flatMap((frontend) => [
     path.join(resolveConfigPath(repoRoot, frontend.path), "src"),
     path.join(resolveConfigPath(repoRoot, frontend.path), "e2e"),
   ]);
   for (const root of frontendRoots) {
     const files = listFilesRecursive(root, (fullPath) => /\.(test|spec)\.tsx?$/u.test(fullPath));
+    for (const filePath of files) {
+      const content = readText(filePath);
+      if (content.includes(traceTag) || content.includes(featureName)) {
+        results.add(filePath);
+      }
+    }
+  }
+
+  const serviceTestRoots = config.services
+    .filter((service) => service.enabled !== false)
+    .map((service) => path.join(resolveConfigPath(repoRoot, service.path), "tests"));
+  for (const root of serviceTestRoots) {
+    const files = listFilesRecursive(root, (fullPath) => /\.(?:py|test\.(?:ts|tsx|js|mjs)|spec\.(?:ts|tsx|js|mjs))$/u.test(fullPath));
     for (const filePath of files) {
       const content = readText(filePath);
       if (content.includes(traceTag) || content.includes(featureName)) {
@@ -505,6 +510,34 @@ function invokeFrontendBuild(workingDirectory: string, frontendConfig: FrontendC
   runConfiguredCommand(commandOrDefault(frontendConfig.commands?.build, { command: "npm", args: ["run", "build"] }), workingDirectory, "Frontend build failed.");
   if (!fs.existsSync(indexFile)) {
     throw new Error("Frontend build failed.");
+  }
+}
+
+function runBackendGate(backendConfig: BackendConfig, backendDir: string, skipBackendIntegration: boolean, mavenRepo: string): void {
+  if (backendConfig.enabled === false) {
+    console.log("");
+    console.log(`Backend: ${backendConfig.path} ... SKIPPED (disabled in ai-scaffold.config.json)`);
+    return;
+  }
+  if (!fs.existsSync(backendDir)) {
+    console.log("");
+    console.log(`Backend: ${backendConfig.path} ... SKIPPED (directory not found)`);
+    return;
+  }
+
+  console.log("");
+  console.log(`Backend: ${backendConfig.path} ...`);
+  if (skipBackendIntegration) {
+    runConfiguredCommand(
+      commandOrDefault(backendConfig.commands?.verifyWithoutIntegration, { command: "mvn", args: ["verify", "-Dtest=!*IntegrationTest*"] }),
+      backendDir,
+      "Backend verify failed.",
+      { mavenRepo },
+    );
+  } else {
+    runConfiguredCommand(commandOrDefault(backendConfig.commands?.verify, { command: "mvn", args: ["verify"] }), backendDir, "Backend verify failed.", {
+      mavenRepo,
+    });
   }
 }
 

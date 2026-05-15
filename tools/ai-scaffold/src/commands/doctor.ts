@@ -15,9 +15,11 @@ export async function doctorCommand(args: string[], context: { repoRoot: string 
   const config = loadScaffoldConfig(context.repoRoot);
   const runtimeKind = detectRuntimeKind();
   const frontendDirs = config.frontends
+    .filter((frontend) => frontend.enabled !== false)
     .map((frontend) => ({ dir: resolveConfigPath(context.repoRoot, frontend.path), label: frontend.path }))
     .filter((entry) => fs.existsSync(entry.dir));
   const serviceDirs = config.services
+    .filter((service) => service.enabled !== false)
     .map((service) => ({ dir: resolveConfigPath(context.repoRoot, service.path), label: service.path }))
     .filter((entry) => fs.existsSync(entry.dir));
 
@@ -33,11 +35,12 @@ export async function doctorCommand(args: string[], context: { repoRoot: string 
     "git",
     "node",
     "npm",
-    "java",
-    "mvn",
     "docker",
     ...serviceCommands,
   ];
+  if (config.backend.enabled !== false && fs.existsSync(resolveConfigPath(context.repoRoot, config.backend.path))) {
+    requiredCommands.push("java", "mvn");
+  }
   const commandChecks = [...new Set(requiredCommands)].map((name) => ({
     name,
     ok: commandExists(name),
@@ -72,6 +75,8 @@ export async function doctorCommand(args: string[], context: { repoRoot: string 
       frontendPaths: config.frontends.map((frontend) => frontend.path),
       servicePaths: config.services.map((service) => service.path),
       codeLikeRoots: config.codeLikeRoots,
+      referenceRoots: config.referenceRoots,
+      technologyStack: config.technologyStack,
     },
     commands: commandChecks,
     frontends: frontendChecks,
@@ -96,6 +101,17 @@ export async function doctorCommand(args: string[], context: { repoRoot: string 
   console.log(`Backend   : ${report.scaffold.backendPath}`);
   console.log(`Frontends : ${report.scaffold.frontendPaths.join(", ") || "(none)"}`);
   console.log(`Services  : ${report.scaffold.servicePaths.join(", ") || "(none)"}`);
+  console.log(`Reference : ${report.scaffold.referenceRoots.join(", ") || "(none)"}`);
+  if (report.scaffold.technologyStack) {
+    const baselineDoc =
+      typeof report.scaffold.technologyStack === "object" &&
+      report.scaffold.technologyStack !== null &&
+      !Array.isArray(report.scaffold.technologyStack) &&
+      "baselineDoc" in report.scaffold.technologyStack
+        ? String((report.scaffold.technologyStack as Record<string, unknown>).baselineDoc)
+        : "configured";
+    console.log(`Tech stack: ${baselineDoc}`);
+  }
   console.log("");
   console.log("Commands:");
   for (const entry of report.commands) {

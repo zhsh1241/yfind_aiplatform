@@ -3,7 +3,7 @@ from fastapi import APIRouter
 from app.core.config import Settings, get_settings
 from app.schemas.health import CapabilityStatus, HealthResponse
 
-FEATURE_TRACE = "TASK-platform-architecture-baseline"
+FEATURE_TRACE = "TASK-smp-rebuild-scaffold-baseline"
 
 router = APIRouter()
 

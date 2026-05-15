@@ -57,9 +57,9 @@ skills: [security-review, plankton-code-quality, java-coding-standards, coding-s
 ### 后端 (Java/Spring Boot)
 - [ ] Controller 只做参数校验和响应组装
 - [ ] Service 负责业务逻辑
-- [ ] Repository 负责数据访问
-- [ ] 使用 Lombok 减少样板代码
-- [ ] 使用 MapStruct 进行对象映射
+- [ ] Repository 使用 Spring Data JPA/Hibernate 访问 PostgreSQL
+- [ ] Flyway migration 与实体/索引一致
+- [ ] Lombok/MapStruct 仅在 feature plan 明确批准时使用
 - [ ] 事务边界正确
 - [ ] 异常处理完整
 
@@ -67,7 +67,8 @@ skills: [security-review, plankton-code-quality, java-coding-standards, coding-s
 - [ ] 组件职责单一
 - [ ] 使用 TypeScript 类型
 - [ ] Props 验证完整
-- [ ] 状态管理合理
+- [ ] TanStack Query / Zustand 状态边界合理
+- [ ] Ant Design 6 token 与原型视觉基线一致
 - [ ] useEffect 依赖正确
 - [ ] 错误边界处理
 

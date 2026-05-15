@@ -11,7 +11,7 @@ export async function ensureFrontendDepsCommand(args: string[], context: { repoR
   const config = loadScaffoldConfig(context.repoRoot);
   const frontendDirs = frontendDirOption
     ? [path.resolve(context.repoRoot, frontendDirOption)]
-    : config.frontends.map((frontend) => resolveConfigPath(context.repoRoot, frontend.path));
+    : config.frontends.filter((frontend) => frontend.enabled !== false).map((frontend) => resolveConfigPath(context.repoRoot, frontend.path));
 
   for (const frontendDir of frontendDirs) {
     const label = path.relative(context.repoRoot, frontendDir) || frontendDir;

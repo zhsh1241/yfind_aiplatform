@@ -73,7 +73,9 @@ async function runPreCommit(repoRoot: string): Promise<void> {
   const backendChanged = captureGit(repoRoot, ["diff", "--cached", "--name-only"])
     .split(/\r?\n/u)
     .filter((line) => line.startsWith(backendRoot) && line.endsWith(".java"));
-  if (backendChanged.length > 0) {
+  if (config.backend.enabled === false) {
+    console.log("Backend checks disabled in ai-scaffold.config.json.");
+  } else if (backendChanged.length > 0) {
     console.log("Backend files changed. Running quick validation...");
     const backendDir = resolveConfigPath(repoRoot, config.backend.path);
     runConfiguredCommand(commandOrDefault(config.backend.commands?.compile, { command: "mvn", args: ["compile", "-q"] }), backendDir, "ERROR: Backend compilation failed. Please fix compilation errors.");
@@ -103,7 +105,10 @@ async function runPreCommit(repoRoot: string): Promise<void> {
   console.log("\n[3/3] Checking frontend changes...");
   const frontendChanged = captureGit(repoRoot, ["diff", "--cached", "--name-only"])
     .split(/\r?\n/u)
-    .filter((line) => config.frontends.some((frontend) => line.startsWith(normalizeRoot(frontend.changeRoot ?? frontend.path))) && /\.(ts|tsx)$/u.test(line));
+    .filter((line) =>
+      config.frontends.some((frontend) => frontend.enabled !== false && line.startsWith(normalizeRoot(frontend.changeRoot ?? frontend.path))) &&
+      /\.(ts|tsx)$/u.test(line),
+    );
   if (frontendChanged.length > 0) {
     console.log("Frontend files changed. Running lint check...");
     for (const frontend of getChangedFrontends(config, frontendChanged)) {
@@ -217,7 +222,7 @@ export function getPrePushPlan(changedFiles: string[], config: ScaffoldConfig = 
 } {
   const backendRoot = normalizeRoot(config.backend.changeRoot ?? config.backend.path);
   return {
-    backend: changedFiles.some((filePath) => filePath.startsWith(backendRoot)),
+    backend: config.backend.enabled !== false && changedFiles.some((filePath) => filePath.startsWith(backendRoot)),
     frontends: getChangedFrontends(config, changedFiles),
     scaffold: changedFiles.some((filePath) => config.scaffoldRoots.some((root) => filePath.startsWith(normalizeRoot(root)) || filePath === root)),
   };
@@ -279,6 +284,9 @@ function captureGit(repoRoot: string, args: string[]): string {
 
 function getChangedFrontends(config: ScaffoldConfig, changedFiles: string[]): FrontendConfig[] {
   return config.frontends.filter((frontend) => {
+    if (frontend.enabled === false) {
+      return false;
+    }
     const root = normalizeRoot(frontend.changeRoot ?? frontend.path);
     return changedFiles.some((filePath) => filePath.startsWith(root));
   });

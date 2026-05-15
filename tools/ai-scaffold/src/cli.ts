@@ -24,6 +24,7 @@ import { renderAgentPromptCommand } from "./commands/render-agent-prompt";
 import { hookCommand, installHooksCommand } from "./commands/hook";
 import { ensureFrontendDepsCommand } from "./commands/ensure-frontend-deps";
 import { doctorCommand } from "./commands/doctor";
+import { scaffoldStatusCommand } from "./commands/scaffold-status";
 
 const commands: Record<string, CommandHandler> = {
   "init-feature": initFeatureCommand,
@@ -50,6 +51,7 @@ const commands: Record<string, CommandHandler> = {
   hook: hookCommand,
   "install-hooks": installHooksCommand,
   "ensure-frontend-deps": ensureFrontendDepsCommand,
+  "scaffold-status": scaffoldStatusCommand,
   doctor: doctorCommand,
   "env-report": doctorCommand,
 };
@@ -58,7 +60,7 @@ async function main(): Promise<void> {
   const [, , commandName, ...args] = process.argv;
   if (!commandName || commandName === "--help" || commandName === "help") {
     console.log(
-      "Usage: scaffold <init-feature|gate|sync-codex|start-next-feature|archive-planning-artifacts|e2e-docker|pda-shell-handoff|verify-pda-shell-readiness|toggle-omx-notify|repair-omx-provider-launch|prepare-manual-test|stop-manual-test|check-plan-approved|verify-contract|check-task-traceability|check-code-review-verdict|check-feature-artifacts|check-build-feature-prereqs|check-work-item-link|check-reuse-duplication|render-agent-prompt|hook|install-hooks|ensure-frontend-deps|doctor|env-report> [options]",
+      "Usage: scaffold <init-feature|gate|sync-codex|start-next-feature|archive-planning-artifacts|e2e-docker|pda-shell-handoff|verify-pda-shell-readiness|toggle-omx-notify|repair-omx-provider-launch|prepare-manual-test|stop-manual-test|check-plan-approved|verify-contract|check-task-traceability|check-code-review-verdict|check-feature-artifacts|check-build-feature-prereqs|check-work-item-link|check-reuse-duplication|render-agent-prompt|hook|install-hooks|ensure-frontend-deps|scaffold-status|doctor|env-report> [options]",
     );
     return;
   }

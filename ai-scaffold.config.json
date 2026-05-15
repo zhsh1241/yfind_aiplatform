@@ -3,10 +3,7 @@
   "featureRoot": "docs/features",
   "bugfixRoot": "docs/bugfix",
   "codeLikeRoots": [
-    "backend/",
-    "frontend/",
     "ai-adapter/",
-    "deploy/",
     "docs/db/"
   ],
   "scaffoldRoots": [
@@ -16,12 +13,74 @@
     "docs/bugfix/",
     "docs/architecture/",
     ".github/workflows/ci.yml",
-    "ai-adapter/README.md"
+    "ai-adapter/README.md",
+    "AGENTS.md",
+    "project.md",
+    "README.md",
+    "ai-scaffold.config.json"
   ],
+  "referenceRoots": [
+    "docs/business/",
+    "docs/prototype/"
+  ],
+  "technologyStack": {
+    "baselineDoc": "docs/architecture/01-technology-stack-baseline.md",
+    "runtime": {
+      "java": "21 LTS",
+      "node": "24 LTS",
+      "python": "3.12"
+    },
+    "backend": {
+      "language": "Java 21",
+      "framework": "Spring Boot 4.0.x",
+      "build": "Maven 3.9.x",
+      "persistence": "Spring Data JPA + Hibernate",
+      "migration": "Flyway",
+      "apiSpec": "OpenAPI 3.1",
+      "testing": "JUnit 5 + Mockito + Testcontainers"
+    },
+    "frontend": {
+      "language": "TypeScript 6.x",
+      "framework": "React 19",
+      "build": "Vite 8",
+      "ui": "Ant Design 6",
+      "state": "TanStack Query 5 + Zustand 5",
+      "testing": "Vitest 4 + Playwright 1.60"
+    },
+    "aiAdapter": {
+      "language": "Python 3.12",
+      "framework": "FastAPI 0.136.x",
+      "schema": "Pydantic 2.13.x",
+      "server": "Uvicorn 0.47.x",
+      "packageManager": "uv"
+    },
+    "data": {
+      "metadataDatabase": "PostgreSQL 18",
+      "cache": "Valkey 8.1",
+      "messageQueue": "Kafka 4.0",
+      "objectStorage": "MinIO (S3-compatible)",
+      "searchAndLogIndex": "OpenSearch 3.x"
+    },
+    "mlops": {
+      "experimentTracking": "MLflow 3.x",
+      "workflow": "Argo Workflows 4.x",
+      "serving": "KServe 0.16+",
+      "annotation": "Label Studio 1.x"
+    },
+    "platform": {
+      "container": "Docker / OCI",
+      "orchestration": "Kubernetes 1.35.x production baseline",
+      "packaging": "Helm 4",
+      "gitOps": "Argo CD 3.x",
+      "observability": "OpenTelemetry + Prometheus + Grafana + Loki",
+      "identity": "YF LDAP via Spring Security"
+    }
+  },
   "backend": {
     "path": "backend",
     "changeRoot": "backend/",
     "modulePathPrefix": "backend/",
+    "enabled": false,
     "commands": {
       "compile": {
         "command": "mvn",
@@ -57,6 +116,7 @@
       "name": "web",
       "path": "frontend",
       "changeRoot": "frontend/",
+      "enabled": false,
       "commands": {
         "lint": {
           "command": "npm",
@@ -105,6 +165,7 @@
       "name": "ai-adapter",
       "path": "ai-adapter",
       "changeRoot": "ai-adapter/",
+      "enabled": true,
       "commands": {
         "compile": {
           "command": "python",

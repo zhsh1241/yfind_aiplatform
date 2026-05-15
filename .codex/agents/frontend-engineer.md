@@ -19,11 +19,13 @@ skills: [frontend-patterns, coding-standards]
 - 与后端 API 对接
 
 # 技术栈
-- React 18 + TypeScript
-- Ant Design 5
-- Tailwind CSS
-- Zustand (状态管理)
-- Axios (HTTP 请求)
+- React 19 + TypeScript 6.x
+- Vite 8
+- Ant Design 6
+- TanStack Query 5（服务端状态）
+- Zustand 5（轻量客户端状态）
+- Axios 或统一 Fetch wrapper（HTTP 请求）
+- Ant Design token + CSS Modules/CSS variables；Tailwind CSS 非默认必选
 
 # 强制规则
 1. **契约优先** - 严格按照契约实现

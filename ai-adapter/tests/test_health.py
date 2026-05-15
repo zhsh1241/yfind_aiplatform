@@ -5,6 +5,9 @@ from fastapi.testclient import TestClient
 from app.api.health import FEATURE_TRACE
 from app.main import create_app
 
+# TASK-smp-rebuild-scaffold-baseline: AC-01 AC-02 AC-03 AC-04 AC-05
+# TASK-technology-stack-baseline: AC-01 AC-02 AC-03 AC-04 AC-05
+
 
 class HealthApiTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -42,7 +45,7 @@ class HealthApiTest(unittest.TestCase):
         self.assertTrue(all(item["status"] == "pending-confirmation" for item in capabilities))
         self.assertTrue(all(item["endpoint"].startswith("TODO_CONFIRM_") for item in capabilities))
 
-    def test_training_templates_are_exposed_for_f005(self) -> None:
+    def test_training_templates_are_exposed_for_rebuild_baseline(self) -> None:
         response = self.client.get("/internal/training/templates")
 
         self.assertEqual(response.status_code, 200)
@@ -62,8 +65,8 @@ class HealthApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(payload["submission_id"], "adapter-sim-train-bearing-v1")
-        self.assertEqual(payload["feature"], "TASK-training-job-mvp")
+        self.assertEqual(payload["submission_id"], "adapter-placeholder-train-bearing-v1")
+        self.assertEqual(payload["feature"], "TASK-smp-rebuild-scaffold-baseline")
         self.assertTrue(payload["artifact_root"].startswith("TODO_CONFIRM_MODEL_ARTIFACT_URI"))
 
 

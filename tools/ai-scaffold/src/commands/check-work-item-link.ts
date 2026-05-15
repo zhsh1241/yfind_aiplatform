@@ -30,11 +30,14 @@ export async function checkWorkItemLinkCommand(args: string[], context: { repoRo
   const changedFiles = await readStdinLines();
   const config = loadScaffoldConfig(context.repoRoot);
   const codeRoots = config.codeLikeRoots.map(normalizeRoot);
+  const referenceRoots = config.referenceRoots.map(normalizeRoot);
   const featureRoot = normalizeRoot(config.featureRoot);
   const bugfixRoot = normalizeRoot(config.bugfixRoot);
   const featurePattern = new RegExp(`^${escapeRegExp(featureRoot)}F[0-9]{3}-[^/]+/`, "u");
   const bugfixPattern = new RegExp(`^${escapeRegExp(bugfixRoot)}[^/]+/`, "u");
-  const codeChanged = changedFiles.some((file) => codeRoots.some((root) => file.startsWith(root)));
+  const codeChanged = changedFiles.some(
+    (file) => codeRoots.some((root) => file.startsWith(root)) && !referenceRoots.some((root) => file.startsWith(root)),
+  );
   const workItemChanged = changedFiles.some((file) => featurePattern.test(file) || bugfixPattern.test(file));
 
   if (codeChanged && !workItemChanged) {

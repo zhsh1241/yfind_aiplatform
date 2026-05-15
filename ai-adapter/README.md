@@ -1,13 +1,12 @@
-﻿# yfind_aiplatform AI Adapter
+# yfind_aiplatform AI Adapter
 
-FastAPI AI/MLOps adapter baseline for `F001-platform-architecture-baseline`.
+FastAPI AI/MLOps adapter baseline for the SMP rebuild.
 
 ## Responsibility
 
-`ai-adapter/` is an internal service. Spring Boot remains the main platform
-backend and source of truth for permissions, business state, and audit records.
-This adapter encapsulates Python-first AI/MLOps integrations such as Label
-Studio, MLflow, Kubeflow/Argo, KServe, object storage SDKs, and model utilities.
+`ai-adapter/` is an internal service. The future main platform backend remains the source of truth for permissions, business state, and audit records. This adapter encapsulates Python-first AI/MLOps integrations such as Label Studio, MLflow, Argo Workflows, KServe, object storage SDKs, and model utilities; Kubeflow Pipelines remains optional until a feature plan approves it.
+
+Current endpoints are provisional until a new `docs/features/Fxxx-*` package freezes the corresponding contract.
 
 ## Commands
 
@@ -22,9 +21,7 @@ Pop-Location
 
 - `GET /internal/health`
 - `GET /internal/capabilities`
+- `GET /internal/training/templates` (placeholder)
+- `POST /internal/training/submit` (placeholder)
 
-Business integration endpoints start in later features. Do not add real
-external credentials or production URLs here; use `TODO_CONFIRM_*` placeholders
-until the target environment is confirmed.
-
-
+Do not add real external credentials or production URLs here; use `TODO_CONFIRM_*` placeholders until the target environment is confirmed.

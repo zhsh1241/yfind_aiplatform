@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-FEATURE_TRACE = "TASK-training-job-mvp"
+FEATURE_TRACE = "TASK-smp-rebuild-scaffold-baseline"
 
 router = APIRouter()
 
@@ -34,7 +34,7 @@ def training_templates() -> list[dict[str, str]]:
 @router.post("/training/submit", response_model=TrainingSubmitResponse)
 def submit_training(request: TrainingSubmitRequest) -> TrainingSubmitResponse:
     return TrainingSubmitResponse(
-        submission_id=f"adapter-sim-{request.job_key}",
+        submission_id=f"adapter-placeholder-{request.job_key}",
         status="accepted",
         queue="TODO_CONFIRM_WORKFLOW_ENGINE_QUEUE",
         artifact_root=f"TODO_CONFIRM_MODEL_ARTIFACT_URI/{request.job_key}",

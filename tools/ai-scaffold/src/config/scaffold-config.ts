@@ -10,6 +10,7 @@ export type FrontendConfig = {
   name: string;
   path: string;
   changeRoot?: string;
+  enabled?: boolean;
   commands?: {
     lint?: CommandSpec;
     test?: CommandSpec;
@@ -22,6 +23,7 @@ export type BackendConfig = {
   path: string;
   changeRoot?: string;
   modulePathPrefix?: string;
+  enabled?: boolean;
   commands?: {
     compile?: CommandSpec;
     test?: CommandSpec;
@@ -34,6 +36,7 @@ export type ServiceConfig = {
   name: string;
   path: string;
   changeRoot?: string;
+  enabled?: boolean;
   commands?: {
     lint?: CommandSpec;
     compile?: CommandSpec;
@@ -42,12 +45,16 @@ export type ServiceConfig = {
   };
 };
 
+export type TechnologyStackConfig = Record<string, unknown>;
+
 export type ScaffoldConfig = {
   projectName: string;
   featureRoot: string;
   bugfixRoot: string;
   codeLikeRoots: string[];
   scaffoldRoots: string[];
+  referenceRoots: string[];
+  technologyStack?: TechnologyStackConfig;
   backend: BackendConfig;
   frontends: FrontendConfig[];
   services: ServiceConfig[];
@@ -70,6 +77,8 @@ const DEFAULT_CONFIG: ScaffoldConfig = {
   bugfixRoot: "docs/bugfix",
   codeLikeRoots: ["backend/", "frontend/", "docs/db/"],
   scaffoldRoots: ["tools/ai-scaffold/", "scripts/check-", "docs/features/", ".github/workflows/ci.yml"],
+  referenceRoots: ["docs/business/", "docs/prototype/"],
+  technologyStack: undefined,
   backend: {
     path: "backend",
     changeRoot: "backend/",
@@ -154,6 +163,8 @@ function mergeConfig(base: ScaffoldConfig, override: Partial<ScaffoldConfig>): S
     ...override,
     codeLikeRoots: override.codeLikeRoots ?? base.codeLikeRoots,
     scaffoldRoots: override.scaffoldRoots ?? base.scaffoldRoots,
+    referenceRoots: override.referenceRoots ?? base.referenceRoots,
+    technologyStack: override.technologyStack ?? base.technologyStack,
     backend: {
       ...base.backend,
       ...override.backend,

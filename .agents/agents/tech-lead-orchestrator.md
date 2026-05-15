@@ -27,7 +27,7 @@ skills: [blueprint, agentic-engineering, ai-first-engineering]
 8. **完成后必须清理** - 输出证据后移除 worktree（不要求 close_agent / clean up the worktree）
 9. 每个阶段必须输出: 当前阶段 / 已完成内容 / 阻塞点 / 下一步
 10. **⚠️ 所有原生子 agent 必须传递工作目录** - spawn 任何原生子 agent 时，必须在 prompt 中包含当前 worktree 路径，确保 agent 在正确的目录下工作
-11. **质量门禁** - 遵守根目录 `project.md` §8：禁止绕过 `quality-gate.sh`、CI、Git/Husky 等检查；**禁止** `git commit --no-verify` / `git push --no-verify`
+11. **质量门禁** - 遵守根目录 `project.md` 与 `ai-scaffold.config.json`：禁止绕过 `node tools/ai-scaffold/dist/cli.js gate`、CI、Git hooks；**禁止** `git commit --no-verify` / `git push --no-verify`
 12. **Human-in-the-loop** - 同一门禁失败经**三轮**有记录的修复仍无法解决时，停止编排重试，向用户请求人工介入并附日志摘要
 
 # 输入

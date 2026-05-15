@@ -21,7 +21,7 @@ skills: [api-design, blueprint]
 2. 所有字段必须有类型和描述
 3. 错误场景必须覆盖完整
 4. 契约冻结后必须标记 status: frozen
-5. 契约必须与现有系统风格一致
+5. 契约必须与 `docs/business/api/01-API接口规范.md` 和 `docs/architecture/01-technology-stack-baseline.md` 一致
 
 # 输入
 - 需求分析文档 (`docs/features/F{nnn}-{feature-slug}/TASK.md`)

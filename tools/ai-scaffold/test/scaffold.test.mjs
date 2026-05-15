@@ -19,6 +19,12 @@ const { getPrePushPlan } = require("../dist/commands/hook.js");
 const { parseSkillsFromAgentBrief, renderAgentPrompt } = require("../dist/commands/render-agent-prompt.js");
 const { loadScaffoldConfig } = require("../dist/config/scaffold-config.js");
 
+// TASK-smp-rebuild-scaffold-baseline: AC-01 AC-02 AC-03 AC-04 AC-05
+// TASK-technology-stack-baseline: AC-01 AC-02 AC-03 AC-04 AC-05
+// Baseline rebuild trace: this suite verifies root docs/templates, scaffold
+// config behavior, reference roots, disabled backend/frontend planning, and
+// current AI scaffold compatibility gates.
+
 function makeTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
@@ -142,6 +148,23 @@ test("check-work-item-link passes when code changes include a work item director
   assert.match(result.stdout, /Work item link check passed/u);
 });
 
+test("check-work-item-link treats configured reference roots as non-code changes", () => {
+  const result = runCli(["check-work-item-link", "--stdin"], "docs/business/bizdocs/01-scenario.md\n");
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /no backend\/frontend\/docs-db changes detected/u);
+});
+
+test("project config exposes the decided technology stack baseline", () => {
+  const config = loadScaffoldConfig(repoRoot);
+
+  assert.equal(config.technologyStack.baselineDoc, "docs/architecture/01-technology-stack-baseline.md");
+  assert.equal(config.technologyStack.backend.framework, "Spring Boot 4.0.x");
+  assert.equal(config.technologyStack.frontend.framework, "React 19");
+  assert.equal(config.technologyStack.data.metadataDatabase, "PostgreSQL 18");
+  assert.equal(config.technologyStack.platform.orchestration, "Kubernetes 1.35.x production baseline");
+});
+
 test("getPrePushPlan scopes local hook checks to changed areas", () => {
   const config = loadScaffoldConfig(repoRoot);
   assert.deepEqual(
@@ -164,8 +187,8 @@ test("getPrePushPlan scopes local hook checks to changed areas", () => {
     ],
     config,
   );
-  assert.equal(plan.backend, true);
-  assert.deepEqual(plan.frontends.map((frontend) => frontend.path), [frontendPath]);
+  assert.equal(plan.backend, config.backend.enabled !== false);
+  assert.deepEqual(plan.frontends.map((frontend) => frontend.path), config.frontends[0].enabled === false ? [] : [frontendPath]);
   assert.equal(plan.scaffold, false);
 });
 

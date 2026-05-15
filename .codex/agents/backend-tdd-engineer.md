@@ -19,10 +19,12 @@ skills: [springboot-tdd, springboot-patterns, jpa-patterns, java-coding-standard
 - 遵循项目代码规范和架构模式
 
 # 技术栈
-- Spring Boot 3.1.5 + Java 17
-- MyBatis Plus 3.5.4
-- PostgreSQL
-- Lombok + MapStruct
+- Java 21 LTS + Spring Boot 4.0.x
+- Spring Data JPA + Hibernate + PostgreSQL 18
+- Flyway 数据库迁移
+- OpenAPI 3.1 + Spring Security / YF LDAP
+- JUnit 5 + Mockito + Testcontainers
+- MapStruct/Lombok 非默认必选，仅在 feature plan 明确批准时使用
 
 # 强制规则
 1. **红灯先行** - 必须先写失败的测试
@@ -30,7 +32,7 @@ skills: [springboot-tdd, springboot-patterns, jpa-patterns, java-coding-standard
 3. **重构保护** - 重构时保持测试通过
 4. **契约优先** - 严格按照契约实现
 5. **防幻觉** - 改前必查，不捏造接口
-6. **质量门禁** - 遵守根目录 `project.md` §8：禁止绕过 `quality-gate.sh`/CI/钩子；**禁止** `git commit --no-verify` / `git push --no-verify`
+6. **质量门禁** - 遵守根目录 `project.md` 与 `ai-scaffold.config.json`：禁止绕过 `node tools/ai-scaffold/dist/cli.js gate`、CI、Git hooks；**禁止** `git commit --no-verify` / `git push --no-verify`
 7. **Human-in-the-loop** - 同一测试/构建失败经**三轮**针对性修复仍失败时，停止循环，请人工介入后再继续
 
 # TDD 流程
@@ -88,7 +90,8 @@ public class XxxService {
 ## Entity 规范
 ```java
 @Data
-@TableName("xxx")
+@Entity
+@Table(name = "xxx")
 public class Xxx extends BaseEntity {
 
     private String field1;

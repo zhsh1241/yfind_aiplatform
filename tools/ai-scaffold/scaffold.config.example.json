@@ -4,10 +4,41 @@
   "bugfixRoot": "docs/bugfix",
   "codeLikeRoots": ["backend/", "frontend/", "db/"],
   "scaffoldRoots": ["tools/ai-scaffold/", "docs/features/", ".github/workflows/ci.yml"],
+  "referenceRoots": ["docs/business/", "docs/prototype/"],
+  "technologyStack": {
+    "baselineDoc": "docs/architecture/01-technology-stack-baseline.md",
+    "runtime": {
+      "java": "21 LTS",
+      "node": "24 LTS",
+      "python": "3.12"
+    },
+    "backend": {
+      "language": "Java 21",
+      "framework": "Spring Boot 4.0.x",
+      "build": "Maven 3.9.x",
+      "persistence": "Spring Data JPA + Hibernate",
+      "migration": "Flyway",
+      "apiSpec": "OpenAPI 3.1"
+    },
+    "frontend": {
+      "language": "TypeScript 6.x",
+      "framework": "React 19",
+      "build": "Vite 8",
+      "ui": "Ant Design 6",
+      "state": "TanStack Query 5 + Zustand 5"
+    },
+    "data": {
+      "metadataDatabase": "PostgreSQL 18",
+      "cache": "Valkey 8.1",
+      "messageQueue": "Kafka 4.0",
+      "objectStorage": "MinIO (S3-compatible)"
+    }
+  },
   "backend": {
     "path": "backend",
     "changeRoot": "backend/",
     "modulePathPrefix": "backend/",
+    "enabled": true,
     "commands": {
       "compile": { "command": "mvn", "args": ["compile", "-q"] },
       "test": { "command": "mvn", "args": ["test", "-q"] },
@@ -20,6 +51,7 @@
       "name": "web",
       "path": "frontend",
       "changeRoot": "frontend/",
+      "enabled": true,
       "commands": {
         "lint": { "command": "npm", "args": ["run", "lint"] },
         "test": { "command": "npm", "args": ["run", "test:ci"] },
