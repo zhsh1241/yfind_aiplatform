@@ -14,6 +14,8 @@
 
 SMP 是面向工业场景的小模型平台，目标覆盖从数据接入、数据加工、标注、训练/调优、评估、模型市场、推理服务、边端下发，到监控、权限、审计与运营报表的完整闭环。
 
+总体目标、阶段路线图和功能包拆分已沉淀在 `docs/architecture/02-project-goals-and-roadmap.md`，后续功能规划应以该文档、技术栈基线和业务/原型资料共同作为输入。
+
 ## 技术栈基线
 
 完整技术栈已锁定在 `docs/architecture/01-technology-stack-baseline.md`，并同步到 `ai-scaffold.config.json` 的 `technologyStack`。当前基线：

@@ -4,6 +4,7 @@
 
 - `docs/architecture/00-project-understanding.md`
 - `docs/architecture/01-technology-stack-baseline.md`
+- `docs/architecture/02-project-goals-and-roadmap.md`
 - `docs/business/arch/01-部署架构.md`
 - `docs/business/api/01-API接口规范.md`
 - `docs/business/domain/`
