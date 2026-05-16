@@ -59,7 +59,10 @@ node tools/ai-scaffold/dist/cli.js gate --skip-backend-integration
 ## Rebuild Rules
 
 - Feature plans must cite concrete business docs and prototype pages/screens they implement.
+- 每个业务 feature 必须先按 `.codex/workflows/plan-feature.md` 真实执行当前 slug 的 `$deep-interview` 与 `$ralplan`，并通过 `archive-planning-artifacts` 归档；不得复用/改名其他 slug 的 `.omx` 产物冒充流程结果。
+- `/build-feature` 前必须通过 `node tools/ai-scaffold/dist/cli.js check-build-feature-prereqs docs/features/F{nnn}-{slug}`；未通过不得写业务代码、契约、测试计划或启动实现。
 - Contracts must map to domain objects, API style, permissions, audit events, errors, and MUST rules from `docs/business/rules/`.
 - Test plans must cover happy path, permission failures, state-machine errors, audit behavior, and relevant NFR/rule checks.
 - Frontend rebuild must preserve the prototype's information architecture unless an approved plan supersedes it.
 - Unknown external facts remain documented as `TODO_CONFIRM_*` or open questions; never replace them with guesses.
+
