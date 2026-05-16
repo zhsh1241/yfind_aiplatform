@@ -57,16 +57,21 @@ const iconByDomain: Record<PrototypeDomain, ReactNode> = {
   平台管理: <SettingOutlined />,
 };
 
-export function AppNavigation() {
+export function AppNavigation({ allowedKeys }: { allowedKeys?: Set<string> }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const pagesByDomain = Map.groupBy(prototypePages, (page) => page.domain);
-  const items: MenuProps['items'] = domainOrder.map((domain) => ({
-    key: domain,
-    icon: iconByDomain[domain] ?? <AppstoreOutlined />,
-    label: domain,
-    children: pagesByDomain.get(domain)?.map((page) => ({ key: page.key, label: page.label })) ?? [],
-  }));
+  const pagesByDomain = Map.groupBy(
+    allowedKeys ? prototypePages.filter((page) => allowedKeys.has(page.key)) : prototypePages,
+    (page) => page.domain,
+  );
+  const items: MenuProps['items'] = domainOrder
+    .map((domain) => ({
+      key: domain,
+      icon: iconByDomain[domain] ?? <AppstoreOutlined />,
+      label: domain,
+      children: pagesByDomain.get(domain)?.map((page) => ({ key: page.key, label: page.label })) ?? [],
+    }))
+    .filter((item) => item.children.length > 0);
 
   return (
     <Menu

@@ -35,11 +35,17 @@ body {
   border-bottom: 1px solid #edf0f5;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 0 24px;
 }
 
 .app-title {
   margin: 0 !important;
+}
+
+.session-chip {
+  color: #64748b;
+  font-size: 13px;
 }
 
 .app-content {
@@ -59,4 +65,112 @@ body {
 .capability-list {
   display: flex;
   margin-top: 12px;
+}
+
+.login-page {
+  min-height: 100vh;
+  background: radial-gradient(circle at top, #1f2937, #13171a 58%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.login-logo {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.login-logo-main {
+  font-size: 40px;
+  font-weight: 900;
+  color: #4f8cff;
+  letter-spacing: -1px;
+  margin-bottom: 4px;
+}
+
+.login-logo-sub {
+  font-size: 14px;
+  color: #8d8d8d;
+  letter-spacing: 0.15em;
+}
+
+.login-card {
+  width: 400px;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 40%);
+}
+
+.login-title {
+  text-align: center;
+  margin-bottom: 24px !important;
+}
+
+.login-error {
+  margin-bottom: 16px;
+}
+
+.login-links {
+  margin-top: 18px;
+  width: 100%;
+  justify-content: center;
+  color: #8d8d8d;
+  font-size: 12px;
+}
+
+.login-version {
+  position: absolute;
+  bottom: 24px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.content-page {
+  background: transparent;
+}
+
+.page-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.page-hero h3 {
+  margin-bottom: 4px !important;
+}
+
+.role-card {
+  min-height: 160px;
+}
+
+.muted {
+  color: #8c8c8c;
+  font-size: 12px;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.matrix-check {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  border: 1px solid #d9d9d9;
+}
+
+.matrix-check.on {
+  background: #1677ff;
+  border-color: #1677ff;
+  color: #fff;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 }

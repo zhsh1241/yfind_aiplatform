@@ -1,4 +1,4 @@
-﻿---
+---
 feature: F006-platform-identity-audit
 title: 身份、权限与审计底座
 plan_status: draft
