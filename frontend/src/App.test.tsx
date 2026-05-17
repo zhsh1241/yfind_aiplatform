@@ -44,6 +44,13 @@ const mockConfigs = [
 ];
 const mockFiles = { items: [{ fileId: 'FILE-001', assetType: 'DATASET', tenantId: 'TENANT-CABIN', projectId: 'TENANT-VISION', bucket: 'TODO_CONFIRM_MINIO_BUCKET', objectKey: 'TENANT-CABIN/DATASET/FILE-001.bin', expectedSha256: 'abc', sha256: 'abc', expectedSizeBytes: 1024, sizeBytes: 1024, contentType: 'application/octet-stream', storageTier: 'STANDARD', status: 'AVAILABLE', ownerId: 'USR-001', createdAt: '2026-05-17T00:00:00Z', updatedAt: '2026-05-17T00:00:00Z' }], total: 1, page: 1, pageSize: 1 };
 const mockChannels = [{ channelId: 'NC-GLOBAL-EMAIL', channelType: 'EMAIL', scopeType: 'GLOBAL', scopeId: 'TENANT-YF', name: '邮件通知', enabled: true, configMasked: 'host=TODO_CONFIRM_SMTP_HOST;sender=TODO_CONFIRM_SMTP_SENDER', status: 'UNCONFIGURED', diagnostic: 'TODO_CONFIRM_SMTP_HOST', lastTestAt: null }];
+
+const mockPaiStatus = { status: 'UNCONFIGURED', configured: false, enabled: false, regionId: 'TODO_CONFIRM_PAI_REGION', endpoint: 'TODO_CONFIRM_PAI_ENDPOINT', workspaceId: 'TODO_CONFIRM_PAI_WORKSPACE_ID', quotaId: 'TODO_CONFIRM_PAI_QUOTA_ID', resourceGroupId: 'TODO_CONFIRM_PAI_RESOURCE_GROUP_ID', credentialMode: 'RAM_ROLE', credentialRefMasked: 'TODO_CONFIRM_PAI_RAM_ROLE_ARN', diagnosticCode: 'PAI_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_PAI_REGION;TODO_CONFIRM_PAI_WORKSPACE_ID;TODO_CONFIRM_PAI_QUOTA_ID', lastSyncAt: null, stale: false };
+const mockPaiOverview = { status: 'READY', scopeType: 'BU', scopeId: 'TENANT-CABIN', bindingId: 'PAI-BIND-CABIN', workspaceId: 'pai-ws-cabin-sandbox', quotaId: 'quota-cabin-sandbox', resourceGroupId: 'rg-cabin-general', lastSyncAt: '2026-05-17T00:00:00Z', stale: false, diagnosticCode: 'OK', diagnosticMessage: 'PAI resource sandbox snapshot synchronized', updatedFrom: 'PAI_SNAPSHOT', cards: [{ key: 'gpu', label: 'GPU 总量', used: 36, total: 48, unit: '卡', percent: 75, status: 'WARNING' }, { key: 'npu', label: 'NPU 算力', used: 6, total: 16, unit: '卡', percent: 38, status: 'READY' }, { key: 'cpu', label: 'CPU 核心', used: 128, total: 192, unit: '核', percent: 67, status: 'READY' }, { key: 'storage', label: 'PAI/OSS 存储', used: 145408, total: 204800, unit: 'GB', percent: 71, status: 'READY' }] };
+const mockPaiWorkspaces = { items: [{ bindingId: 'PAI-BIND-CABIN', organizationId: 'TENANT-CABIN', organizationName: '智能座舱事业部', scopeType: 'BU', workspaceId: 'pai-ws-cabin-sandbox', workspaceName: 'PAI-CABIN-SANDBOX', quotaId: 'quota-cabin-sandbox', quotaName: '训练资源配额 Sandbox', resourceGroupId: 'rg-cabin-general', status: 'ACTIVE', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX_PAI_BINDING_FOR_CONTRACT_TEST_ONLY', lastSyncAt: '2026-05-17T00:00:00Z' }], total: 1, page: 1, pageSize: 1 };
+const mockPaiNodes = { items: [{ nodeId: 'pai-node-a100-01', sourceType: 'PAI_QUOTA_NODE', hostOrZone: 'cn-shanghai-a', gpuSpec: '8×A100 80G', cpuCores: 96, memoryGb: 768, gpuTotal: 8, gpuUsed: 6, gpuUtilizationPercent: 75, status: 'READY', diagnostic: 'from PAI quota sandbox snapshot' }], total: 1, page: 1, pageSize: 1 };
+const mockPaiPools = { items: [{ poolId: 'quota-cabin-sandbox', poolName: '训练资源配额 Sandbox', sourceType: 'PAI_RESOURCE_QUOTA', bindingId: 'PAI-BIND-CABIN', quotaId: 'quota-cabin-sandbox', workspaceId: 'pai-ws-cabin-sandbox', gpuUsed: 21, gpuTotal: 24, cpuUsed: 240, cpuTotal: 384, memoryUsedGb: 1024, memoryTotalGb: 1536, userCount: 12, status: 'READY' }], total: 1, page: 1, pageSize: 1 };
+const mockPaiStorage = { items: [{ storageId: 'oss-pai-workspace-cabin', name: 'PAI Workspace OSS', sourceType: 'PAI_WORKSPACE_STORAGE', capacityGb: 204800, usedGb: 145408, percent: 71, status: 'READY', diagnostic: 'workspace storage sandbox summary' }], total: 1, page: 1, pageSize: 1 };
 const mockApiKeys = [{ id: 'AK-001', name: 'CI/CD 集成 Key', prefix: 'smp_live_abcd', maskedKey: 'smp_live_abcd********c91e', plainTextKey: null, scopeType: 'BU', scopeId: 'TENANT-CABIN', permissions: ['INFERENCE_READ'], status: 'ACTIVE', expiresAt: '2026-08-15T00:00:00Z', revokedAt: null, createdAt: '2026-05-17T00:00:00Z', lastUsedAt: null }];
 
 vi.mock('./features/foundation/apiClient', () => ({
@@ -58,18 +65,30 @@ vi.mock('./features/foundation/apiClient', () => ({
       if (url.includes('/platform/configs')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockConfigs } });
       if (url.includes('/platform/files')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockFiles } });
       if (url.includes('/platform/notification-channels')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockChannels } });
+      if (url.includes('/platform/pai-resources/sync')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { syncId: 'PAI-SYNC-UNIT', bindingId: 'PAI-BIND-CABIN', result: 'FAILED', status: 'UNCONFIGURED', diagnosticCode: 'PAI_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_PAI_REGION', lastSyncAt: '2026-05-17T00:00:00Z', stale: true, paiRequestId: 'TODO_CONFIRM_PAI_REQUEST_ID_OR_SANDBOX' } } });
       if (url.includes('/platform/api-keys')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockApiKeys } });
+      if (url.includes('/platform/pai-resources/status')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockPaiStatus } });
+      if (url.includes('/platform/pai-resources/overview')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockPaiOverview } });
+      if (url.includes('/platform/pai-resources/workspaces')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockPaiWorkspaces } });
+      if (url.includes('/platform/pai-resources/nodes')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockPaiNodes } });
+      if (url.includes('/platform/pai-resources/pools')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockPaiPools } });
+      if (url.includes('/platform/pai-resources/storage')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockPaiStorage } });
       if (url.includes('/platform/audit-logs')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { items: [mockAuditLog], total: 1, page: 1, pageSize: 1 } } });
       return Promise.reject(new Error('backend not running in frontend unit test'));
     }),
-    put: vi.fn(() => Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockConfigs[0] } })),
+    put: vi.fn((url: string) => {
+      if (url.includes('/platform/pai-resources/bindings')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockPaiWorkspaces.items[0] } });
+      if (url.includes('/platform/pai-resources/connection')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { ...mockPaiStatus, status: 'READY', configured: true, enabled: true, regionId: 'cn-shanghai', diagnosticCode: 'OK', diagnosticMessage: 'ready for test' } } });
+      return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockConfigs[0] } });
+    }),
     patch: vi.fn(() => Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockOrganizations.nodes[0] } })),
     post: vi.fn((url: string) => {
       if (url.includes('/auth/login')) {
         mockState.token = 'token-f006';
-        mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys'], sessionVersion: 1 };
+        mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource'], sessionVersion: 1 };
         return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { accessToken: 'token-f006', refreshToken: 'refresh', tokenType: 'Bearer', expiresInSeconds: 3600, user: mockState.user } } });
       }
+      if (url.includes('/platform/pai-resources/sync')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { syncId: 'PAI-SYNC-UNIT', bindingId: 'PAI-BIND-CABIN', result: 'FAILED', status: 'UNCONFIGURED', diagnosticCode: 'PAI_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_PAI_REGION', lastSyncAt: '2026-05-17T00:00:00Z', stale: true, paiRequestId: 'TODO_CONFIRM_PAI_REQUEST_ID_OR_SANDBOX' } } });
       if (url.includes('/platform/api-keys')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { ...mockApiKeys[0], id: 'AK-NEW', plainTextKey: 'smp_live_new_plaintext_once' } } });
       if (url.includes('/platform/notification-channels')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { channelId: 'NC-GLOBAL-EMAIL', result: 'UNCONFIGURED', diagnostic: 'TODO_CONFIRM_SMTP_HOST', testedAt: '2026-05-17T00:00:00Z' } } });
       return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: {} } });
@@ -114,7 +133,7 @@ describe('F006 platform identity frontend', () => {
 
   it('keeps usermgmt tabs, table, role cards and permission matrix API-driven', async () => {
     mockState.token = 'token-f006';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f006', user: mockState.user, initialized: true });
     renderApp(['/usermgmt']);
 
@@ -131,7 +150,7 @@ describe('F006 platform identity frontend', () => {
 
   it('keeps perm page title, tabs, approval cards, grant list and dialogs', async () => {
     mockState.token = 'token-f006';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f006', user: mockState.user, initialized: true });
     renderApp(['/perm']);
 
@@ -148,7 +167,7 @@ describe('F006 platform identity frontend', () => {
 
   it('renders org page with prototype tabs and real organization APIs', async () => {
     mockState.token = 'token-f007';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f007', user: mockState.user, initialized: true });
     renderApp(['/org']);
 
@@ -165,7 +184,7 @@ describe('F006 platform identity frontend', () => {
 
   it('renders sys page with config, notification and one-time API key paths', async () => {
     mockState.token = 'token-f007';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f007', user: mockState.user, initialized: true });
     renderApp(['/sys']);
 
@@ -181,4 +200,25 @@ describe('F006 platform identity frontend', () => {
     await userEvent.click(screen.getByRole('button', { name: '＋ 新建 API Key' }));
     expect(await screen.findByText('新建 API Key')).toBeInTheDocument();
   });
+
+  it('renders resource page with PAI unconfigured guidance and prototype tabs', async () => {
+    // TASK-pai-resource-integration AC-01 AC-02 AC-05 AC-06
+    mockState.token = 'token-f008';
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource'], sessionVersion: 1 };
+    useSessionStore.setState({ token: 'token-f008', user: mockState.user, initialized: true });
+    renderApp(['/resource']);
+
+    expect(await screen.findByRole('heading', { name: '资源管理' })).toBeInTheDocument();
+    expect(screen.getByText(/阿里云 PAI Workspace/)).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '集群总览' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'GPU 节点' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '资源池' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '存储' })).toBeInTheDocument();
+    expect(await screen.findByText('PAI 连接尚未配置')).toBeInTheDocument();
+    expect(screen.getAllByText(/TODO_CONFIRM_PAI_REGION/).length).toBeGreaterThan(0);
+    expect(screen.getByText('GPU 总量')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '手动同步 PAI' }));
+    expect(await screen.findByText(/PAI 同步返回 UNCONFIGURED/)).toBeInTheDocument();
+  });
+
 });

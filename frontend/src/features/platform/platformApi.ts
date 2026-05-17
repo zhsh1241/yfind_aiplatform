@@ -254,6 +254,156 @@ export type OrganizationCreateInput = {
   apiRateLimitPerDay?: number;
 };
 
+
+export type PaiResourceStatus = {
+  status: string;
+  configured: boolean;
+  enabled: boolean;
+  regionId: string;
+  endpoint: string;
+  workspaceId: string;
+  quotaId: string;
+  resourceGroupId: string;
+  credentialMode: string;
+  credentialRefMasked: string;
+  diagnosticCode: string;
+  diagnosticMessage: string;
+  lastSyncAt: string | null;
+  stale: boolean;
+};
+
+export type PaiResourceUsageCard = {
+  key: string;
+  label: string;
+  used: number;
+  total: number;
+  unit: string;
+  percent: number;
+  status: string;
+};
+
+export type PaiResourceOverview = {
+  status: string;
+  scopeType: string;
+  scopeId: string;
+  bindingId: string;
+  workspaceId: string;
+  quotaId: string;
+  resourceGroupId: string;
+  lastSyncAt: string | null;
+  stale: boolean;
+  diagnosticCode: string;
+  diagnosticMessage: string;
+  cards: PaiResourceUsageCard[];
+  updatedFrom: string;
+};
+
+export type PaiResourceBinding = {
+  bindingId: string;
+  organizationId: string;
+  organizationName: string;
+  scopeType: string;
+  workspaceId: string;
+  workspaceName: string;
+  quotaId: string;
+  quotaName: string;
+  resourceGroupId: string;
+  status: string;
+  diagnosticCode: string;
+  diagnosticMessage: string;
+  lastSyncAt: string | null;
+};
+
+export type PaiResourceNode = {
+  nodeId: string;
+  sourceType: string;
+  hostOrZone: string;
+  gpuSpec: string;
+  cpuCores: number;
+  memoryGb: number;
+  gpuTotal: number;
+  gpuUsed: number;
+  gpuUtilizationPercent: number;
+  status: string;
+  diagnostic: string;
+};
+
+export type PaiResourcePool = {
+  poolId: string;
+  poolName: string;
+  sourceType: string;
+  bindingId: string;
+  quotaId: string;
+  workspaceId: string;
+  gpuUsed: number;
+  gpuTotal: number;
+  cpuUsed: number;
+  cpuTotal: number;
+  memoryUsedGb: number;
+  memoryTotalGb: number;
+  userCount: number;
+  status: string;
+};
+
+export type PaiResourceStorage = {
+  storageId: string;
+  name: string;
+  sourceType: string;
+  capacityGb: number;
+  usedGb: number;
+  percent: number;
+  status: string;
+  diagnostic: string;
+};
+
+export type PaiSyncResult = {
+  syncId: string;
+  bindingId: string;
+  result: string;
+  status: string;
+  diagnosticCode: string;
+  diagnosticMessage: string;
+  lastSyncAt: string | null;
+  stale: boolean;
+  paiRequestId: string;
+};
+
+export type PaiResourceReference = {
+  resourceBindingId: string;
+  organizationId: string;
+  paiWorkspaceId: string;
+  paiQuotaId: string;
+  paiResourceGroupId: string;
+  status: string;
+  usable: boolean;
+  diagnosticCode: string;
+  diagnosticMessage: string;
+};
+
+export type PaiResourceBindingUpdateInput = {
+  organizationId: string;
+  workspaceId: string;
+  workspaceName: string;
+  quotaId: string;
+  quotaName: string;
+  resourceGroupId: string;
+  status: string;
+  diagnosticMessage?: string;
+};
+
+export type PaiConnectionUpdateInput = {
+  regionId: string;
+  endpoint: string;
+  workspaceId: string;
+  quotaId: string;
+  resourceGroupId: string;
+  credentialMode: string;
+  credentialRefMasked: string;
+  enabled: boolean;
+  status: string;
+  diagnosticMessage?: string;
+};
+
 let accessToken: string | null = null;
 
 export function getAccessToken() {
@@ -364,6 +514,36 @@ export const platformApi = {
   },
   async revokeApiKey(keyId: string) {
     return unwrap<ApiKeySummary>(apiClient.post(`/api/v1/platform/api-keys/${keyId}/revoke`));
+  },
+  async paiResourceStatus() {
+    return unwrap<PaiResourceStatus>(apiClient.get('/api/v1/platform/pai-resources/status'));
+  },
+  async paiResourceOverview(organizationId = 'TENANT-CABIN') {
+    return unwrap<PaiResourceOverview>(apiClient.get('/api/v1/platform/pai-resources/overview', { params: { organizationId } }));
+  },
+  async paiResourceWorkspaces() {
+    return unwrap<PageResponse<PaiResourceBinding>>(apiClient.get('/api/v1/platform/pai-resources/workspaces'));
+  },
+  async paiResourceNodes(bindingId?: string) {
+    return unwrap<PageResponse<PaiResourceNode>>(apiClient.get('/api/v1/platform/pai-resources/nodes', { params: bindingId ? { bindingId } : {} }));
+  },
+  async paiResourcePools(bindingId?: string) {
+    return unwrap<PageResponse<PaiResourcePool>>(apiClient.get('/api/v1/platform/pai-resources/pools', { params: bindingId ? { bindingId } : {} }));
+  },
+  async paiResourceStorage(bindingId?: string) {
+    return unwrap<PageResponse<PaiResourceStorage>>(apiClient.get('/api/v1/platform/pai-resources/storage', { params: bindingId ? { bindingId } : {} }));
+  },
+  async syncPaiResources(input: { bindingId?: string; force?: boolean }) {
+    return unwrap<PaiSyncResult>(apiClient.post('/api/v1/platform/pai-resources/sync', input));
+  },
+  async updatePaiConnection(input: PaiConnectionUpdateInput) {
+    return unwrap<PaiResourceStatus>(apiClient.put('/api/v1/platform/pai-resources/connection', input));
+  },
+  async updatePaiResourceBinding(bindingId: string, input: PaiResourceBindingUpdateInput) {
+    return unwrap<PaiResourceBinding>(apiClient.put(`/api/v1/platform/pai-resources/bindings/${bindingId}`, input));
+  },
+  async paiResourceReference(organizationId = 'TENANT-CABIN') {
+    return unwrap<PaiResourceReference>(apiClient.get('/api/v1/platform/pai-resources/references', { params: { organizationId } }));
   },
 
 };

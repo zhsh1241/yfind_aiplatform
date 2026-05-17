@@ -6,6 +6,7 @@ import { PrototypePage } from './components/PrototypePage';
 import { FoundationStatusCard } from './features/foundation/FoundationStatusCard';
 import { LoginPage } from './features/platform/LoginPage';
 import { PermissionManagementPage } from './features/platform/PermissionManagementPage';
+import { ResourceManagementPage } from './features/platform/ResourceManagementPage';
 import { OrganizationManagementPage } from './features/platform/OrganizationManagementPage';
 import { SystemConfigPage } from './features/platform/SystemConfigPage';
 import { UserManagementPage } from './features/platform/UserManagementPage';
@@ -58,6 +59,7 @@ export default function App() {
             <Route path="/perm" element={canAccess('perm') ? <PermissionManagementPage /> : <NoPermission />} />
             <Route path="/org" element={canAccess('org') ? <OrganizationManagementPage /> : <NoPermission />} />
             <Route path="/sys" element={canAccess('sys') ? <SystemConfigPage /> : <NoPermission />} />
+            <Route path="/resource" element={canAccess('resource') ? <ResourceManagementPage /> : <NoPermission />} />
             {prototypePages.map((page) => (
               <Route key={page.key} path={`/${page.key}`} element={canAccess(page.key) ? <PrototypePage page={page} /> : <NoPermission />} />
             ))}
