@@ -44,3 +44,5 @@ __pycache__/
 .ruff_cache/
 *.pyc
 
+frontend/test-results/
+frontend/playwright-report/

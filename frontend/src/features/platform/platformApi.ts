@@ -133,6 +133,127 @@ export type AuditLogQuery = {
   pageSize?: number;
 };
 
+
+export type OrganizationNode = {
+  id: string;
+  code: string;
+  name: string;
+  tenantType: 'CORP' | 'BU' | 'PROJECT' | string;
+  parentId: string | null;
+  path: string;
+  status: string;
+  timezone: string;
+  defaultLocale: string;
+  quotaGpu: number;
+  quotaStorageTb: number;
+  apiRateLimitPerDay: number;
+  userCount: number;
+  usedGpu: number;
+  children: OrganizationNode[];
+};
+
+export type OrganizationTreeResponse = {
+  nodes: OrganizationNode[];
+};
+
+export type OrganizationMember = {
+  id: string;
+  organizationId: string;
+  organizationName: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  roleCode: string;
+  scopeType: string;
+  scopeId: string;
+  status: string;
+  expiresAt: string | null;
+};
+
+export type ConfigItem = {
+  key: string;
+  groupName: string;
+  displayName: string;
+  valueType: string;
+  scopeAllowed: string[];
+  sensitive: boolean;
+  defaultValue: string;
+  scopeType: string;
+  scopeId: string;
+  scopeValue: string | null;
+  effectiveValue: string;
+  inheritedFrom: string;
+  version: number;
+  status: string;
+};
+
+export type FileObjectSummary = {
+  fileId: string;
+  assetType: string;
+  tenantId: string;
+  projectId: string | null;
+  bucket: string;
+  objectKey: string;
+  expectedSha256: string | null;
+  sha256: string | null;
+  expectedSizeBytes: number | null;
+  sizeBytes: number | null;
+  contentType: string | null;
+  storageTier: string;
+  status: string;
+  ownerId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NotificationChannel = {
+  channelId: string;
+  channelType: string;
+  scopeType: string;
+  scopeId: string;
+  name: string;
+  enabled: boolean;
+  configMasked: string | null;
+  status: string;
+  diagnostic: string | null;
+  lastTestAt: string | null;
+};
+
+export type NotificationTestResult = {
+  channelId: string;
+  result: string;
+  diagnostic: string;
+  testedAt: string;
+};
+
+export type ApiKeySummary = {
+  id: string;
+  name: string;
+  prefix: string;
+  maskedKey: string;
+  plainTextKey: string | null;
+  scopeType: string;
+  scopeId: string;
+  permissions: string[];
+  status: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+};
+
+export type OrganizationCreateInput = {
+  name: string;
+  code: string;
+  tenantType: string;
+  parentId: string;
+  timezone?: string;
+  defaultLocale?: string;
+  quotaGpu?: number;
+  quotaStorageTb?: number;
+  apiRateLimitPerDay?: number;
+};
+
 let accessToken: string | null = null;
 
 export function getAccessToken() {
@@ -202,4 +323,47 @@ export const platformApi = {
       })),
     };
   },
+  async organizationTree() {
+    return unwrap<OrganizationTreeResponse>(apiClient.get('/api/v1/platform/organizations/tree'));
+  },
+  async createOrganization(input: OrganizationCreateInput) {
+    return unwrap<OrganizationNode>(apiClient.post('/api/v1/platform/organizations', input));
+  },
+  async updateOrganization(organizationId: string, input: Partial<OrganizationCreateInput>) {
+    return unwrap<OrganizationNode>(apiClient.patch(`/api/v1/platform/organizations/${organizationId}`, input));
+  },
+  async organizationMembers() {
+    return unwrap<PageResponse<OrganizationMember>>(apiClient.get('/api/v1/platform/organizations/members'));
+  },
+  async assignOrganizationMember(organizationId: string, input: { userId: string; roleCode: string; scopeType: string; scopeId: string; expiresAt?: string | null }) {
+    return unwrap<OrganizationMember>(apiClient.post(`/api/v1/platform/organizations/${organizationId}/members`, input));
+  },
+  async configs(scopeType = 'GLOBAL', scopeId = 'TENANT-YF') {
+    return unwrap<ConfigItem[]>(apiClient.get('/api/v1/platform/configs', { params: { scopeType, scopeId } }));
+  },
+  async updateConfig(key: string, input: { scopeType: string; scopeId: string; value: string; reason?: string }) {
+    return unwrap<ConfigItem>(apiClient.put(`/api/v1/platform/configs/${encodeURIComponent(key)}`, input));
+  },
+  async files() {
+    return unwrap<PageResponse<FileObjectSummary>>(apiClient.get('/api/v1/platform/files'));
+  },
+  async notificationChannels() {
+    return unwrap<NotificationChannel[]>(apiClient.get('/api/v1/platform/notification-channels'));
+  },
+  async updateNotificationChannel(channelId: string, input: { enabled?: boolean; configMasked?: string; diagnostic?: string }) {
+    return unwrap<NotificationChannel>(apiClient.put(`/api/v1/platform/notification-channels/${channelId}`, input));
+  },
+  async testNotificationChannel(channelId: string) {
+    return unwrap<NotificationTestResult>(apiClient.post(`/api/v1/platform/notification-channels/${channelId}/test`));
+  },
+  async apiKeys() {
+    return unwrap<ApiKeySummary[]>(apiClient.get('/api/v1/platform/api-keys'));
+  },
+  async createApiKey(input: { name: string; scopeType: string; scopeId: string; expiresInDays?: number; permissions?: string[] }) {
+    return unwrap<ApiKeySummary>(apiClient.post('/api/v1/platform/api-keys', input));
+  },
+  async revokeApiKey(keyId: string) {
+    return unwrap<ApiKeySummary>(apiClient.post(`/api/v1/platform/api-keys/${keyId}/revoke`));
+  },
+
 };

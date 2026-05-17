@@ -174,3 +174,19 @@ body {
 .mono {
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 }
+
+
+.org-node {
+  margin-bottom: 10px;
+}
+
+.org-node-card {
+  border-left: 3px solid #1677ff;
+  background: linear-gradient(90deg, rgb(22 119 255 / 4%), #fff 28%);
+}
+
+.api-key-once {
+  margin-bottom: 16px;
+  border-color: #faad14;
+  background: #fffbe6;
+}

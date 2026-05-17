@@ -1,6 +1,7 @@
 package com.yf.smp.app.web;
 
 import com.yf.smp.common.api.ApiResponse;
+import com.yf.smp.app.platform.PlatformException;
 import com.yf.smp.common.error.BusinessException;
 import com.yf.smp.common.error.ErrorCode;
 import org.slf4j.MDC;
@@ -12,6 +13,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(PlatformException.class)
+    ResponseEntity<ApiResponse<Void>> handlePlatformException(PlatformException exception) {
+        return ResponseEntity.status(exception.error().httpStatus())
+            .body(ApiResponse.failure(exception.error().businessCode(), exception.getMessage(), traceId()));
+    }
+
     @ExceptionHandler(BusinessException.class)
     ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException exception) {
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
