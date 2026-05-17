@@ -67,6 +67,28 @@ class PlatformIdentityAuthControllerTest {
     }
 
     @Test
+    void browserCorsPreflightAllowsLocalFrontendLogin() throws Exception {
+        // F007 regression: browser-based local testing may call backend directly from Vite origin.
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/auth/login"))
+            .header("Origin", "http://localhost:5173")
+            .header("Access-Control-Request-Method", "POST")
+            .header("Access-Control-Request-Headers", "content-type,x-trace-id,x-requested-with")
+            .header(TraceIdFilter.TRACE_HEADER, "trace-f006-cors")
+            .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+            .build();
+
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.headers().firstValue("Access-Control-Allow-Origin"))
+            .contains("http://localhost:5173");
+        assertThat(response.headers().firstValue("Access-Control-Allow-Methods"))
+            .hasValueSatisfying(methods -> assertThat(methods).contains("POST"));
+        assertThat(response.headers().firstValue("Access-Control-Allow-Headers"))
+            .hasValueSatisfying(headers -> assertThat(headers.toLowerCase()).contains("content-type", "x-trace-id", "x-requested-with"));
+    }
+
+    @Test
     void accountLocksAfterFiveFailedLoginsAndWritesAudit() throws Exception {
         // TASK-platform-identity-audit AC-02 AC-07
         for (int i = 1; i <= 5; i += 1) {
