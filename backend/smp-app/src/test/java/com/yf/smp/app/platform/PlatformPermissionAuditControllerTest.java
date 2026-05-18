@@ -9,6 +9,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -26,6 +27,8 @@ class PlatformPermissionAuditControllerTest {
     private final HttpClient client = HttpClient.newHttpClient();
     @Autowired
     private JdbcTemplate jdbc;
+    @Autowired
+    private DataSource dataSource;
 
     @Test
     void exposesPresetPermissionMatrixAndVerifiesAuditSignature() throws Exception {
@@ -51,7 +54,14 @@ class PlatformPermissionAuditControllerTest {
         assertThat(verify.at("/code").asInt()).isZero();
         assertThat(verify.at("/data/valid").asBoolean()).isTrue();
 
-        jdbc.update("UPDATE platform_audit_log SET occurred_at = DATEADD('SECOND', -5, occurred_at) WHERE event_id=?", eventId);
+        String productName;
+        try (var connection = dataSource.getConnection()) {
+            productName = connection.getMetaData().getDatabaseProductName();
+        }
+        String timestampShiftExpression = productName.toLowerCase().contains("postgresql")
+            ? "occurred_at - INTERVAL '5 seconds'"
+            : "DATEADD('SECOND', -5, occurred_at)";
+        jdbc.update("UPDATE platform_audit_log SET occurred_at = " + timestampShiftExpression + " WHERE event_id=?", eventId);
         JsonNode tampered = postJson("/api/v1/platform/audit-logs/" + eventId + "/verify", "trace-f006-verify-tampered", "{}", admin);
         assertThat(tampered.at("/code").asInt()).isZero();
         assertThat(tampered.at("/data/valid").asBoolean()).isFalse();
