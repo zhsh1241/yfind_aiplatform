@@ -10,6 +10,7 @@ import { ResourceManagementPage } from './features/platform/ResourceManagementPa
 import { OrganizationManagementPage } from './features/platform/OrganizationManagementPage';
 import { SystemConfigPage } from './features/platform/SystemConfigPage';
 import { UserManagementPage } from './features/platform/UserManagementPage';
+import { DataSourceManagementPage, DatasetDetailPage, DatasetManagementPage, DatasetUploadPage } from './features/data/DataPages';
 import { useSessionStore } from './features/platform/sessionStore';
 
 const { Header, Sider, Content } = Layout;
@@ -60,6 +61,10 @@ export default function App() {
             <Route path="/org" element={canAccess('org') ? <OrganizationManagementPage /> : <NoPermission />} />
             <Route path="/sys" element={canAccess('sys') ? <SystemConfigPage /> : <NoPermission />} />
             <Route path="/resource" element={canAccess('resource') ? <ResourceManagementPage /> : <NoPermission />} />
+            <Route path="/datasrc" element={canAccess('datasrc') ? <DataSourceManagementPage /> : <NoPermission />} />
+            <Route path="/ds" element={canAccess('ds') ? <DatasetManagementPage /> : <NoPermission />} />
+            <Route path="/up" element={canAccess('ds') ? <DatasetUploadPage /> : <NoPermission />} />
+            <Route path="/dsdetail" element={canAccess('ds') ? <DatasetDetailPage /> : <NoPermission />} />
             {prototypePages.map((page) => (
               <Route key={page.key} path={`/${page.key}`} element={canAccess(page.key) ? <PrototypePage page={page} /> : <NoPermission />} />
             ))}

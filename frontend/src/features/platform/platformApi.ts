@@ -547,3 +547,43 @@ export const platformApi = {
   },
 
 };
+
+export type DataSourceSummary = { sourceId: string; name: string; sourceType: string; tenantId: string; projectId: string | null; endpoint: string; port: number | null; databaseName: string | null; credentialMode: string; secretRefMasked: string | null; sharedScope: string; description: string | null; status: string; lastTestAt: string | null; diagnosticCode: string | null; diagnosticMessage: string | null; latencyMs: number | null; updatedAt: string };
+export type DataSourceTestResult = { sourceId: string; result: string; status: string; diagnosticCode: string; diagnosticMessage: string; latencyMs: number | null; traceId: string; testedAt: string };
+export type DataSourceSyncTask = { taskId: string; sourceId: string; sourceName: string; targetDatasetId: string | null; targetDatasetName: string | null; name: string; scheduleMode: string; syncScope: string | null; status: string; lastRunAt: string | null; lastResult: string | null; diagnosticCode: string | null; diagnosticMessage: string | null };
+export type DatasetSummary = { datasetId: string; name: string; datasetType: string; dataType: string; tenantId: string; projectId: string | null; currentVersionId: string | null; currentVersionName: string | null; status: string; accessLevel: string; tags: string[]; recordCount: number; sizeBytes: number; ownerId: string; ownerName: string; description: string | null; updatedAt: string };
+export type DatasetStats = { total: number; raw: number; preprocessed: number; annotated: number; restricted: number; totalSizeBytes: number };
+export type DatasetList = { items: DatasetSummary[]; total: number; page: number; pageSize: number; stats: DatasetStats };
+export type DatasetVersion = { versionId: string; datasetId: string; versionName: string; status: string; recordCount: number; sizeBytes: number; contentSafetyStatus: string; diagnosticCode: string | null; diagnosticMessage: string | null; createdAt: string; publishedAt: string | null };
+export type DatasetFile = { id: string; datasetId: string; versionId: string; fileId: string; fileRole: string; status: string; objectKey: string; contentType: string | null; sizeBytes: number | null; sha256: string | null };
+export type DataLineage = { lineageId: string; sourceType: string; sourceId: string; targetType: string; targetId: string; transformType: string; createdAt: string };
+export type DatasetAccessGrant = { grantId: string; datasetId: string; versionId: string | null; userId: string; userName: string; grantedBy: string; expiresAt: string; status: string };
+export type DatasetDetail = { dataset: DatasetSummary; versions: DatasetVersion[]; files: DatasetFile[]; grants: DatasetAccessGrant[]; lineage: DataLineage[]; previewStatus: string; previewDiagnostic: string };
+export type DatasetAccessRequest = { requestId: string; datasetId: string; requesterId: string; requesterName: string; purpose: string; status: string; createdAt: string; reviewedBy: string | null; reviewedAt: string | null };
+export type DatasetReference = { datasetId: string; versionId: string; status: string; usable: boolean; diagnosticCode: string; diagnosticMessage: string };
+
+export const dataApi = {
+  async dataSources() { return unwrap<DataSourceSummary[]>(apiClient.get('/api/v1/data-sources')); },
+  async createDataSource(input: Partial<DataSourceSummary> & { secretRef?: string }) { return unwrap<DataSourceSummary>(apiClient.post('/api/v1/data-sources', input)); },
+  async updateDataSource(sourceId: string, input: Partial<DataSourceSummary> & { secretRef?: string }) { return unwrap<DataSourceSummary>(apiClient.put(`/api/v1/data-sources/${sourceId}`, input)); },
+  async testDataSource(sourceId: string) { return unwrap<DataSourceTestResult>(apiClient.post(`/api/v1/data-sources/${sourceId}/test`)); },
+  async activateDataSource(sourceId: string) { return unwrap<DataSourceSummary>(apiClient.post(`/api/v1/data-sources/${sourceId}/activate`)); },
+  async disableDataSource(sourceId: string) { return unwrap<DataSourceSummary>(apiClient.post(`/api/v1/data-sources/${sourceId}/disable`)); },
+  async syncTasks() { return unwrap<DataSourceSyncTask[]>(apiClient.get('/api/v1/data-source-sync-tasks')); },
+  async createSyncTask(input: { sourceId: string; targetDatasetId?: string; name: string; scheduleMode: string; syncScope?: string }) { return unwrap<DataSourceSyncTask>(apiClient.post('/api/v1/data-source-sync-tasks', input)); },
+  async runSyncTask(taskId: string) { return unwrap<DataSourceSyncTask>(apiClient.post(`/api/v1/data-source-sync-tasks/${taskId}/run`)); },
+  async datasets(params: { keyword?: string; datasetType?: string; status?: string; accessLevel?: string } = {}) { return unwrap<DatasetList>(apiClient.get('/api/v1/datasets', { params })); },
+  async createDataset(input: { name: string; datasetType: string; dataType: string; tenantId: string; accessLevel: string; tags: string[]; description?: string; recordCount?: number; sourceId?: string }) { return unwrap<DatasetDetail>(apiClient.post('/api/v1/datasets', input)); },
+  async updateDataset(datasetId: string, input: { name?: string; accessLevel?: string; tags?: string[]; description?: string }) { return unwrap<DatasetDetail>(apiClient.put(`/api/v1/datasets/${datasetId}`, input)); },
+  async datasetDetail(datasetId: string) { return unwrap<DatasetDetail>(apiClient.get(`/api/v1/datasets/${datasetId}`)); },
+  async createVersion(datasetId: string, input: { versionName?: string; recordCount?: number }) { return unwrap<DatasetVersion>(apiClient.post(`/api/v1/datasets/${datasetId}/versions`, input)); },
+  async attachFile(datasetId: string, versionId: string, input: { fileId: string; fileRole: string }) { return unwrap<DatasetFile>(apiClient.post(`/api/v1/datasets/${datasetId}/versions/${versionId}/files`, input)); },
+  async publishVersion(datasetId: string, versionId: string) { return unwrap<DatasetVersion>(apiClient.post(`/api/v1/datasets/${datasetId}/versions/${versionId}/publish`)); },
+  async archiveDataset(datasetId: string) { return unwrap<DatasetSummary>(apiClient.post(`/api/v1/datasets/${datasetId}/archive`)); },
+  async deleteDataset(datasetId: string) { return unwrap<void>(apiClient.delete(`/api/v1/datasets/${datasetId}`)); },
+  async accessRequests(datasetId: string) { return unwrap<DatasetAccessRequest[]>(apiClient.get(`/api/v1/datasets/${datasetId}/access`)); },
+  async requestAccess(datasetId: string, purpose: string) { return unwrap<DatasetAccessRequest>(apiClient.post(`/api/v1/datasets/${datasetId}/access-requests`, { purpose })); },
+  async approveAccess(requestId: string, input: { expiresAt?: string | null; reason?: string } = {}) { return unwrap<DatasetAccessGrant>(apiClient.put(`/api/v1/dataset-access-requests/${requestId}/approve`, input)); },
+  async rejectAccess(requestId: string, input: { expiresAt?: string | null; reason?: string } = {}) { return unwrap<DatasetAccessRequest>(apiClient.put(`/api/v1/dataset-access-requests/${requestId}/reject`, input)); },
+  async reference(datasetId: string, versionId?: string) { return unwrap<DatasetReference>(apiClient.get('/api/v1/dataset-references', { params: { datasetId, versionId } })); },
+};

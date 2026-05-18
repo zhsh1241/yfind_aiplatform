@@ -190,3 +190,11 @@ body {
   border-color: #faad14;
   background: #fffbe6;
 }
+
+.data-source-grid,
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
