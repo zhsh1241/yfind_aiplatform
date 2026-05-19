@@ -23,6 +23,7 @@ F012 已完成 DATA 域标注闭环的可验收实现：
 | --- | --- | --- |
 | `node tools/ai-scaffold/dist/cli.js check-build-feature-prereqs docs/features/F012-annotation-integration` | PASS | planning gate 已通过；plan 已批准，planning evidence 已归档。 |
 | `$env:JAVA_HOME='C:\java\jdk-25'; mvn -q -f backend/pom.xml -pl smp-app test -DskipTests=false` | PASS | 后端测试通过；Flyway V9 已成功应用。 |
+| `SPRING_PROFILES_ACTIVE=prod ... mvn -q -f backend/pom.xml -pl smp-app spring-boot:run -Dspring-boot.run.arguments=--server.port=18080` | PASS | PostgreSQL 16.13 / `smp_platform_test` 启动烟测通过；Flyway v9 应用，`/actuator/health` 返回 UP。 |
 | `npm --prefix frontend run lint` | PASS | 0 error，1 个既有 `react-refresh/only-export-components` warning。 |
 | `npm --prefix frontend run build` | PASS | TypeScript + Vite 构建成功；chunk-size warning 非阻塞。 |
 | `npm --prefix frontend run test:ci -- --pool=threads --poolOptions.threads.singleThread=true` | PASS | 1 file / 7 tests passed。 |
@@ -62,7 +63,7 @@ Total: 14 passed
 
 - Ant Design `Drawer.width`、`Space.direction`、`Alert.message` deprecated warning 出现在 Playwright dev server 日志中，不影响断言。
 - Vitest/jsdom 输出 CSS parse warnings，不影响断言。
-- 本地验证使用 H2 test profile 和 `--skip-backend-integration`；真实 PostgreSQL/Redis 集成需后续 CI/环境补充。
+- PostgreSQL 本地集成风险已补强；发布前仍建议以 CI/部署环境再次确认生产库、Redis 和网络策略。
 
 ## 6. QA 结论
 

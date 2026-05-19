@@ -126,7 +126,7 @@ npm --prefix frontend run lint
 npm --prefix frontend run build
 npm --prefix frontend run test:ci -- --pool=threads --poolOptions.threads.singleThread=true
 npm --prefix frontend run e2e
-node tools/ai-scaffold/dist/cli.js gate --feature-dir docs/features/F012-annotation-integration --skip-backend-integration --run-e2e
+node tools/ai-scaffold/dist/cli.js gate --feature-dir docs/features/F012-annotation-integration --run-e2e
 ```
 
 规划阶段只需验证：

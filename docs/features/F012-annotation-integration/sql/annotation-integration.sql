@@ -184,7 +184,7 @@ INSERT INTO annotation_label_template (template_id, tenant_id, name, scene, labe
     ('LT-TEXT-INTENT-DRAFT', 'TENANT-YF', '工单意图分类模板草稿', 'TEXT_LABELING', 'CATEGORY', '{"labels":[{"name":"报修"},{"name":"保养"},{"name":"咨询"}]}', '<View><Text name="text" value="$text"/><Choices name="intent" toName="text"><Choice value="报修"/><Choice value="保养"/><Choice value="咨询"/></Choices></View>', 'DRAFT', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
 INSERT INTO annotation_task (task_id, tenant_id, project_id, source_dataset_id, source_version_id, template_id, name, scene, status, review_enabled, prelabel_enabled, label_studio_enabled, prelabel_model_source, prelabel_confidence, total_count, annotated_count, reviewed_count, quality_score, deadline, note, created_by, created_at, updated_at) VALUES
-    ('ANN-WELD-Q2', 'TENANT-CABIN', NULL, 'DATASET-WELD-DEFECT', 'DVER-WELD-001', 'LT-WELD-BBOX', 'Q2焊缝检测图像标注', 'OBJECT_DETECTION', 'IN_PROGRESS', TRUE, TRUE, TRUE, 'TODO_CONFIRM_PRELABEL_MODEL_SOURCE', 0.70, 8000, 6240, 5800, 92, DATEADD('DAY', 14, CURRENT_TIMESTAMP), '原型任务：目标检测、AI 预标注、Label Studio seam', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+    ('ANN-WELD-Q2', 'TENANT-CABIN', NULL, 'DATASET-WELD-DEFECT', 'DVER-WELD-001', 'LT-WELD-BBOX', 'Q2焊缝检测图像标注', 'OBJECT_DETECTION', 'IN_PROGRESS', TRUE, TRUE, TRUE, 'TODO_CONFIRM_PRELABEL_MODEL_SOURCE', 0.70, 8000, 6240, 5800, 92, CURRENT_TIMESTAMP + INTERVAL '14' DAY, '原型任务：目标检测、AI 预标注、Label Studio seam', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
 INSERT INTO annotation_assignment (assignment_id, task_id, assignee_id, role, status, assigned_by, assigned_at) VALUES
     ('ANN-ASG-001', 'ANN-WELD-Q2', 'USR-ANNOTATOR', 'ANNOTATOR', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP),

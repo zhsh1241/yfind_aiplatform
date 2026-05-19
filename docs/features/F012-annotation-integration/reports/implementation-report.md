@@ -74,4 +74,5 @@ F012 已在 DATA 域补齐标注闭环控制面，保持原型 `/ann`、`/annwor
 - 真实 Label Studio 生产 URL/token/workspace/storage 仍未知，保持 `TODO_CONFIRM_*`。
 - AI 预标注模型来源未确认，本期只落配置、预测摘要和人工可继续处理 seam。
 - 前端标注画布为控制面样本队列，不实现复杂图像/视频标注绘制器。
-- 本地 gate 使用 `--skip-backend-integration`，真实 PostgreSQL/Redis 集成需以后续 CI 或环境确认补充。
+- PostgreSQL 16.13 本地启动烟测已通过：`smp_platform_test` 中 Flyway v9 成功应用，Annotation seed 数据可查，`/actuator/health` 返回 UP。
+- 已重跑 `node tools/ai-scaffold/dist/cli.js gate --feature-dir docs/features/F012-annotation-integration --run-e2e`，后端集成未降级跳过。

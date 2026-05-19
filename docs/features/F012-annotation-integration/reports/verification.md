@@ -13,6 +13,7 @@
 | --- | --- | --- |
 | `node tools/ai-scaffold/dist/cli.js check-build-feature-prereqs docs/features/F012-annotation-integration` | PASS | plan 已批准；planning evidence 已归档。 |
 | `$env:JAVA_HOME='C:\java\jdk-25'; mvn -q -f backend/pom.xml -pl smp-app test -DskipTests=false` | PASS | 后端 Spring Boot/JUnit 测试通过；Flyway v9 成功应用。 |
+| `docker exec smp-platform-postgres psql -U smp -d smp_platform_test ...` + `SPRING_PROFILES_ACTIVE=prod ... mvn -q -f backend/pom.xml -pl smp-app spring-boot:run -Dspring-boot.run.arguments=--server.port=18080` | PASS | PostgreSQL 16.13 本地库 `smp_platform_test` 启动烟测通过；Flyway `Successfully applied 9 migrations ... version v9`；`/actuator/health` 返回 `HTTP_STATUS:200` / `status: UP`；`annotation_task=1`、`annotation_external_binding=1`。 |
 | `npm --prefix frontend run lint` | PASS | 0 error，1 warning（既有 Fast Refresh 规则）。 |
 | `npm --prefix frontend run build` | PASS | TypeScript + Vite build 成功。 |
 | `npm --prefix frontend run test:ci -- --pool=threads --poolOptions.threads.singleThread=true` | PASS | 1 test file / 7 tests passed。 |
@@ -48,14 +49,14 @@
 | `node tools/ai-scaffold/dist/cli.js check-task-traceability docs/features/F012-annotation-integration` | PASS | `AC traceability check passed.` |
 | `node tools/ai-scaffold/dist/cli.js verify-contract docs/features/F012-annotation-integration` | PASS | `F012-annotation-integration/contract.md - FROZEN`；`All checked contracts are ready for development.` |
 | `node tools/ai-scaffold/dist/cli.js check-code-review-verdict docs/features/F012-annotation-integration` | PASS | `Verdict: PASS_WITH_COMMENTS` |
-| `node tools/ai-scaffold/dist/cli.js gate --feature-dir docs/features/F012-annotation-integration --skip-backend-integration --run-e2e` | PASS | `Quality gate passed.`；后端 `Tests run: 31, Failures: 0, Errors: 0, Skipped: 0`；前端 `7 tests passed`；Playwright `14 passed`。 |
+| `node tools/ai-scaffold/dist/cli.js gate --feature-dir docs/features/F012-annotation-integration --run-e2e` | PASS | 后端集成未降级跳过；`Quality gate passed.`；后端 `Tests run: 31, Failures: 0, Errors: 0, Skipped: 0`；前端 `7 tests passed`；Playwright `14 passed`。 |
 
 ## 5. 已知非阻塞项
 
-- 本地后端使用 H2 `MODE=PostgreSQL`，最终生产 PostgreSQL 环境仍需集成/CI 验证。
+- PostgreSQL 本地集成风险已补强：`smp-platform-postgres` / `smp_platform_test` 上完成 prod profile 启动烟测，Flyway v9 与 Annotation seed 数据通过；最终生产库、网络策略和 CI 仍需发布环境验证。
 - Label Studio 和 AI 预标注生产参数未知，保持 `TODO_CONFIRM_*`。
 - Ant Design deprecated warning 与 Vite chunk warning 不影响验收。
 
 ## 6. 结论
 
-F012 专项后端、前端、单测、E2E、追溯、契约与 ai-scaffold feature gate 均已通过；可提交并合并。
+F012 专项后端、前端、单测、E2E、追溯、契约、PostgreSQL 本地启动烟测与未跳过后端集成的 ai-scaffold feature gate 均已通过；可提交并合并。

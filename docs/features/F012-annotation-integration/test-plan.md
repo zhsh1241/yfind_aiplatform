@@ -83,5 +83,5 @@ npm --prefix frontend run test:ci -- --pool=threads --poolOptions.threads.single
 npm --prefix frontend run e2e
 node tools/ai-scaffold/dist/cli.js check-task-traceability docs/features/F012-annotation-integration
 node tools/ai-scaffold/dist/cli.js verify-contract docs/features/F012-annotation-integration
-node tools/ai-scaffold/dist/cli.js gate --feature-dir docs/features/F012-annotation-integration --skip-backend-integration --run-e2e
+node tools/ai-scaffold/dist/cli.js gate --feature-dir docs/features/F012-annotation-integration --run-e2e
 ```
