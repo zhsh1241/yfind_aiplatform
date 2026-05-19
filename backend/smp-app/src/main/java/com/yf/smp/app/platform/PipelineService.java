@@ -1,0 +1,606 @@
+package com.yf.smp.app.platform;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class PipelineService {
+    private static final String TRACE_TAG = "TASK-pipeline-editor-operator-marketplace";
+    private static final Pattern VARIABLE_PATTERN = Pattern.compile("\\$\\{([A-Za-z0-9_]+)}");
+    private static final Pattern REQUIRED_PATTERN = Pattern.compile("\\\"required\\\"\\s*:\\s*\\[(.*?)]");
+    private final JdbcTemplate jdbc;
+    private final PlatformIdentityService identityService;
+
+    public PipelineService(JdbcTemplate jdbc, PlatformIdentityService identityService) {
+        this.jdbc = jdbc;
+        this.identityService = identityService;
+    }
+
+    public PipelineListResponse pipelines(PlatformPrincipal principal, String keyword, String status, int page, int pageSize) {
+        identityService.requirePermission(principal, "data:pipeline:read");
+        List<PipelineSummaryResponse> filtered = allPipelineSummaries().stream()
+            .filter(item -> canSeeTenant(principal, item.tenantId()))
+            .filter(item -> blank(status) || item.status().equalsIgnoreCase(status))
+            .filter(item -> matches(item.name(), keyword) || matches(item.description(), keyword) || matches(item.pipelineId(), keyword))
+            .toList();
+        int normalizedPage = Math.max(1, page);
+        int normalizedPageSize = Math.max(1, Math.min(100, pageSize));
+        int from = Math.min((normalizedPage - 1) * normalizedPageSize, filtered.size());
+        int to = Math.min(from + normalizedPageSize, filtered.size());
+        return new PipelineListResponse(filtered.subList(from, to), filtered.size(), normalizedPage, normalizedPageSize);
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public PipelineDetailResponse createPipeline(PlatformPrincipal principal, PipelineSaveRequest request) {
+        identityService.requirePermission(principal, "data:pipeline:write");
+        String tenantId = blank(request.tenantId(), principal.user().tenantId());
+        ensureCanSeeTenant(principal, tenantId, true);
+        validateSecrets(request);
+        PipelineValidationResponse validation = validateRequest(request, null);
+        if (!validation.valid()) {
+            audit(principal, tenantId, "PIPELINE_VALIDATION_FAILED", "Pipeline", "NEW", "FAILURE", "WARNING", null, null, validation.diagnosticMessage());
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, validation.diagnosticMessage());
+        }
+        String id = "PIPE-" + randomHex(10).toUpperCase(Locale.ROOT);
+        OffsetDateTime at = now();
+        jdbc.update("""
+            INSERT INTO pipeline_definition (pipeline_id, name, tenant_id, project_id, status, current_version_id, owner_id, description, diagnostic_code, diagnostic_message, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'VALIDATED', NULL, ?, ?, 'OK', 'DAG 校验通过', ?, ?)
+            """, id, require(request.name(), "Pipeline 名称不能为空"), tenantId, nullIfBlank(request.projectId()), principal.user().id(), nullIfBlank(request.description()), at, at);
+        replaceGraph(id, request);
+        audit(principal, tenantId, "PIPELINE_CREATED", "Pipeline", id, "SUCCESS", "INFO", null, "VALIDATED", TRACE_TAG);
+        return pipelineDetail(principal, id);
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public PipelineDetailResponse updatePipeline(PlatformPrincipal principal, String pipelineId, PipelineSaveRequest request) {
+        identityService.requirePermission(principal, "data:pipeline:write");
+        PipelineSummaryResponse current = pipelineSummaryVisible(principal, pipelineId, true);
+        validateSecrets(request);
+        PipelineValidationResponse validation = validateRequest(request, pipelineId);
+        if (!validation.valid()) {
+            jdbc.update("UPDATE pipeline_definition SET status='DRAFT', diagnostic_code=?, diagnostic_message=?, updated_at=? WHERE pipeline_id=?", validation.diagnosticCode(), validation.diagnosticMessage(), now(), pipelineId);
+            audit(principal, current.tenantId(), "PIPELINE_VALIDATION_FAILED", "Pipeline", pipelineId, "FAILURE", "WARNING", current.status(), "DRAFT", validation.diagnosticMessage());
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, validation.diagnosticMessage());
+        }
+        jdbc.update("UPDATE pipeline_definition SET name=?, project_id=?, description=?, status='VALIDATED', diagnostic_code='OK', diagnostic_message='DAG 校验通过', updated_at=? WHERE pipeline_id=?", blank(request.name(), current.name()), nullIfBlank(request.projectId()), nullIfBlank(request.description()), now(), pipelineId);
+        replaceGraph(pipelineId, request);
+        audit(principal, current.tenantId(), "PIPELINE_UPDATED", "Pipeline", pipelineId, "SUCCESS", "INFO", current.status(), "VALIDATED", TRACE_TAG);
+        return pipelineDetail(principal, pipelineId);
+    }
+
+    public PipelineDetailResponse pipelineDetail(PlatformPrincipal principal, String pipelineId) {
+        identityService.requirePermission(principal, "data:pipeline:read");
+        PipelineSummaryResponse summary = pipelineSummaryVisible(principal, pipelineId, false);
+        return new PipelineDetailResponse(summary, nodes(pipelineId), edges(pipelineId), variables(pipelineId), versions(pipelineId), runs(principal, pipelineId), validateExisting(pipelineId));
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public PipelineValidationResponse validatePipeline(PlatformPrincipal principal, String pipelineId) {
+        identityService.requirePermission(principal, "data:pipeline:write");
+        PipelineSummaryResponse summary = pipelineSummaryVisible(principal, pipelineId, true);
+        PipelineValidationResponse validation = validateExisting(pipelineId);
+        if (!validation.valid()) {
+            audit(principal, summary.tenantId(), "PIPELINE_VALIDATION_FAILED", "Pipeline", pipelineId, "FAILURE", "WARNING", summary.status(), "DRAFT", validation.diagnosticMessage());
+        }
+        return validation;
+    }
+
+    @Transactional
+    public PipelineVersionResponse saveVersion(PlatformPrincipal principal, String pipelineId, PipelineVersionRequest request) {
+        identityService.requirePermission(principal, "data:pipeline:write");
+        PipelineSummaryResponse summary = pipelineSummaryVisible(principal, pipelineId, true);
+        PipelineValidationResponse validation = validateExisting(pipelineId);
+        if (!validation.valid()) {
+            audit(principal, summary.tenantId(), "PIPELINE_VALIDATION_FAILED", "Pipeline", pipelineId, "FAILURE", "WARNING", summary.status(), "DRAFT", validation.diagnosticMessage());
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, validation.diagnosticMessage());
+        }
+        String versionId = "PVER-" + randomHex(10).toUpperCase(Locale.ROOT);
+        String versionName = blank(request.versionName(), nextVersionName(pipelineId));
+        OffsetDateTime at = now();
+        jdbc.update("INSERT INTO pipeline_version (version_id, pipeline_id, version_name, note, dag_json, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", versionId, pipelineId, versionName, nullIfBlank(request.note()), snapshotDag(pipelineId), principal.user().id(), at);
+        jdbc.update("UPDATE pipeline_definition SET current_version_id=?, status='VALIDATED', updated_at=? WHERE pipeline_id=?", versionId, at, pipelineId);
+        audit(principal, summary.tenantId(), "PIPELINE_VERSION_SAVED", "PipelineVersion", versionId, "SUCCESS", "INFO", null, versionName, TRACE_TAG);
+        return versions(pipelineId).stream().filter(item -> item.versionId().equals(versionId)).findFirst().orElseThrow();
+    }
+
+    public List<PipelineVersionResponse> versions(PlatformPrincipal principal, String pipelineId) {
+        identityService.requirePermission(principal, "data:pipeline:read");
+        pipelineSummaryVisible(principal, pipelineId, false);
+        return versions(pipelineId);
+    }
+
+    @Transactional
+    public PipelineDetailResponse restoreVersion(PlatformPrincipal principal, String pipelineId, String versionId) {
+        identityService.requirePermission(principal, "data:pipeline:write");
+        PipelineSummaryResponse summary = pipelineSummaryVisible(principal, pipelineId, true);
+        PipelineVersionResponse version = version(pipelineId, versionId);
+        jdbc.update("UPDATE pipeline_definition SET current_version_id=?, status='DRAFT', diagnostic_code='RESTORED', diagnostic_message=?, updated_at=? WHERE pipeline_id=?", versionId, "已恢复版本 " + version.versionName() + "，请校验后重新保存", now(), pipelineId);
+        audit(principal, summary.tenantId(), "PIPELINE_VERSION_RESTORED", "PipelineVersion", versionId, "SUCCESS", "WARNING", summary.currentVersionId(), versionId, TRACE_TAG);
+        return pipelineDetail(principal, pipelineId);
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public PipelineRunDetailResponse runPipeline(PlatformPrincipal principal, String pipelineId, PipelineRunRequest request) {
+        identityService.requirePermission(principal, "data:pipeline:run");
+        PipelineSummaryResponse summary = pipelineSummaryVisible(principal, pipelineId, false);
+        PipelineValidationResponse validation = validateExisting(pipelineId);
+        if (!validation.valid()) {
+            audit(principal, summary.tenantId(), "PIPELINE_RUN_FAILED", "Pipeline", pipelineId, "FAILURE", "WARNING", summary.status(), "FAILED", validation.diagnosticMessage());
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, validation.diagnosticMessage());
+        }
+        String sampleDatasetId = blank(request.sampleDatasetId(), datasetIdFromReadNode(pipelineId));
+        DatasetInfo sample = datasetVisible(principal, sampleDatasetId);
+        String runId = "PRUN-" + randomHex(10).toUpperCase(Locale.ROOT);
+        OffsetDateTime start = now();
+        audit(principal, summary.tenantId(), "PIPELINE_RUN_STARTED", "PipelineRun", runId, "SUCCESS", "INFO", null, "RUNNING", TRACE_TAG);
+        String outputDatasetId = createOutputDataset(principal, summary, sample, runId, start);
+        OffsetDateTime end = start.plusSeconds(Math.max(1, nodes(pipelineId).size()) * 12L);
+        long durationMs = java.time.Duration.between(start, end).toMillis();
+        jdbc.update("""
+            INSERT INTO pipeline_run (run_id, pipeline_id, version_id, status, trigger_mode, sample_dataset_id, output_dataset_id, diagnostic_code, diagnostic_message, duration_ms, triggered_by, started_at, ended_at)
+            VALUES (?, ?, ?, 'SUCCEEDED', ?, ?, ?, 'OK', 'SANDBOX_PIPELINE_RUN_SUCCEEDED', ?, ?, ?, ?)
+            """, runId, pipelineId, summary.currentVersionId(), upper(request.triggerMode(), "MANUAL"), sampleDatasetId, outputDatasetId, durationMs, principal.user().id(), start, end);
+        int index = 0;
+        for (PipelineNodeResponse node : nodes(pipelineId)) {
+            long nodeDuration = 800L + index * 350L;
+            jdbc.update("INSERT INTO pipeline_run_node (node_run_id, run_id, node_id, operator_name, status, duration_ms, log_summary, error_code, created_at) VALUES (?, ?, ?, ?, 'SUCCEEDED', ?, ?, NULL, ?)", "PNRUN-" + randomHex(10).toUpperCase(Locale.ROOT), runId, node.nodeId(), node.operatorName(), nodeDuration, "SANDBOX 节点 " + node.label() + " 处理完成，输出记录 " + sample.recordCount(), start.plusSeconds(index + 1L));
+            index++;
+        }
+        jdbc.update("UPDATE operator_catalog SET usage_count=usage_count + 1, pipeline_count=GREATEST(pipeline_count, 1), updated_at=? WHERE operator_id IN (SELECT operator_id FROM pipeline_node WHERE pipeline_id=?)", now(), pipelineId);
+        audit(principal, summary.tenantId(), "PIPELINE_RUN_SUCCEEDED", "PipelineRun", runId, "SUCCESS", "INFO", null, outputDatasetId, TRACE_TAG);
+        return runDetail(principal, runId);
+    }
+
+    public List<PipelineRunSummaryResponse> runs(PlatformPrincipal principal, String pipelineId) {
+        identityService.requirePermission(principal, "data:pipeline:read");
+        pipelineSummaryVisible(principal, pipelineId, false);
+        return jdbc.query("SELECT * FROM pipeline_run WHERE pipeline_id=? ORDER BY started_at DESC", (rs, n) -> runSummary(rs), pipelineId);
+    }
+
+    public PipelineRunDetailResponse runDetail(PlatformPrincipal principal, String runId) {
+        identityService.requirePermission(principal, "data:pipeline:read");
+        PipelineRunSummaryResponse run = runSummaryById(runId);
+        pipelineSummaryVisible(principal, run.pipelineId(), false);
+        List<PipelineRunNodeResponse> nodeRuns = jdbc.query("SELECT * FROM pipeline_run_node WHERE run_id=? ORDER BY created_at", (rs, n) -> new PipelineRunNodeResponse(rs.getString("node_run_id"), rs.getString("run_id"), rs.getString("node_id"), rs.getString("operator_name"), rs.getString("status"), nullableLong(rs, "duration_ms"), rs.getString("log_summary"), rs.getString("error_code")), runId);
+        return new PipelineRunDetailResponse(run, nodeRuns);
+    }
+
+    public OperatorListResponse operators(PlatformPrincipal principal, String keyword, String category, String stage, String status) {
+        identityService.requirePermission(principal, "data:operator:read");
+        List<OperatorSummaryResponse> items = jdbc.query("SELECT * FROM operator_catalog ORDER BY category, stage, name", (rs, n) -> operatorSummary(rs)).stream()
+            .filter(item -> operatorVisible(principal, item.operatorId()))
+            .filter(item -> blank(keyword) || matches(item.name(), keyword) || matches(item.description(), keyword) || matches(item.category(), keyword))
+            .filter(item -> blank(category) || item.category().equalsIgnoreCase(category))
+            .filter(item -> blank(stage) || item.stage().equalsIgnoreCase(stage))
+            .filter(item -> blank(status) || item.status().equalsIgnoreCase(status))
+            .toList();
+        Map<String, Long> counts = new java.util.LinkedHashMap<>();
+        for (OperatorSummaryResponse item : items) counts.put(item.category(), counts.getOrDefault(item.category(), 0L) + 1L);
+        List<OperatorCategoryResponse> categories = counts.entrySet().stream().map(e -> new OperatorCategoryResponse(e.getKey(), e.getValue())).toList();
+        long builtin = items.stream().filter(i -> "BUILTIN".equals(i.kind())).count();
+        long custom = items.stream().filter(i -> !"BUILTIN".equals(i.kind())).count();
+        long published = items.stream().filter(i -> "PUBLISHED".equals(i.status())).count();
+        long submitted = items.stream().filter(i -> "SUBMITTED".equals(i.status())).count();
+        return new OperatorListResponse(items, items.size(), categories, new OperatorStatsResponse(items.size(), builtin, custom, published, submitted));
+    }
+
+    public OperatorDetailResponse operatorDetail(PlatformPrincipal principal, String operatorId) {
+        identityService.requirePermission(principal, "data:operator:read");
+        if (!operatorVisible(principal, operatorId)) throw new PlatformException(PlatformError.NOT_FOUND, "算子不存在");
+        return operatorDetail(operatorId);
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public OperatorDetailResponse createCustomOperator(PlatformPrincipal principal, OperatorCustomRequest request) {
+        identityService.requirePermission(principal, "data:operator:write");
+        validateOperatorSecrets(request);
+        String id = "OP-CUSTOM-" + randomHex(8).toUpperCase(Locale.ROOT);
+        OffsetDateTime at = now();
+        jdbc.update("""
+            INSERT INTO operator_catalog (operator_id, name, category, stage, kind, tenant_id, description, parameter_schema_json, input_schema_json, output_schema_json, endpoint, credential_ref, timeout_seconds, concurrency_limit, status, version, before_example, after_example, usage_count, pipeline_count, error_rate, created_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'HTTP', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', '0.1.0', '外部服务接入前', '审核通过后可在 Pipeline 中使用', 0, 0, 0, ?, ?, ?)
+            """, id, require(request.name(), "算子名称不能为空"), blank(request.category(), "自定义算子"), blank(request.stage(), "扩展"), principal.user().tenantId(), nullIfBlank(request.description()), blank(request.parameterSchemaJson(), "{\"type\":\"object\"}"), blank(request.inputSchemaJson(), "{\"records\":\"ANY\"}"), blank(request.outputSchemaJson(), "{\"records\":\"ANY\"}"), nullIfBlank(request.endpoint()), nullIfBlank(request.credentialRef()), defaultInt(request.timeoutSeconds(), 30), defaultInt(request.concurrencyLimit(), 2), principal.user().id(), at, at);
+        audit(principal, principal.user().tenantId(), "OPERATOR_CREATED", "Operator", id, "SUCCESS", "INFO", null, "DRAFT", TRACE_TAG);
+        return operatorDetail(id);
+    }
+
+    @Transactional
+    public OperatorDetailResponse submitOperator(PlatformPrincipal principal, String operatorId) {
+        identityService.requirePermission(principal, "data:operator:write");
+        OperatorRecord operator = operatorRecordVisible(principal, operatorId, true);
+        if (!List.of("DRAFT", "REJECTED").contains(operator.status())) throw new PlatformException(PlatformError.CONFLICT, "OPERATOR_STATE_CONFLICT: 仅草稿或驳回状态可提交审核");
+        OffsetDateTime at = now();
+        jdbc.update("UPDATE operator_catalog SET status='SUBMITTED', updated_at=? WHERE operator_id=?", at, operatorId);
+        jdbc.update("INSERT INTO operator_review (review_id, operator_id, submitter_id, reviewer_id, status, reason, submitted_at, reviewed_at) VALUES (?, ?, ?, NULL, 'SUBMITTED', '提交审核', ?, NULL)", "OREV-" + randomHex(10).toUpperCase(Locale.ROOT), operatorId, principal.user().id(), at);
+        audit(principal, tenantForAudit(operator.tenantId(), principal), "OPERATOR_SUBMITTED", "Operator", operatorId, "SUCCESS", "WARNING", operator.status(), "SUBMITTED", TRACE_TAG);
+        return operatorDetail(operatorId);
+    }
+
+    @Transactional
+    public OperatorDetailResponse approveOperator(PlatformPrincipal principal, String operatorId, OperatorReviewRequest request) {
+        identityService.requirePermission(principal, "data:operator:review");
+        OperatorRecord operator = operatorRecordVisible(principal, operatorId, true);
+        if (!"SUBMITTED".equals(operator.status())) throw new PlatformException(PlatformError.CONFLICT, "OPERATOR_STATE_CONFLICT: 仅已提交审核的算子可批准");
+        OffsetDateTime at = now();
+        jdbc.update("UPDATE operator_catalog SET status='PUBLISHED', updated_at=? WHERE operator_id=?", at, operatorId);
+        jdbc.update("UPDATE operator_review SET reviewer_id=?, status='APPROVED', reason=?, reviewed_at=? WHERE operator_id=? AND status='SUBMITTED'", principal.user().id(), blank(request.reason(), "审核通过"), at, operatorId);
+        audit(principal, tenantForAudit(operator.tenantId(), principal), "OPERATOR_APPROVED", "Operator", operatorId, "SUCCESS", "CRITICAL", operator.status(), "APPROVED", TRACE_TAG);
+        audit(principal, tenantForAudit(operator.tenantId(), principal), "OPERATOR_PUBLISHED", "Operator", operatorId, "SUCCESS", "CRITICAL", "APPROVED", "PUBLISHED", TRACE_TAG);
+        return operatorDetail(operatorId);
+    }
+
+    @Transactional
+    public OperatorDetailResponse rejectOperator(PlatformPrincipal principal, String operatorId, OperatorReviewRequest request) {
+        identityService.requirePermission(principal, "data:operator:review");
+        OperatorRecord operator = operatorRecordVisible(principal, operatorId, true);
+        if (!"SUBMITTED".equals(operator.status())) throw new PlatformException(PlatformError.CONFLICT, "OPERATOR_STATE_CONFLICT: 仅已提交审核的算子可驳回");
+        OffsetDateTime at = now();
+        jdbc.update("UPDATE operator_catalog SET status='REJECTED', updated_at=? WHERE operator_id=?", at, operatorId);
+        jdbc.update("UPDATE operator_review SET reviewer_id=?, status='REJECTED', reason=?, reviewed_at=? WHERE operator_id=? AND status='SUBMITTED'", principal.user().id(), require(request.reason(), "驳回原因不能为空"), at, operatorId);
+        audit(principal, tenantForAudit(operator.tenantId(), principal), "OPERATOR_REJECTED", "Operator", operatorId, "SUCCESS", "WARNING", operator.status(), "REJECTED", TRACE_TAG);
+        return operatorDetail(operatorId);
+    }
+
+    private void replaceGraph(String pipelineId, PipelineSaveRequest request) {
+        OffsetDateTime at = now();
+        jdbc.update("DELETE FROM pipeline_edge WHERE pipeline_id=?", pipelineId);
+        jdbc.update("DELETE FROM pipeline_variable WHERE pipeline_id=?", pipelineId);
+        jdbc.update("DELETE FROM pipeline_node WHERE pipeline_id=?", pipelineId);
+        for (PipelineNodeRequest node : safe(request.nodes())) {
+            jdbc.update("INSERT INTO pipeline_node (node_id, pipeline_id, operator_id, label, position_x, position_y, config_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'READY', ?, ?)", require(node.nodeId(), "节点 ID 不能为空"), pipelineId, require(node.operatorId(), "节点算子不能为空"), blank(node.label(), operatorName(node.operatorId())), defaultInt(node.positionX(), 120), defaultInt(node.positionY(), 120), blank(node.configJson(), "{}"), at, at);
+        }
+        for (PipelineEdgeRequest edge : safe(request.edges())) {
+            jdbc.update("INSERT INTO pipeline_edge (edge_id, pipeline_id, source_node_id, target_node_id, edge_type, created_at) VALUES (?, ?, ?, ?, ?, ?)", blank(edge.edgeId(), "EDGE-" + edge.sourceNodeId() + "-" + edge.targetNodeId()), pipelineId, require(edge.sourceNodeId(), "边来源节点不能为空"), require(edge.targetNodeId(), "边目标节点不能为空"), upper(edge.edgeType(), "DATA"), at);
+        }
+        for (PipelineVariableRequest variable : safe(request.variables())) {
+            String valueKind = upper(variable.valueKind(), "LITERAL");
+            String rawValue = blank(variable.valueJson(), "");
+            jdbc.update("INSERT INTO pipeline_variable (pipeline_id, name, value_type, value_kind, value_json, value_masked, required, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", pipelineId, require(variable.name(), "变量名不能为空"), upper(variable.valueType(), "STRING"), valueKind, rawValue, maskValue(valueKind, rawValue), Boolean.TRUE.equals(variable.required()), at, at);
+        }
+    }
+
+    private PipelineValidationResponse validateExisting(String pipelineId) {
+        PipelineSaveRequest request = new PipelineSaveRequest("existing", null, null, null,
+            nodes(pipelineId).stream().map(n -> new PipelineNodeRequest(n.nodeId(), n.operatorId(), n.label(), n.positionX(), n.positionY(), n.configJson())).toList(),
+            edges(pipelineId).stream().map(e -> new PipelineEdgeRequest(e.edgeId(), e.sourceNodeId(), e.targetNodeId(), e.edgeType())).toList(),
+            jdbc.query("SELECT * FROM pipeline_variable WHERE pipeline_id=?", (rs, n) -> new PipelineVariableRequest(rs.getString("name"), rs.getString("value_type"), rs.getString("value_kind"), rs.getString("value_json"), rs.getBoolean("required")), pipelineId)
+        );
+        return validateRequest(request, pipelineId);
+    }
+
+    private PipelineValidationResponse validateRequest(PipelineSaveRequest request, String existingPipelineId) {
+        List<PipelineValidationIssue> errors = new ArrayList<>();
+        List<PipelineNodeRequest> nodes = safe(request.nodes());
+        List<PipelineEdgeRequest> edges = safe(request.edges());
+        List<PipelineVariableRequest> variables = safe(request.variables());
+        if (nodes.size() < 2) errors.add(new PipelineValidationIssue("PIPELINE_NODE_TOO_FEW", "Pipeline 至少需要输入节点和一个处理/输出节点", null, null));
+        Set<String> nodeIds = new HashSet<>();
+        Set<String> variableNames = new HashSet<>();
+        for (PipelineVariableRequest variable : variables) {
+            if (!blank(variable.name())) variableNames.add(variable.name());
+            validateSecretValue(variable.valueKind(), variable.valueJson(), errors, variable.name());
+        }
+        Map<String, List<String>> graph = new HashMap<>();
+        Map<String, Integer> indegree = new HashMap<>();
+        Map<String, Integer> outdegree = new HashMap<>();
+        for (PipelineNodeRequest node : nodes) {
+            if (blank(node.nodeId())) errors.add(new PipelineValidationIssue("PIPELINE_NODE_ID_REQUIRED", "节点 ID 不能为空", null, null));
+            if (!nodeIds.add(node.nodeId())) errors.add(new PipelineValidationIssue("PIPELINE_NODE_DUPLICATED", "节点 ID 重复: " + node.nodeId(), node.nodeId(), null));
+            OperatorRecord operator = operatorRecord(node.operatorId());
+            if (operator == null) {
+                errors.add(new PipelineValidationIssue("PIPELINE_OPERATOR_NOT_FOUND", "算子不存在: " + node.operatorId(), node.nodeId(), null));
+            } else if (!List.of("PUBLISHED", "APPROVED").contains(operator.status())) {
+                errors.add(new PipelineValidationIssue("PIPELINE_OPERATOR_DISABLED", "算子未发布或不可用: " + operator.name(), node.nodeId(), null));
+            } else {
+                for (String required : requiredFields(operator.parameterSchemaJson())) {
+                    if (!blank(required) && !blank(node.configJson()) && !node.configJson().contains("\"" + required + "\"")) {
+                        errors.add(new PipelineValidationIssue("PIPELINE_PARAM_REQUIRED", "节点 " + node.nodeId() + " 缺少必填参数 " + required, node.nodeId(), null));
+                    }
+                }
+            }
+            if (!blank(node.configJson())) {
+                rejectPlainSecretIssue(node.configJson(), errors, node.nodeId());
+                for (String reference : variableRefs(node.configJson())) {
+                    if (!variableNames.contains(reference)) errors.add(new PipelineValidationIssue("PIPELINE_VARIABLE_NOT_FOUND", "变量引用不存在: " + reference, node.nodeId(), null));
+                }
+            }
+            graph.put(node.nodeId(), new ArrayList<>());
+            indegree.put(node.nodeId(), 0);
+            outdegree.put(node.nodeId(), 0);
+        }
+        for (PipelineEdgeRequest edge : edges) {
+            if (!nodeIds.contains(edge.sourceNodeId()) || !nodeIds.contains(edge.targetNodeId())) {
+                errors.add(new PipelineValidationIssue("PIPELINE_EDGE_NODE_NOT_FOUND", "边引用了不存在的节点", null, edge.edgeId()));
+                continue;
+            }
+            graph.get(edge.sourceNodeId()).add(edge.targetNodeId());
+            indegree.put(edge.targetNodeId(), indegree.get(edge.targetNodeId()) + 1);
+            outdegree.put(edge.sourceNodeId(), outdegree.get(edge.sourceNodeId()) + 1);
+        }
+        if (nodes.size() > 1 && edges.isEmpty()) errors.add(new PipelineValidationIssue("PIPELINE_EDGE_REQUIRED", "多节点 Pipeline 至少需要一条连线", null, null));
+        if (indegree.values().stream().noneMatch(v -> v == 0)) errors.add(new PipelineValidationIssue("PIPELINE_INPUT_REQUIRED", "Pipeline 缺少输入节点", null, null));
+        if (outdegree.values().stream().noneMatch(v -> v == 0)) errors.add(new PipelineValidationIssue("PIPELINE_OUTPUT_REQUIRED", "Pipeline 缺少输出节点", null, null));
+        if (hasCycle(graph)) errors.add(new PipelineValidationIssue("PIPELINE_CYCLE_DETECTED", "Pipeline DAG 不允许出现环路", null, null));
+        String code = errors.isEmpty() ? "OK" : errors.getFirst().code();
+        String message = errors.isEmpty() ? "DAG 校验通过" : errors.getFirst().message();
+        List<String> warnings = new ArrayList<>();
+        warnings.add("TODO_CONFIRM_PIPELINE_SCHEDULER_TARGET");
+        if (existingPipelineId == null) warnings.add("创建后请保存版本快照");
+        return new PipelineValidationResponse(errors.isEmpty(), code, message, errors, warnings);
+    }
+
+    private boolean hasCycle(Map<String, List<String>> graph) {
+        Map<String, Integer> state = new HashMap<>();
+        for (String node : graph.keySet()) if (dfsCycle(node, graph, state)) return true;
+        return false;
+    }
+
+    private boolean dfsCycle(String node, Map<String, List<String>> graph, Map<String, Integer> state) {
+        int current = state.getOrDefault(node, 0);
+        if (current == 1) return true;
+        if (current == 2) return false;
+        state.put(node, 1);
+        for (String next : graph.getOrDefault(node, List.of())) if (dfsCycle(next, graph, state)) return true;
+        state.put(node, 2);
+        return false;
+    }
+
+    private String createOutputDataset(PlatformPrincipal principal, PipelineSummaryResponse pipeline, DatasetInfo sample, String runId, OffsetDateTime at) {
+        String datasetId = "DATASET-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
+        String versionId = "DVER-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
+        String fileId = "FILE-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
+        String datasetFileId = "DF-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
+        long outputRecords = Math.max(1, sample.recordCount());
+        long outputSize = Math.max(1024, sample.sizeBytes());
+        jdbc.update("INSERT INTO dataset (dataset_id, name, dataset_type, data_type, tenant_id, project_id, current_version_id, status, access_level, tags, record_count, size_bytes, owner_id, description, created_at, updated_at) VALUES (?, ?, 'PREPROCESSED', ?, ?, ?, NULL, 'ACTIVE', 'TEAM', ?, ?, ?, ?, ?, ?, ?)", datasetId, pipeline.name() + " 输出", sample.dataType(), pipeline.tenantId(), pipeline.projectId(), "pipeline,F011,PREPROCESSED", outputRecords, outputSize, principal.user().id(), "由 Pipeline 沙箱运行 " + runId + " 生成的输出数据集", at, at);
+        jdbc.update("INSERT INTO dataset_version (version_id, dataset_id, version_name, status, record_count, size_bytes, content_safety_status, diagnostic_code, diagnostic_message, created_by, created_at, published_at) VALUES (?, ?, 'v1.0.0', 'PUBLISHED', ?, ?, 'PASSED', 'OK', 'SANDBOX_PIPELINE_OUTPUT_PASSED', ?, ?, ?)", versionId, datasetId, outputRecords, outputSize, principal.user().id(), at, at);
+        jdbc.update("UPDATE dataset SET current_version_id=?, updated_at=? WHERE dataset_id=?", versionId, at, datasetId);
+        jdbc.update("INSERT INTO platform_file_object (file_id, asset_type, tenant_id, project_id, bucket, object_key, expected_sha256, sha256, expected_size_bytes, size_bytes, content_type, storage_tier, status, owner_id, created_at, updated_at) VALUES (?, 'DATASET', ?, ?, 'TODO_CONFIRM_MINIO_BUCKET', ?, ?, ?, ?, ?, 'application/x-parquet', 'STANDARD', 'AVAILABLE', ?, ?, ?)", fileId, pipeline.tenantId(), pipeline.projectId(), pipeline.tenantId() + "/pipeline/" + runId + "/output.parquet", "sha256-" + fileId.toLowerCase(Locale.ROOT), "sha256-" + fileId.toLowerCase(Locale.ROOT), outputSize, outputSize, principal.user().id(), at, at);
+        jdbc.update("INSERT INTO dataset_file (id, dataset_id, version_id, file_id, file_role, status, created_at) VALUES (?, ?, ?, ?, 'PIPELINE_OUTPUT', 'BOUND', ?)", datasetFileId, datasetId, versionId, fileId, at);
+        jdbc.update("INSERT INTO data_lineage (lineage_id, source_type, source_id, target_type, target_id, transform_type, created_at) VALUES (?, 'PIPELINE', ?, 'DATASET_VERSION', ?, 'PIPELINE', ?)", "LIN-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT), pipeline.pipelineId(), versionId, at);
+        if (!blank(sample.versionId())) {
+            jdbc.update("INSERT INTO data_lineage (lineage_id, source_type, source_id, target_type, target_id, transform_type, created_at) VALUES (?, 'DATASET_VERSION', ?, 'DATASET_VERSION', ?, 'PIPELINE', ?)", "LIN-PIN-" + randomHex(8).toUpperCase(Locale.ROOT), sample.versionId(), versionId, at);
+        }
+        return datasetId;
+    }
+
+    private String datasetIdFromReadNode(String pipelineId) {
+        List<String> configs = jdbc.queryForList("SELECT config_json FROM pipeline_node WHERE pipeline_id=? ORDER BY created_at LIMIT 1", String.class, pipelineId);
+        if (configs.isEmpty()) return "DATASET-WELD-DEFECT";
+        Matcher matcher = Pattern.compile("\\\"datasetId\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"").matcher(configs.getFirst());
+        return matcher.find() ? matcher.group(1) : "DATASET-WELD-DEFECT";
+    }
+
+    private DatasetInfo datasetVisible(PlatformPrincipal principal, String datasetId) {
+        List<DatasetInfo> rows = jdbc.query("SELECT d.*, v.version_name AS current_version_name FROM dataset d LEFT JOIN dataset_version v ON v.version_id=d.current_version_id WHERE d.dataset_id=?", (rs, n) -> new DatasetInfo(rs.getString("dataset_id"), rs.getString("name"), rs.getString("dataset_type"), rs.getString("data_type"), rs.getString("tenant_id"), rs.getString("project_id"), rs.getString("current_version_id"), rs.getLong("record_count"), rs.getLong("size_bytes")), datasetId);
+        if (rows.isEmpty()) throw new PlatformException(PlatformError.NOT_FOUND, "数据集不存在");
+        DatasetInfo dataset = rows.getFirst();
+        if (!canSeeTenant(principal, dataset.tenantId())) throw new PlatformException(PlatformError.NOT_FOUND, "数据集不存在");
+        return dataset;
+    }
+
+    private List<PipelineSummaryResponse> allPipelineSummaries() {
+        return jdbc.query("""
+            SELECT p.*, u.display_name AS owner_name,
+                   (SELECT COUNT(*) FROM pipeline_node n WHERE n.pipeline_id=p.pipeline_id) AS node_count,
+                   (SELECT COUNT(*) FROM pipeline_run r WHERE r.pipeline_id=p.pipeline_id) AS run_count
+            FROM pipeline_definition p JOIN platform_user u ON u.id=p.owner_id
+            ORDER BY p.updated_at DESC
+            """, (rs, n) -> new PipelineSummaryResponse(rs.getString("pipeline_id"), rs.getString("name"), rs.getString("tenant_id"), rs.getString("project_id"), rs.getString("status"), rs.getString("current_version_id"), rs.getString("owner_id"), rs.getString("owner_name"), rs.getInt("node_count"), rs.getInt("run_count"), rs.getString("description"), rs.getObject("updated_at", OffsetDateTime.class)));
+    }
+
+    private PipelineSummaryResponse pipelineSummaryVisible(PlatformPrincipal principal, String pipelineId, boolean write) {
+        List<PipelineSummaryResponse> rows = allPipelineSummaries().stream().filter(item -> item.pipelineId().equals(pipelineId)).toList();
+        if (rows.isEmpty()) throw new PlatformException(PlatformError.NOT_FOUND, "Pipeline 不存在");
+        PipelineSummaryResponse summary = rows.getFirst();
+        if (!canSeeTenant(principal, summary.tenantId())) throw new PlatformException(write ? PlatformError.FORBIDDEN : PlatformError.NOT_FOUND, write ? "您无权操作其他 BU 的 Pipeline" : "Pipeline 不存在");
+        return summary;
+    }
+
+    private List<PipelineNodeResponse> nodes(String pipelineId) {
+        return jdbc.query("SELECT n.*, o.name AS operator_name FROM pipeline_node n JOIN operator_catalog o ON o.operator_id=n.operator_id WHERE n.pipeline_id=? ORDER BY n.position_x, n.position_y", (rs, n) -> new PipelineNodeResponse(rs.getString("node_id"), rs.getString("operator_id"), rs.getString("operator_name"), rs.getString("label"), rs.getInt("position_x"), rs.getInt("position_y"), rs.getString("config_json"), rs.getString("status")), pipelineId);
+    }
+
+    private List<PipelineEdgeResponse> edges(String pipelineId) {
+        return jdbc.query("SELECT * FROM pipeline_edge WHERE pipeline_id=? ORDER BY created_at", (rs, n) -> new PipelineEdgeResponse(rs.getString("edge_id"), rs.getString("source_node_id"), rs.getString("target_node_id"), rs.getString("edge_type")), pipelineId);
+    }
+
+    private List<PipelineVariableResponse> variables(String pipelineId) {
+        return jdbc.query("SELECT * FROM pipeline_variable WHERE pipeline_id=? ORDER BY name", (rs, n) -> new PipelineVariableResponse(rs.getString("name"), rs.getString("value_type"), rs.getString("value_kind"), rs.getString("value_masked"), rs.getBoolean("required")), pipelineId);
+    }
+
+    private List<PipelineVersionResponse> versions(String pipelineId) {
+        return jdbc.query("SELECT * FROM pipeline_version WHERE pipeline_id=? ORDER BY created_at DESC", (rs, n) -> new PipelineVersionResponse(rs.getString("version_id"), rs.getString("pipeline_id"), rs.getString("version_name"), rs.getString("note"), rs.getString("dag_json"), rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class)), pipelineId);
+    }
+
+    private PipelineVersionResponse version(String pipelineId, String versionId) {
+        return versions(pipelineId).stream().filter(item -> item.versionId().equals(versionId)).findFirst().orElseThrow(() -> new PlatformException(PlatformError.NOT_FOUND, "版本快照不存在"));
+    }
+
+    private PipelineRunSummaryResponse runSummaryById(String runId) {
+        List<PipelineRunSummaryResponse> rows = jdbc.query("SELECT * FROM pipeline_run WHERE run_id=?", (rs, n) -> runSummary(rs), runId);
+        if (rows.isEmpty()) throw new PlatformException(PlatformError.NOT_FOUND, "运行记录不存在");
+        return rows.getFirst();
+    }
+
+    private PipelineRunSummaryResponse runSummary(java.sql.ResultSet rs) throws java.sql.SQLException {
+        return new PipelineRunSummaryResponse(rs.getString("run_id"), rs.getString("pipeline_id"), rs.getString("version_id"), rs.getString("status"), rs.getString("trigger_mode"), rs.getString("diagnostic_code"), rs.getString("diagnostic_message"), rs.getString("output_dataset_id"), nullableLong(rs, "duration_ms"), rs.getObject("started_at", OffsetDateTime.class), rs.getObject("ended_at", OffsetDateTime.class));
+    }
+
+    private OperatorDetailResponse operatorDetail(String operatorId) {
+        List<OperatorDetailResponse> rows = jdbc.query("SELECT * FROM operator_catalog WHERE operator_id=?", (rs, n) -> new OperatorDetailResponse(operatorSummary(rs), rs.getString("parameter_schema_json"), rs.getString("input_schema_json"), rs.getString("output_schema_json"), maskValue("ENDPOINT", rs.getString("endpoint")), maskValue("SECRET_REF", rs.getString("credential_ref")), nullableInt(rs, "timeout_seconds"), nullableInt(rs, "concurrency_limit"), reviews(operatorId)), operatorId);
+        if (rows.isEmpty()) throw new PlatformException(PlatformError.NOT_FOUND, "算子不存在");
+        return rows.getFirst();
+    }
+
+    private List<OperatorReviewResponse> reviews(String operatorId) {
+        return jdbc.query("SELECT * FROM operator_review WHERE operator_id=? ORDER BY submitted_at DESC", (rs, n) -> new OperatorReviewResponse(rs.getString("review_id"), rs.getString("operator_id"), rs.getString("submitter_id"), rs.getString("reviewer_id"), rs.getString("status"), rs.getString("reason"), rs.getObject("submitted_at", OffsetDateTime.class), rs.getObject("reviewed_at", OffsetDateTime.class)), operatorId);
+    }
+
+    private OperatorSummaryResponse operatorSummary(java.sql.ResultSet rs) throws java.sql.SQLException {
+        return new OperatorSummaryResponse(rs.getString("operator_id"), rs.getString("name"), rs.getString("category"), rs.getString("stage"), rs.getString("kind"), rs.getString("status"), rs.getString("description"), rs.getString("before_example"), rs.getString("after_example"), rs.getLong("usage_count"), rs.getLong("pipeline_count"), rs.getDouble("error_rate"));
+    }
+
+    private OperatorRecord operatorRecord(String operatorId) {
+        if (blank(operatorId)) return null;
+        List<OperatorRecord> rows = jdbc.query("SELECT * FROM operator_catalog WHERE operator_id=?", (rs, n) -> new OperatorRecord(rs.getString("operator_id"), rs.getString("name"), rs.getString("tenant_id"), rs.getString("status"), rs.getString("parameter_schema_json")), operatorId);
+        return rows.isEmpty() ? null : rows.getFirst();
+    }
+
+    private OperatorRecord operatorRecordVisible(PlatformPrincipal principal, String operatorId, boolean write) {
+        OperatorRecord operator = operatorRecord(operatorId);
+        if (operator == null) throw new PlatformException(PlatformError.NOT_FOUND, "算子不存在");
+        if (operator.tenantId() != null && !canSeeTenant(principal, operator.tenantId())) throw new PlatformException(write ? PlatformError.FORBIDDEN : PlatformError.NOT_FOUND, write ? "您无权操作其他 BU 的算子" : "算子不存在");
+        return operator;
+    }
+
+    private boolean operatorVisible(PlatformPrincipal principal, String operatorId) {
+        OperatorRecord operator = operatorRecord(operatorId);
+        return operator != null && (operator.tenantId() == null || canSeeTenant(principal, operator.tenantId()));
+    }
+
+    private String operatorName(String operatorId) {
+        OperatorRecord operator = operatorRecord(operatorId);
+        return operator == null ? operatorId : operator.name();
+    }
+
+    private void validateSecrets(PipelineSaveRequest request) {
+        for (PipelineNodeRequest node : safe(request.nodes())) rejectPlainSecret(node.configJson());
+        for (PipelineVariableRequest variable : safe(request.variables())) {
+            rejectPlainSecret(variable.valueJson());
+            if ("SECRET_REF".equalsIgnoreCase(blank(variable.valueKind(), "")) && !secretRefAllowed(variable.valueJson())) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "PIPELINE_SECRET_NOT_ALLOWED: 密钥变量只允许 secretRef 或 TODO_CONFIRM_* 占位");
+        }
+    }
+
+    private void validateOperatorSecrets(OperatorCustomRequest request) {
+        rejectPlainSecret(request.name());
+        rejectPlainSecret(request.description());
+        rejectPlainSecret(request.parameterSchemaJson());
+        rejectPlainSecret(request.endpoint());
+        rejectPlainSecret(request.credentialRef());
+        if (!blank(request.credentialRef()) && !secretRefAllowed(request.credentialRef())) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "OPERATOR_SECRET_NOT_ALLOWED: 自定义算子凭据只允许 secretRef 或 TODO_CONFIRM_* 占位");
+    }
+
+    private void validateSecretValue(String valueKind, String value, List<PipelineValidationIssue> errors, String nodeId) {
+        rejectPlainSecretIssue(value, errors, nodeId);
+        if ("SECRET_REF".equalsIgnoreCase(blank(valueKind, "")) && !secretRefAllowed(value)) errors.add(new PipelineValidationIssue("PIPELINE_SECRET_NOT_ALLOWED", "密钥变量只允许 secretRef 或 TODO_CONFIRM_* 占位", nodeId, null));
+    }
+
+    private boolean secretRefAllowed(String value) {
+        return blank(value) || value.startsWith("secret://") || value.startsWith("TODO_CONFIRM_");
+    }
+
+    private void rejectPlainSecret(String value) {
+        if (looksLikePlainSecret(value)) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "SECRET_NOT_ALLOWED: 不允许保存明文凭据");
+    }
+
+    private void rejectPlainSecretIssue(String value, List<PipelineValidationIssue> errors, String nodeId) {
+        if (looksLikePlainSecret(value)) errors.add(new PipelineValidationIssue("SECRET_NOT_ALLOWED", "不允许保存明文凭据", nodeId, null));
+    }
+
+    private boolean looksLikePlainSecret(String value) {
+        if (value == null) return false;
+        String normalized = value.toLowerCase(Locale.ROOT);
+        return normalized.contains("password=") || normalized.contains("accesskeysecret") || normalized.contains("credentialsecret") || normalized.contains("api_key=") || normalized.contains("token=");
+    }
+
+    private List<String> requiredFields(String schema) {
+        if (blank(schema)) return List.of();
+        Matcher matcher = REQUIRED_PATTERN.matcher(schema);
+        if (!matcher.find()) return List.of();
+        return Arrays.stream(matcher.group(1).split(",")).map(item -> item.replace("\"", "").trim()).filter(item -> !item.isBlank()).toList();
+    }
+
+    private List<String> variableRefs(String text) {
+        if (blank(text)) return List.of();
+        List<String> refs = new ArrayList<>();
+        Matcher matcher = VARIABLE_PATTERN.matcher(text);
+        while (matcher.find()) refs.add(matcher.group(1));
+        return refs;
+    }
+
+    private String snapshotDag(String pipelineId) {
+        return "{\"nodes\":" + nodes(pipelineId).size() + ",\"edges\":" + edges(pipelineId).size() + ",\"variables\":" + variables(pipelineId).size() + ",\"snapshot\":\"" + now() + "\"}";
+    }
+
+    private String nextVersionName(String pipelineId) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM pipeline_version WHERE pipeline_id=?", Integer.class, pipelineId);
+        return "v1." + ((count == null ? 0 : count) + 1);
+    }
+
+    private boolean canSeeTenant(PlatformPrincipal principal, String tenantId) {
+        if (principal.isSuperAdmin()) return true;
+        String own = orgPath(principal.user().tenantId());
+        String target = orgPath(tenantId);
+        return !own.isBlank() && !target.isBlank() && target.startsWith(own);
+    }
+
+    private void ensureCanSeeTenant(PlatformPrincipal principal, String tenantId, boolean write) {
+        if (canSeeTenant(principal, tenantId)) return;
+        audit(principal, principal.user().tenantId(), "PIPELINE_CROSS_BU_ACCESS_DENIED", "Tenant", tenantId, "FAILURE", "CRITICAL", principal.user().tenantId(), tenantId, TRACE_TAG);
+        throw new PlatformException(write ? PlatformError.FORBIDDEN : PlatformError.NOT_FOUND, write ? "您无权操作其他 BU 的 Pipeline" : "Pipeline 不存在");
+    }
+
+    private String orgPath(String tenantId) {
+        List<String> rows = jdbc.queryForList("SELECT path FROM platform_tenant WHERE id=?", String.class, tenantId);
+        return rows.isEmpty() || rows.getFirst() == null ? "" : rows.getFirst();
+    }
+
+    private void audit(PlatformPrincipal principal, String tenantId, String action, String type, String resourceId, String result, String risk, String before, String after, String detail) {
+        OffsetDateTime at = now();
+        String event = "EVT-" + randomHex(12).toUpperCase(Locale.ROOT);
+        String trace = nullToEmpty(PlatformResponses.traceId());
+        String roles = String.join(",", principal.roleNames());
+        String id = UUID.randomUUID().toString();
+        String sig = signature(id, event, tenantId, principal.user().id(), principal.user().displayName(), roles, action, type, resourceId, result, risk, before, after, detail, trace, at);
+        jdbc.update("INSERT INTO platform_audit_log (id,event_id,tenant_id,operator_id,operator_name,operator_role,action,resource_type,resource_id,result,risk_level,before_json,after_json,detail_json,trace_id,signature,occurred_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", id, event, tenantId, principal.user().id(), principal.user().displayName(), roles, action, type, resourceId, result, risk, before, after, detail, trace, sig, at);
+    }
+
+    private String signature(String id, String event, String tenant, String opId, String op, String roles, String action, String type, String rid, String result, String risk, String before, String after, String detail, String trace, OffsetDateTime at) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(String.join("|", nullToEmpty(id), nullToEmpty(event), nullToEmpty(tenant), nullToEmpty(opId), nullToEmpty(op), nullToEmpty(roles), nullToEmpty(action), nullToEmpty(type), nullToEmpty(rid), nullToEmpty(result), nullToEmpty(risk), nullToEmpty(before), nullToEmpty(after), nullToEmpty(detail), nullToEmpty(trace), at.toInstant().truncatedTo(ChronoUnit.MICROS).atOffset(ZoneOffset.UTC).toString()).getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private String tenantForAudit(String tenantId, PlatformPrincipal principal) { return blank(tenantId, principal.user().tenantId()); }
+    private <T> List<T> safe(List<T> value) { return value == null ? List.of() : value; }
+    private boolean matches(String value, String keyword) { return blank(keyword) || (!blank(value) && value.toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT))); }
+    private String maskValue(String kind, String value) { if (blank(value)) return value; if ("SECRET_REF".equalsIgnoreCase(blank(kind, "")) || value.startsWith("secret://")) return value.startsWith("secret://TODO_CONFIRM") ? value : "secret://****"; return value.length() > 80 ? value.substring(0, 80) + "..." : value; }
+    private String require(String value, String message) { if (blank(value)) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, message); return value.trim(); }
+    private String upper(String value, String fallback) { return blank(value, fallback).toUpperCase(Locale.ROOT); }
+    private String blank(String value, String fallback) { return blank(value) ? fallback : value.trim(); }
+    private boolean blank(String value) { return value == null || value.isBlank(); }
+    private String nullIfBlank(String value) { return blank(value) ? null : value.trim(); }
+    private String nullToEmpty(String value) { return value == null ? "" : value; }
+    private int defaultInt(Integer value, int fallback) { return value == null ? fallback : value; }
+    private Integer nullableInt(java.sql.ResultSet rs, String column) throws java.sql.SQLException { int value = rs.getInt(column); return rs.wasNull() ? null : value; }
+    private Long nullableLong(java.sql.ResultSet rs, String column) throws java.sql.SQLException { long value = rs.getLong(column); return rs.wasNull() ? null : value; }
+    private OffsetDateTime now() { return OffsetDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS); }
+    private String randomHex(int len) { return UUID.randomUUID().toString().replace("-", "").substring(0, len); }
+
+    private record OperatorRecord(String operatorId, String name, String tenantId, String status, String parameterSchemaJson) {}
+    private record DatasetInfo(String datasetId, String name, String datasetType, String dataType, String tenantId, String projectId, String versionId, long recordCount, long sizeBytes) {}
+}

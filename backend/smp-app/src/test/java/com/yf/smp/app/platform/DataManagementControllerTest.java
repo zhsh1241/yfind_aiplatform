@@ -5,10 +5,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yf.smp.app.web.TraceIdFilter;
+import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.OffsetDateTime;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -22,6 +24,47 @@ class DataManagementControllerTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient client = HttpClient.newHttpClient();
+
+    @Test
+    void connectorProbeAcceptsHttpEndpointForTcpOnlyIndustrialProtocol() throws Exception {
+        // TASK-data-source-dataset-management AC-11
+        try (ServerSocket server = new ServerSocket(0)) {
+            Thread acceptOnce = new Thread(() -> {
+                try (var ignored = server.accept()) {
+                    // TCP 握手成功即可，工业协议仿真网关由后续 connector 读取。
+                } catch (Exception ignored) {}
+            });
+            acceptOnce.setDaemon(true);
+            acceptOnce.start();
+
+            DataSourceRecord source = new DataSourceRecord(
+                "DSRC-UNIT-OPCUA",
+                "单元测试 OPC-UA",
+                "INDUSTRIAL_PROTOCOL",
+                "TENANT-CABIN",
+                null,
+                "http://127.0.0.1:" + server.getLocalPort(),
+                server.getLocalPort(),
+                "OPC_UA_SIM",
+                "SECRET_REF",
+                "secret://unit/opcua",
+                "BU",
+                "industrial protocol probe unit",
+                "INACTIVE",
+                null,
+                "NOT_TESTED",
+                "待连接测试",
+                null,
+                "USR-ADMIN",
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+            );
+
+            DataSourceTestResult result = new DefaultDataSourceConnectionTester().test(source);
+            assertThat(result.result()).isEqualTo("SUCCESS");
+            assertThat(result.diagnosticMessage()).contains("INDUSTRIAL_PROTOCOL");
+        }
+    }
 
     @Test
     void dataSourceTestGateMasksSecretsAndAuditDiagnostics() throws Exception {
@@ -71,6 +114,182 @@ class DataManagementControllerTest {
 
         JsonNode audit = getJson("/api/v1/platform/audit-logs?action=DATA_SOURCE_ACTIVATED", "trace-f009-dsrc-audit", admin);
         assertThat(audit.at("/data/items/0/action").asText()).isEqualTo("DATA_SOURCE_ACTIVATED");
+    }
+
+
+    @Test
+    void sandboxConnectorsImportDatasetsForAllReservedSourceTypes() throws Exception {
+        // TASK-data-source-dataset-management AC-11
+        String admin = login("admin", "YF");
+        String[] types = {"RELATIONAL_DB", "API", "STREAM", "TIME_SERIES", "INDUSTRIAL_PROTOCOL"};
+        for (String type : types) {
+            JsonNode created = postJson("/api/v1/data-sources", "trace-f009-connector-" + type, """
+                {"name":"Sandbox %s","sourceType":"%s","tenantId":"TENANT-CABIN","endpoint":"%s.sandbox.internal","port":8080,"databaseName":"%s_scope","credentialMode":"SECRET_REF","secretRef":"secret://sandbox/%s","sharedScope":"BU"}
+                """.formatted(type, type, type.toLowerCase().replace('_', '-'), type.toLowerCase(), type.toLowerCase()), admin);
+            String sourceId = created.at("/data/sourceId").asText();
+            JsonNode tested = postJson("/api/v1/data-sources/" + sourceId + "/test", "trace-f009-connector-test-" + type, "{}", admin);
+            assertThat(tested.at("/data/diagnosticCode").asText()).isEqualTo("OK");
+            assertThat(tested.at("/data/diagnosticMessage").asText()).contains(type);
+            JsonNode activated = postJson("/api/v1/data-sources/" + sourceId + "/activate", "trace-f009-connector-activate-" + type, "{}", admin);
+            assertThat(activated.at("/data/status").asText()).isEqualTo("ACTIVE");
+
+            JsonNode task = postJson("/api/v1/data-source-sync-tasks", "trace-f009-connector-task-" + type, """
+                {"sourceId":"%s","name":"%s sandbox ??","scheduleMode":"MANUAL","syncScope":"%s_scope"}
+                """.formatted(sourceId, type, type.toLowerCase()), admin);
+            String taskId = task.at("/data/taskId").asText();
+            JsonNode run = postJson("/api/v1/data-source-sync-tasks/" + taskId + "/run", "trace-f009-connector-run-" + type, "{}", admin);
+            assertThat(run.at("/data/status").asText()).isEqualTo("SUCCEEDED");
+            assertThat(run.at("/data/lastResult").asText()).isEqualTo("SUCCESS");
+            assertThat(run.at("/data/diagnosticMessage").asText()).contains("SANDBOX_" + type + "_IMPORT_READY");
+            String datasetId = run.at("/data/targetDatasetId").asText();
+            assertThat(datasetId).startsWith("DATASET-");
+
+            JsonNode detail = getJson("/api/v1/datasets/" + datasetId, "trace-f009-connector-detail-" + type, admin);
+            assertThat(detail.at("/data/files").size()).isGreaterThanOrEqualTo(1);
+            assertThat(detail.at("/data/lineage").size()).isGreaterThanOrEqualTo(1);
+            assertThat(detail.at("/data/files/0/status").asText()).isEqualTo("BOUND");
+            assertThat(detail.at("/data/dataset/status").asText()).isEqualTo("ACTIVE");
+        }
+    }
+
+    @Test
+    void dataStandardizationProfilesAndRunsOnDatasetsFromDifferentSources() throws Exception {
+        // TASK-data-standardization-pipeline AC-01 AC-02 AC-03 AC-04 AC-05
+        String admin = login("admin", "YF");
+        JsonNode overview = getJson("/api/v1/data-standards/overview", "trace-f010-standard-overview", admin);
+        assertThat(overview.at("/code").asInt()).isZero();
+        assertThat(overview.at("/data/stats/datasetCount").asLong()).isGreaterThanOrEqualTo(2);
+        assertThat(overview.at("/data/profiles").findValuesAsText("dataType")).contains("IMAGE", "TEXT");
+
+        JsonNode profile = getJson("/api/v1/datasets/DATASET-WORKORDER-TEXT/standard-profile", "trace-f010-standard-profile", admin);
+        assertThat(profile.at("/data/profileStatus").asText()).isEqualTo("PROFILED");
+        assertThat(profile.at("/data/fields").findValuesAsText("standardField")).contains("work_order_no", "fault_description");
+
+        JsonNode created = postJson("/api/v1/data-standard-tasks", "trace-f010-standard-task-create", """
+            {"datasetId":"DATASET-WORKORDER-TEXT","name":"工单文本自动标准化","standardProfile":"WORKORDER_TEXT_STANDARD"}
+            """, admin);
+        assertThat(created.at("/data/status").asText()).isEqualTo("READY");
+        String taskId = created.at("/data/taskId").asText();
+
+        JsonNode run = postJson("/api/v1/data-standard-tasks/" + taskId + "/run", "trace-f010-standard-task-run", "{}", admin);
+        assertThat(run.at("/data/status").asText()).isEqualTo("SUCCEEDED");
+        assertThat(run.at("/data/outputDatasetId").asText()).startsWith("DATASET-");
+        assertThat(run.at("/data/qualityScoreAfter").asInt()).isGreaterThanOrEqualTo(90);
+
+        JsonNode detail = getJson("/api/v1/datasets/" + run.at("/data/outputDatasetId").asText(), "trace-f010-standard-output", admin);
+        assertThat(detail.at("/data/dataset/datasetType").asText()).isEqualTo("PREPROCESSED");
+        assertThat(detail.at("/data/files/0/fileRole").asText()).isEqualTo("STANDARDIZED");
+        assertThat(detail.at("/data/lineage/0/transformType").asText()).isEqualTo("STANDARDIZATION");
+    }
+
+    @Test
+    void pipelineEditorPersistsDagVersionsRunsAndOperatorReview() throws Exception {
+        // TASK-pipeline-editor-operator-marketplace AC-01 AC-02 AC-03 AC-04 AC-05 AC-06 AC-07
+        String admin = login("admin", "YF");
+
+        JsonNode operators = getJson("/api/v1/operators?keyword=归一化", "trace-f011-operators", admin);
+        assertThat(operators.at("/code").asInt()).isZero();
+        assertThat(operators.at("/data/items").findValuesAsText("name")).contains("归一化");
+        assertThat(operators.at("/data/stats/total").asLong()).isGreaterThanOrEqualTo(1);
+
+        JsonNode list = getJson("/api/v1/pipelines", "trace-f011-pipelines", admin);
+        assertThat(list.at("/data/items").findValuesAsText("name")).contains("图像预处理 Pipeline");
+
+        JsonNode detail = getJson("/api/v1/pipelines/PIPE-IMG-PREP", "trace-f011-pipeline-detail", admin);
+        assertThat(detail.at("/data/nodes").size()).isGreaterThanOrEqualTo(4);
+        assertThat(detail.at("/data/variables").findValuesAsText("name")).contains("batch_size");
+        assertThat(detail.at("/data/validation/valid").asBoolean()).isTrue();
+
+        JsonNode updated = putJson("/api/v1/pipelines/PIPE-IMG-PREP", "trace-f011-pipeline-save", """
+            {
+              "name":"图像预处理 Pipeline",
+              "tenantId":"TENANT-CABIN",
+              "description":"E2E 保存后的 Pipeline",
+              "nodes":[
+                {"nodeId":"read","operatorId":"OP-READ-DATASET","label":"读取焊缝数据集","positionX":90,"positionY":150,"configJson":"{\\"datasetId\\":\\"DATASET-WELD-DEFECT\\"}"},
+                {"nodeId":"resize","operatorId":"OP-IMAGE-RESIZE","label":"图像缩放","positionX":320,"positionY":155,"configJson":"{\\"width\\":1024,\\"height\\":1024}"},
+                {"nodeId":"normalize","operatorId":"OP-NORMALIZE","label":"归一化","positionX":560,"positionY":155,"configJson":"{\\"profile\\":\\"${profile}\\"}"}
+              ],
+              "edges":[
+                {"edgeId":"EDGE-read-resize","sourceNodeId":"read","targetNodeId":"resize","edgeType":"DATA"},
+                {"edgeId":"EDGE-resize-normalize","sourceNodeId":"resize","targetNodeId":"normalize","edgeType":"DATA"}
+              ],
+              "variables":[
+                {"name":"profile","valueType":"STRING","valueKind":"LITERAL","valueJson":"INDUSTRIAL_VISUAL_STANDARD","required":true},
+                {"name":"operator_secret","valueType":"STRING","valueKind":"SECRET_REF","valueJson":"secret://TODO_CONFIRM_PIPELINE_OPERATOR_SECRET","required":false}
+              ]
+            }
+            """, admin);
+        assertThat(updated.at("/data/pipeline/status").asText()).isEqualTo("VALIDATED");
+        assertThat(updated.at("/data/nodes/0/positionX").asInt()).isEqualTo(90);
+
+        JsonNode version = postJson("/api/v1/pipelines/PIPE-IMG-PREP/versions", "trace-f011-pipeline-version", """
+            {"versionName":"v1.1","note":"E2E 保存节点位置与变量"}
+            """, admin);
+        assertThat(version.at("/data/versionName").asText()).isEqualTo("v1.1");
+
+        JsonNode run = postJson("/api/v1/pipelines/PIPE-IMG-PREP/runs", "trace-f011-pipeline-run", """
+            {"triggerMode":"MANUAL","sampleDatasetId":"DATASET-WELD-DEFECT"}
+            """, admin);
+        assertThat(run.at("/data/run/status").asText()).isEqualTo("SUCCEEDED");
+        assertThat(run.at("/data/run/outputDatasetId").asText()).startsWith("DATASET-PIPE-");
+        assertThat(run.at("/data/nodeRuns").size()).isGreaterThanOrEqualTo(3);
+
+        JsonNode outputDetail = getJson("/api/v1/datasets/" + run.at("/data/run/outputDatasetId").asText(), "trace-f011-pipeline-output", admin);
+        assertThat(outputDetail.at("/data/dataset/datasetType").asText()).isEqualTo("PREPROCESSED");
+        assertThat(outputDetail.at("/data/files/0/fileRole").asText()).isEqualTo("PIPELINE_OUTPUT");
+        assertThat(outputDetail.at("/data/lineage").findValuesAsText("transformType")).contains("PIPELINE");
+
+        JsonNode custom = postJson("/api/v1/operators/custom", "trace-f011-operator-create", """
+            {"name":"E2E HTTP 算子","category":"自定义算子","stage":"扩展","description":"E2E 自定义 HTTP 算子","parameterSchemaJson":"{\\"type\\":\\"object\\"}","endpoint":"TODO_CONFIRM_OPERATOR_HTTP_ENDPOINT","credentialRef":"secret://TODO_CONFIRM_OPERATOR_SECRET","timeoutSeconds":30,"concurrencyLimit":2}
+            """, admin);
+        String operatorId = custom.at("/data/operator/operatorId").asText();
+        assertThat(custom.at("/data/operator/status").asText()).isEqualTo("DRAFT");
+
+        JsonNode submitted = postJson("/api/v1/operators/" + operatorId + "/submit-review", "trace-f011-operator-submit", "{}", admin);
+        assertThat(submitted.at("/data/operator/status").asText()).isEqualTo("SUBMITTED");
+
+        JsonNode approved = postJson("/api/v1/operators/" + operatorId + "/approve", "trace-f011-operator-approve", """
+            {"reason":"E2E 安全策略已核对"}
+            """, admin);
+        assertThat(approved.at("/data/operator/status").asText()).isEqualTo("PUBLISHED");
+        assertThat(approved.at("/data/reviews/0/status").asText()).isEqualTo("APPROVED");
+
+        JsonNode audit = getJson("/api/v1/platform/audit-logs?action=PIPELINE_RUN_SUCCEEDED", "trace-f011-audit", admin);
+        assertThat(audit.at("/data/items/0/action").asText()).isEqualTo("PIPELINE_RUN_SUCCEEDED");
+    }
+
+    @Test
+    void pipelineEditorRejectsInvalidDagSecretsAndCrossBuAccess() throws Exception {
+        // TASK-pipeline-editor-operator-marketplace AC-08
+        String admin = login("admin", "YF");
+        JsonNode invalid = putJson("/api/v1/pipelines/PIPE-IMG-PREP", "trace-f011-invalid-cycle", """
+            {
+              "name":"非法环路 Pipeline",
+              "tenantId":"TENANT-CABIN",
+              "nodes":[
+                {"nodeId":"a","operatorId":"OP-DATA-DEDUP","label":"A","positionX":1,"positionY":1,"configJson":"{\\"keyStrategy\\":\\"sha256\\"}"},
+                {"nodeId":"b","operatorId":"OP-NORMALIZE","label":"B","positionX":2,"positionY":2,"configJson":"{\\"profile\\":\\"INDUSTRIAL_VISUAL_STANDARD\\"}"}
+              ],
+              "edges":[
+                {"edgeId":"e1","sourceNodeId":"a","targetNodeId":"b","edgeType":"DATA"},
+                {"edgeId":"e2","sourceNodeId":"b","targetNodeId":"a","edgeType":"DATA"}
+              ],
+              "variables":[]
+            }
+            """, admin);
+        assertThat(invalid.at("/code").asInt()).isEqualTo(42200);
+        assertThat(invalid.at("/message").asText()).contains("Pipeline");
+
+        JsonNode secretRejected = postJson("/api/v1/operators/custom", "trace-f011-secret-reject", """
+            {"name":"Bad Secret Operator","category":"自定义算子","stage":"扩展","parameterSchemaJson":"{\\"type\\":\\"object\\"}","endpoint":"https://example.test?token=plain","credentialRef":"password=plain"}
+            """, admin);
+        assertThat(secretRejected.at("/code").asInt()).isEqualTo(42200);
+        assertThat(secretRejected.at("/message").asText()).contains("SECRET");
+
+        String qe = login("qeuser", "QE");
+        JsonNode crossBu = getJson("/api/v1/pipelines/PIPE-IMG-PREP", "trace-f011-cross-bu", qe);
+        assertThat(crossBu.at("/code").asInt()).isEqualTo(40400);
     }
 
     @Test

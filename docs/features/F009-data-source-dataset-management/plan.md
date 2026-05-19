@@ -68,7 +68,7 @@ F009 完成后，平台应具备：
 
 - 支持保存同步任务配置：数据源、目标数据集、调度方式、采集范围、状态、最近执行结果。
 - 支持手动触发、暂停、删除的 API seam。
-- 不实现生产级采集调度器，不真实联调 DB/OSS/Kafka/OPC-UA；未配置 connector 返回 `UNCONFIGURED`。
+- 不实现生产级采集调度器，不真实联调 DB/OSS/Kafka/OPC-UA；未配置 connector 返回 `UNCONFIGURED`。本地 sandbox connector 覆盖 `RELATIONAL_DB` / `API` / `STREAM` / `TIME_SERIES` / `INDUSTRIAL_PROTOCOL` 的一次性导入快照，用于联调和验收。
 
 #### 3.3 数据集管理
 
@@ -119,7 +119,7 @@ F009 完成后，平台应具备：
 - 不实现完整 Pipeline 编辑器、算子执行、格式转换、内容清洗、数据增强执行。
 - 不实现标注任务、标注工作台、标注审核、AI 预标注或标注质量检查完整业务。
 - 不实现数据资产门户完整推荐、排行榜、复杂审批中心和通知闭环；仅提供搜索/申请/授权 seam。
-- 不实现真实 DB/OSS/Kafka/OPC-UA/REST API connector 生产联调。
+- 不实现真实 DB/OSS/Kafka/OPC-UA/REST API connector 生产联调；仅实现本地 sandbox connector，生产参数继续以 `TODO_CONFIRM_*` 留痕。
 - 不实现真实分片上传、对象存储签名、MinIO/OSS/KMS 生产接入。
 - 不实现训练任务、模型版本、推理服务的真实引用业务，只提供后续引用检查 seam。
 - 不复制原型 JSX 或已删除旧 backend/frontend 代码作为生产实现。
@@ -365,6 +365,7 @@ Codex 可在 `/build-feature` 中直接决定：
 - AC-08：数据集查询、详情、下载遵循 BU 隔离；跨 BU 无授权不暴露资源存在性。
 - AC-09：数据源、数据集、版本、文件、授权、删除、跨 BU 拒绝等关键事件均写审计。
 - AC-10：F009 不实现完整 Pipeline、标注、数据增强、生产采集调度和真实外部 connector；仅提供后续引用 seam。
+- AC-11：`RELATIONAL_DB`、`API`、`STREAM`、`TIME_SERIES`、`INDUSTRIAL_PROTOCOL` 在本地 sandbox connector 下可通过同步任务生成数据集版本、文件、血缘和审计；生产 connector 未配置仍不得伪造成功。
 
 ## 10. 验证策略
 

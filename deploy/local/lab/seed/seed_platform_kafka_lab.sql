@@ -1,0 +1,7 @@
+INSERT INTO data_source (source_id, name, source_type, tenant_id, project_id, endpoint, port, database_name, credential_mode, secret_ref, shared_scope, description, status, last_test_at, diagnostic_code, diagnostic_message, latency_ms, created_by, created_at, updated_at) VALUES
+('DSRC-LAB-KAFKA', '本地 Kafka 焊接事件流', 'STREAM', 'TENANT-CABIN', NULL, '127.0.0.1', 9092, 'smp.weld.events', 'SECRET_REF', 'secret://local/kafka', 'BU', 'Docker 生产仿真：Kafka Topic 事件流', 'ACTIVE', CURRENT_TIMESTAMP, 'OK', 'DOCKER STREAM connector verified', 5, 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT (source_id) DO UPDATE SET status=EXCLUDED.status, last_test_at=EXCLUDED.last_test_at, diagnostic_code=EXCLUDED.diagnostic_code, diagnostic_message=EXCLUDED.diagnostic_message, updated_at=CURRENT_TIMESTAMP;
+
+INSERT INTO data_source_sync_task (task_id, source_id, target_dataset_id, name, schedule_mode, sync_scope, status, last_run_at, last_result, diagnostic_code, diagnostic_message, created_by, created_at, updated_at) VALUES
+('DSYNC-LAB-KAFKA', 'DSRC-LAB-KAFKA', NULL, '导入 Kafka 焊接事件批次', 'MANUAL', 'smp.weld.events', 'PAUSED', NULL, NULL, 'OK', 'READY_FOR_MANUAL_IMPORT', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT (task_id) DO UPDATE SET source_id=EXCLUDED.source_id, diagnostic_code=EXCLUDED.diagnostic_code, diagnostic_message=EXCLUDED.diagnostic_message, updated_at=CURRENT_TIMESTAMP;

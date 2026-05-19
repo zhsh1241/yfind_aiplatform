@@ -206,6 +206,13 @@ export type FileObjectSummary = {
   updatedAt: string;
 };
 
+export type FileDownloadResponse = {
+  fileId: string;
+  status: string;
+  downloadUrl: string | null;
+  diagnostic: string;
+};
+
 export type NotificationChannel = {
   channelId: string;
   channelType: string;
@@ -497,6 +504,9 @@ export const platformApi = {
   async files() {
     return unwrap<PageResponse<FileObjectSummary>>(apiClient.get('/api/v1/platform/files'));
   },
+  async fileDownloadUrl(fileId: string) {
+    return unwrap<FileDownloadResponse>(apiClient.get(`/api/v1/platform/files/${fileId}/download-url`));
+  },
   async notificationChannels() {
     return unwrap<NotificationChannel[]>(apiClient.get('/api/v1/platform/notification-channels'));
   },
@@ -548,6 +558,34 @@ export const platformApi = {
 
 };
 
+
+export type PipelineNode = { nodeId: string; operatorId: string; operatorName?: string; label: string; positionX: number; positionY: number; configJson: string; status?: string };
+export type PipelineEdge = { edgeId: string; sourceNodeId: string; targetNodeId: string; edgeType: string };
+export type PipelineVariable = { name: string; valueType: string; valueKind: string; valueJson?: string; valueMasked?: string; required: boolean };
+export type PipelineSummary = { pipelineId: string; name: string; tenantId: string; projectId: string | null; status: string; currentVersionId: string | null; ownerId: string; ownerName: string; nodeCount: number; runCount: number; description: string | null; updatedAt: string };
+export type PipelineVersion = { versionId: string; pipelineId: string; versionName: string; note: string | null; dagJson: string; createdBy: string; createdAt: string };
+export type PipelineValidationIssue = { code: string; message: string; nodeId: string | null; edgeId: string | null };
+export type PipelineValidation = { valid: boolean; diagnosticCode: string; diagnosticMessage: string; errors: PipelineValidationIssue[]; warnings: string[] };
+export type PipelineRunSummary = { runId: string; pipelineId: string; versionId: string | null; status: string; triggerMode: string; diagnosticCode: string | null; diagnosticMessage: string | null; outputDatasetId: string | null; durationMs: number | null; startedAt: string; endedAt: string | null };
+export type PipelineRunNode = { nodeRunId: string; runId: string; nodeId: string; operatorName: string; status: string; durationMs: number | null; logSummary: string | null; errorCode: string | null };
+export type PipelineRunDetail = { run: PipelineRunSummary; nodeRuns: PipelineRunNode[] };
+export type PipelineDetail = { pipeline: PipelineSummary; nodes: PipelineNode[]; edges: PipelineEdge[]; variables: PipelineVariable[]; versions: PipelineVersion[]; runs: PipelineRunSummary[]; validation: PipelineValidation };
+export type PipelineList = { items: PipelineSummary[]; total: number; page: number; pageSize: number };
+export type PipelineSaveInput = { name: string; tenantId?: string; projectId?: string | null; description?: string | null; nodes: PipelineNode[]; edges: PipelineEdge[]; variables: PipelineVariable[] };
+
+export type OperatorSummary = { operatorId: string; name: string; category: string; stage: string; kind: string; status: string; description: string | null; beforeExample: string | null; afterExample: string | null; usageCount: number; pipelineCount: number; errorRate: number };
+export type OperatorCategory = { category: string; count: number };
+export type OperatorStats = { total: number; builtin: number; custom: number; published: number; submitted: number };
+export type OperatorList = { items: OperatorSummary[]; total: number; categories: OperatorCategory[]; stats: OperatorStats };
+export type OperatorReview = { reviewId: string; operatorId: string; submitterId: string; reviewerId: string | null; status: string; reason: string | null; submittedAt: string; reviewedAt: string | null };
+export type OperatorDetail = { operator: OperatorSummary; parameterSchemaJson: string; inputSchemaJson: string; outputSchemaJson: string; endpointMasked: string | null; credentialRefMasked: string | null; timeoutSeconds: number | null; concurrencyLimit: number | null; reviews: OperatorReview[] };
+export type OperatorCustomInput = { name: string; category: string; stage: string; description?: string; parameterSchemaJson: string; inputSchemaJson?: string; outputSchemaJson?: string; endpoint?: string; credentialRef?: string; timeoutSeconds?: number; concurrencyLimit?: number };
+
+export type DataStandardField = { sourceField: string; standardField: string; displayName: string; dataType: string; unit: string | null; required: boolean; mappingStatus: string; rule: string };
+export type DataStandardProfile = { datasetId: string; datasetName: string; datasetType: string; dataType: string; sourceType: string; profileStatus: string; qualityScore: number; fieldCount: number; matchedFieldCount: number; issueCount: number; fields: DataStandardField[] };
+export type DataStandardTask = { taskId: string; sourceDatasetId: string; sourceDatasetName: string; sourceVersionId: string | null; outputDatasetId: string | null; outputDatasetName: string | null; name: string; standardProfile: string; status: string; qualityScoreBefore: number | null; qualityScoreAfter: number | null; diagnosticCode: string | null; diagnosticMessage: string | null; lastRunAt: string | null; updatedAt: string };
+export type DataStandardOverview = { stats: { datasetCount: number; profiledCount: number; compliantCount: number; issueCount: number; taskCount: number }; profiles: DataStandardProfile[]; tasks: DataStandardTask[] };
+
 export type DataSourceSummary = { sourceId: string; name: string; sourceType: string; tenantId: string; projectId: string | null; endpoint: string; port: number | null; databaseName: string | null; credentialMode: string; secretRefMasked: string | null; sharedScope: string; description: string | null; status: string; lastTestAt: string | null; diagnosticCode: string | null; diagnosticMessage: string | null; latencyMs: number | null; updatedAt: string };
 export type DataSourceTestResult = { sourceId: string; result: string; status: string; diagnosticCode: string; diagnosticMessage: string; latencyMs: number | null; traceId: string; testedAt: string };
 export type DataSourceSyncTask = { taskId: string; sourceId: string; sourceName: string; targetDatasetId: string | null; targetDatasetName: string | null; name: string; scheduleMode: string; syncScope: string | null; status: string; lastRunAt: string | null; lastResult: string | null; diagnosticCode: string | null; diagnosticMessage: string | null };
@@ -586,4 +624,26 @@ export const dataApi = {
   async approveAccess(requestId: string, input: { expiresAt?: string | null; reason?: string } = {}) { return unwrap<DatasetAccessGrant>(apiClient.put(`/api/v1/dataset-access-requests/${requestId}/approve`, input)); },
   async rejectAccess(requestId: string, input: { expiresAt?: string | null; reason?: string } = {}) { return unwrap<DatasetAccessRequest>(apiClient.put(`/api/v1/dataset-access-requests/${requestId}/reject`, input)); },
   async reference(datasetId: string, versionId?: string) { return unwrap<DatasetReference>(apiClient.get('/api/v1/dataset-references', { params: { datasetId, versionId } })); },
+
+  async pipelines(params: { keyword?: string; status?: string; page?: number; pageSize?: number } = {}) { return unwrap<PipelineList>(apiClient.get('/api/v1/pipelines', { params })); },
+  async pipelineDetail(pipelineId: string) { return unwrap<PipelineDetail>(apiClient.get(`/api/v1/pipelines/${pipelineId}`)); },
+  async createPipeline(input: PipelineSaveInput) { return unwrap<PipelineDetail>(apiClient.post('/api/v1/pipelines', input)); },
+  async updatePipeline(pipelineId: string, input: PipelineSaveInput) { return unwrap<PipelineDetail>(apiClient.put(`/api/v1/pipelines/${pipelineId}`, input)); },
+  async validatePipeline(pipelineId: string) { return unwrap<PipelineValidation>(apiClient.post(`/api/v1/pipelines/${pipelineId}/validate`)); },
+  async savePipelineVersion(pipelineId: string, input: { versionName?: string; note?: string }) { return unwrap<PipelineVersion>(apiClient.post(`/api/v1/pipelines/${pipelineId}/versions`, input)); },
+  async restorePipelineVersion(pipelineId: string, versionId: string) { return unwrap<PipelineDetail>(apiClient.post(`/api/v1/pipelines/${pipelineId}/versions/${versionId}/restore`)); },
+  async runPipeline(pipelineId: string, input: { triggerMode?: string; sampleDatasetId?: string } = {}) { return unwrap<PipelineRunDetail>(apiClient.post(`/api/v1/pipelines/${pipelineId}/runs`, input)); },
+  async pipelineRuns(pipelineId: string) { return unwrap<PipelineRunSummary[]>(apiClient.get(`/api/v1/pipelines/${pipelineId}/runs`)); },
+  async pipelineRunDetail(runId: string) { return unwrap<PipelineRunDetail>(apiClient.get(`/api/v1/pipeline-runs/${runId}`)); },
+  async operators(params: { keyword?: string; category?: string; stage?: string; status?: string } = {}) { return unwrap<OperatorList>(apiClient.get('/api/v1/operators', { params })); },
+  async operatorDetail(operatorId: string) { return unwrap<OperatorDetail>(apiClient.get(`/api/v1/operators/${operatorId}`)); },
+  async createCustomOperator(input: OperatorCustomInput) { return unwrap<OperatorDetail>(apiClient.post('/api/v1/operators/custom', input)); },
+  async submitOperator(operatorId: string) { return unwrap<OperatorDetail>(apiClient.post(`/api/v1/operators/${operatorId}/submit-review`)); },
+  async approveOperator(operatorId: string, reason?: string) { return unwrap<OperatorDetail>(apiClient.post(`/api/v1/operators/${operatorId}/approve`, { reason })); },
+  async rejectOperator(operatorId: string, reason: string) { return unwrap<OperatorDetail>(apiClient.post(`/api/v1/operators/${operatorId}/reject`, { reason })); },
+  async dataStandardOverview() { return unwrap<DataStandardOverview>(apiClient.get('/api/v1/data-standards/overview')); },
+  async dataStandardProfile(datasetId: string) { return unwrap<DataStandardProfile>(apiClient.get(`/api/v1/datasets/${datasetId}/standard-profile`)); },
+  async dataStandardTasks() { return unwrap<DataStandardTask[]>(apiClient.get('/api/v1/data-standard-tasks')); },
+  async createDataStandardTask(input: { datasetId: string; name: string; standardProfile?: string; ruleJson?: string }) { return unwrap<DataStandardTask>(apiClient.post('/api/v1/data-standard-tasks', input)); },
+  async runDataStandardTask(taskId: string) { return unwrap<DataStandardTask>(apiClient.post(`/api/v1/data-standard-tasks/${taskId}/run`)); },
 };

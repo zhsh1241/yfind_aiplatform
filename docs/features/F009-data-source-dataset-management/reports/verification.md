@@ -4,63 +4,99 @@
 
 - Verdict: PASS
 - 日期：2026-05-18
-- 范围：F009 数据源与数据集管理基础能力，含本地 Docker PostgreSQL/Redis 集成门禁补跑。
+- 范围：F009 数据源与数据集管理基础能力，以及本地 Docker 生产仿真数据源实验室。
 
 ## 本地 Docker 集成环境
 
-- Docker Desktop：已启动，`docker compose version` 可用。
-- PostgreSQL：复用本地容器 `smp-platform-postgres`，镜像 `postgres:16-alpine`，端口 `localhost:5432`，测试库 `smp_platform`。
-- Redis：复用本地容器 `smp-platform-redis`，镜像 `redis:7-alpine`，端口 `localhost:6379`。
-- 健康检查：`pg_isready -U smp -d smp_platform` 返回 accepting connections；`redis-cli ping` 返回 `PONG`。
-- 说明：本次仅使用临时环境变量覆盖本地验证连接参数，未把未知正式外部参数写入 `ai-scaffold.config.json`，正式环境仍保留 `TODO_CONFIRM_*`。
+- Docker Desktop 已启动，`docker compose version` 可用。
+- PostgreSQL：`smp-platform-postgres`，端口 `localhost:5432`，平台库 `smp_platform`，源库 `smp_source_mes`。
+- Redis：`smp-platform-redis`，端口 `localhost:6379`。
+- MySQL：`smp-platform-mysql`，端口 `localhost:3306`，源库 `smp_source_mes`。
+- MinIO：`smp-platform-minio`，端口 `localhost:9000/9001`，bucket `smp-datasets`。
+- RabbitMQ：`smp-platform-rabbitmq`，端口 `localhost:5672/15672`，queue `smp.weld.events`。
+- InfluxDB：`smp-platform-influxdb`，端口 `localhost:8086`，bucket `smp_timeseries`。
+- API 数据源、HTTP 文件源、工业协议 TCP 仿真网关均已启动。
+- Kafka 作为可选 stream 实例，可通过 `-WithKafka` 启动并写入 `DSRC-LAB-KAFKA`。
 
-## 命令证据
+## 生产仿真数据源实验室执行证据
 
 ```powershell
-docker start smp-platform-postgres smp-platform-redis
-# PostgreSQL: accepting connections
-# Redis: PONG
-
-docker exec smp-platform-postgres dropdb -U smp --if-exists smp_platform
-docker exec smp-platform-postgres createdb -U smp smp_platform
-# 使用空库验证 Flyway 从 V1 到 V5 的 PostgreSQL 迁移
-
-$env:JAVA_HOME='C:\java\jdk-21.0.6'
-$env:DB_HOST='localhost'; $env:DB_PORT='5432'; $env:DB_NAME='smp_platform'
-$env:DB_USER='smp'; $env:DB_PASSWORD='smp_local_password'
-$env:REDIS_HOST='localhost'; $env:REDIS_PORT='6379'
-$env:SPRING_DATASOURCE_URL='jdbc:postgresql://localhost:5432/smp_platform'
-$env:SPRING_DATASOURCE_USERNAME='smp'
-$env:SPRING_DATASOURCE_PASSWORD='smp_local_password'
-$env:SPRING_DATASOURCE_DRIVER_CLASS_NAME='org.postgresql.Driver'
-node tools/ai-scaffold/dist/cli.js gate --feature-dir docs/features/F009-data-source-dataset-management --run-e2e
-# Backend: PostgreSQL 16.13，Flyway successfully applied 5 migrations，Tests run: 24, Failures: 0, Errors: 0, Skipped: 0，BUILD SUCCESS
-# ai-adapter: unittest 4 passed
-# Frontend lint: 0 errors, 1 existing warning
-# Frontend Vitest: 1 file passed, 6 tests passed
-# Frontend build: passed
-# Playwright E2E: 9 passed
-# Quality gate passed.
+powershell -ExecutionPolicy Bypass -File deploy/scripts/prepare-data-source-lab.ps1 -SkipBackend
+# READY: PostgreSQL / MySQL / Redis / MinIO / RabbitMQ / InfluxDB / HTTP API Source / HTTP File Source / Industrial Protocol TCP
+# data_source: DSRC-LAB-API, DSRC-LAB-FILE, DSRC-LAB-INFLUX, DSRC-LAB-MINIO, DSRC-LAB-MYSQL, DSRC-LAB-OPCUA, DSRC-LAB-POSTGRES, DSRC-LAB-RABBIT 均 ACTIVE / OK
+# data_source_sync_task: DSYNC-LAB-* 共 8 个手工任务均 PAUSED / READY_FOR_MANUAL_IMPORT
+# PostgreSQL 源库：mes_work_order=3, qe_measurement=4
+# MySQL 源库：mes_station_event=3, supplier_quality_ticket=2
+# MinIO bucket smp-datasets 已写入 raw/preprocessed/text 样例对象
+# RabbitMQ queue smp.weld.events 已写入 2 条事件
 ```
 
-## 补充修复证据
+说明：默认 STREAM 生产仿真由 RabbitMQ 覆盖，以避免首次拉取 Confluent 镜像阻塞本地测试；如需 Kafka，可执行：
 
-- `backend/smp-app/pom.xml` 增加 `org.flywaydb:flyway-database-postgresql`，解决 Flyway 11 对 PostgreSQL 16 的数据库支持模块拆分问题；未新增业务依赖或外部服务契约。
-- `PlatformPermissionAuditControllerTest` 的审计篡改时间表达式按数据库产品名选择 PostgreSQL/H2 兼容写法，确保 H2 降级测试与 PostgreSQL 集成测试均覆盖同一签名校验语义。
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy/scripts/prepare-data-source-lab.ps1 -WithKafka
+```
+
+## 回归命令证据
+
+```powershell
+$env:JAVA_HOME='C:\java\jdk-21.0.6'
+mvn -q -f backend/pom.xml -pl smp-app test
+# Tests run: 25, Failures: 0, Errors: 0, Skipped: 0
+
+npm --prefix frontend run lint
+# 0 errors, 1 existing react-refresh warning
+
+npm --prefix frontend run build
+# vite build passed
+
+npm --prefix frontend run test:ci -- --pool=threads --poolOptions.threads.singleThread=true
+# 1 file passed, 6 tests passed
+
+npm --prefix frontend run e2e
+# 9 tests passed
+
+node tools/ai-scaffold/dist/cli.js check-task-traceability docs/features/F009-data-source-dataset-management
+node tools/ai-scaffold/dist/cli.js verify-contract docs/features/F009-data-source-dataset-management
+# traceability passed; contract frozen/ready
+```
 
 ## 已验证事项
 
-- F009 `plan.md` / `TASK.md` / `contract.md` / `test-plan.md` / code review verdict 均通过 feature artifact gate。
-- 后端在 PostgreSQL 16.13 上完成 Flyway V1-V5 迁移并通过 24 个测试，覆盖 F009 DATA 域及既有 PLATFORM/RESOURCE 回归。
-- 前端保持原型信息架构，Playwright 全量 9 个用例通过，其中 F009 数据源/数据集用例 3 个通过。
-- AI adapter baseline unittest 4 个通过。
+- F009 `RELATIONAL_DB`、`FILE`、`OBJECT_STORAGE`、`API`、`STREAM`、`TIME_SERIES`、`INDUSTRIAL_PROTOCOL` 均有本地 Docker 生产仿真数据源与测试数据。
+- 后端 sandbox / Docker connector 可生成数据集、版本、文件绑定与血缘。
+- 前端数据源、数据集详情、文件信息、导入说明、类型文案与 E2E 均通过回归。
+- 文档已同步：`deploy/README.md`、`contract.md`、`test-plan.md`、`reports/data-source-lab.md`、本验证报告。
 
 ## 已知非阻塞项
 
 - 前端 lint 仍有既有 `AppNavigation.tsx` Fast Refresh warning，非 error。
-- Playwright 日志仍会出现 Ant Design `Space.direction` deprecated warning 和 jsdom CSS parse warning，均未阻断 E2E。
-- 真实对象存储、内容安全、外部采集 connector、PAI/LDAP 等仍按冻结契约保留 `TODO_CONFIRM_*` seam，未在本地 Docker 验证中伪造真实外部系统。
+- Playwright 日志仍有 Ant Design `Space.direction` deprecated warning，未阻断 E2E。
+- Kafka 默认不启动；使用 `-WithKafka` 时会额外拉取 Confluent 镜像并写入 Kafka 数据源。
+- 正式生产 LDAP、PAI、KMS、对象存储、Kafka ACL、工业网关参数仍需以 `TODO_CONFIRM_*` 在部署 ADR 或环境配置中确认。
 
-## 结论
+## 连接测试实时回归证据（2026-05-18）
 
-F009 已在本地 Docker PostgreSQL/Redis 环境下完成不带 `--skip-backend-integration` 的完整门禁补跑；当前验证结论为 PASS。
+针对页面“数据源测试连接”出现 `TODO_CONFIRM_CONNECTOR_FOR_INDUSTRIAL_PROTOCOL` / `TODO_CONFIRM_CONNECTOR_FOR_OBJECT_STORAGE` / `TODO_CONFIRM_CONNECTOR_FOR_RELATIONAL_DB` 的问题，已补充连接探测 fallback 并重启本地后端。验证命令：
+
+```powershell
+$env:JAVA_HOME='C:\java\jdk-21.0.6'
+$env:PATH='C:\java\jdk-21.0.6\bin;' + $env:PATH
+mvn -q -f backend/pom.xml -pl smp-app test
+# DataManagementControllerTest: Tests run: 5, Failures: 0, Errors: 0, Skipped: 0
+```
+
+页面同源后端 `http://localhost:8080` 实时调用 `/api/v1/data-sources/{id}/test` 结果：
+
+| 数据源 | 类型 | 结果 | 诊断 |
+| --- | --- | --- | --- |
+| DSRC-LAB-POSTGRES | RELATIONAL_DB | SUCCESS | DOCKER RELATIONAL_DB connector verified |
+| DSRC-LAB-MYSQL | RELATIONAL_DB | SUCCESS | DOCKER RELATIONAL_DB connector verified |
+| DSRC-LAB-MINIO | OBJECT_STORAGE | SUCCESS | DOCKER OBJECT_STORAGE connector verified |
+| DSRC-LAB-FILE | FILE | SUCCESS | DOCKER FILE connector verified |
+| DSRC-LAB-API | API | SUCCESS | DOCKER API connector verified |
+| DSRC-LAB-RABBIT | STREAM | SUCCESS | DOCKER STREAM connector verified |
+| DSRC-LAB-INFLUX | TIME_SERIES | SUCCESS | DOCKER TIME_SERIES connector verified |
+| DSRC-LAB-OPCUA | INDUSTRIAL_PROTOCOL | SUCCESS | DOCKER INDUSTRIAL_PROTOCOL connector verified |
+
+修复点：后端 connector probe 不再只按单一 `endpoint` 探测；对 `127.0.0.1`、`localhost`、`host.docker.internal` 和 Docker service/container name 做候选回退，HTTP 类连接对 MinIO 使用 `/minio/health/live`，TCP 类连接支持带 scheme 的 endpoint 规范化。

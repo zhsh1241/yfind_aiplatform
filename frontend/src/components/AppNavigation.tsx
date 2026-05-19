@@ -26,7 +26,7 @@ export const prototypePages: PrototypePage[] = [
   { key: 'datasrc', label: '数据源管理', domain: '数据管理' },
   { key: 'annreview', label: '标注审核', domain: '数据管理' },
   { key: 'lineage', label: '数据血缘', domain: '数据管理' },
-  { key: 'pipeline', label: 'Pipeline 设计器', domain: '数据管理' },
+  { key: 'pipeline', label: 'Pipeline编辑器', domain: '数据管理' },
   { key: 'opmarket', label: '算子广场', domain: '数据管理' },
   { key: 'portal', label: '数据资产门户', domain: '数据管理' },
   { key: 'devenv', label: '开发环境', domain: '模型开发' },

@@ -198,3 +198,119 @@ body {
   gap: 16px;
   margin-bottom: 16px;
 }
+
+.pipeline-grid {
+  display: grid;
+  grid-template-columns: 260px minmax(520px, 1fr) 320px;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.pipeline-canvas-card .ant-card-body {
+  min-height: 420px;
+}
+
+.pipeline-canvas {
+  position: relative;
+  min-height: 380px;
+  overflow: hidden;
+  border: 1px dashed #c4b5fd;
+  border-radius: 12px;
+  background:
+    linear-gradient(90deg, rgb(124 58 237 / 5%) 1px, transparent 1px),
+    linear-gradient(rgb(124 58 237 / 5%) 1px, transparent 1px),
+    #fbfbff;
+  background-size: 24px 24px;
+  margin-bottom: 12px;
+}
+
+.pipeline-canvas-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.pipeline-node {
+  position: absolute;
+  width: 132px;
+  min-height: 56px;
+  padding: 8px 10px;
+  border: 1px solid #d8b4fe;
+  border-radius: 10px;
+  background: #fff;
+  color: #3b0764;
+  text-align: left;
+  box-shadow: 0 8px 20px rgb(88 28 135 / 10%);
+  cursor: grab;
+}
+
+.pipeline-node.selected {
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 3px rgb(124 58 237 / 16%), 0 10px 24px rgb(88 28 135 / 18%);
+}
+
+.pipeline-node span,
+.pipeline-node small {
+  display: block;
+}
+
+.pipeline-node small {
+  color: #7e22ce;
+  margin-top: 4px;
+}
+
+.pipeline-panels {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.operator-chip {
+  cursor: pointer;
+}
+
+.operator-market-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+}
+
+.opmarket-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 16px;
+}
+
+.opmarket-cat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+
+.opmarket-cat.active {
+  color: #1677ff;
+  background: #edf5ff;
+  font-weight: 700;
+}
+
+.schema-preview {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-size: 12px;
+}
+
+@media (max-width: 1280px) {
+  .pipeline-grid,
+  .pipeline-panels,
+  .opmarket-layout {
+    grid-template-columns: 1fr;
+  }
+}

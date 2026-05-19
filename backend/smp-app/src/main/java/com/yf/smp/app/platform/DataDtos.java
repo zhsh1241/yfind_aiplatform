@@ -24,5 +24,11 @@ record DatasetAccessRequestResponse(String requestId, String datasetId, String r
 record DatasetAccessReviewRequest(OffsetDateTime expiresAt, String reason) {}
 record DatasetAccessGrantResponse(String grantId, String datasetId, String versionId, String userId, String userName, String grantedBy, OffsetDateTime expiresAt, String status) {}
 record DatasetReferenceResponse(String datasetId, String versionId, String status, boolean usable, String diagnosticCode, String diagnosticMessage) {}
+record DataStandardOverviewResponse(DataStandardStatsResponse stats, List<DataStandardProfileResponse> profiles, List<DataStandardTaskResponse> tasks) {}
+record DataStandardStatsResponse(long datasetCount, long profiledCount, long compliantCount, long issueCount, long taskCount) {}
+record DataStandardProfileResponse(String datasetId, String datasetName, String datasetType, String dataType, String sourceType, String profileStatus, int qualityScore, int fieldCount, int matchedFieldCount, int issueCount, List<DataStandardFieldResponse> fields) {}
+record DataStandardFieldResponse(String sourceField, String standardField, String displayName, String dataType, String unit, boolean required, String mappingStatus, String rule) {}
+record DataStandardTaskRequest(String datasetId, String name, String standardProfile, String ruleJson) {}
+record DataStandardTaskResponse(String taskId, String sourceDatasetId, String sourceDatasetName, String sourceVersionId, String outputDatasetId, String outputDatasetName, String name, String standardProfile, String status, Integer qualityScoreBefore, Integer qualityScoreAfter, String diagnosticCode, String diagnosticMessage, OffsetDateTime lastRunAt, OffsetDateTime updatedAt) {}
 
 record DataSourceRecord(String sourceId, String name, String sourceType, String tenantId, String projectId, String endpoint, Integer port, String databaseName, String credentialMode, String secretRef, String sharedScope, String description, String status, java.time.OffsetDateTime lastTestAt, String diagnosticCode, String diagnosticMessage, Integer latencyMs, String createdBy, java.time.OffsetDateTime createdAt, java.time.OffsetDateTime updatedAt) {}

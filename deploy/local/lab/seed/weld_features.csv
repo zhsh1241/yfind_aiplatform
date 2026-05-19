@@ -1,0 +1,3 @@
+feature_id,current,voltage,speed,label
+F-0001,12.3,48.7,0.82,ok
+F-0002,14.9,51.2,0.76,ng

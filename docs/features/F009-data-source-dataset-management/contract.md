@@ -23,7 +23,17 @@ frozen_at: 2026-05-18
 | POST | `/api/v1/data-sources/{sourceId}/activate` | `data:source:activate` | `DATA_SOURCE_ACTIVATED` / `DATA_SOURCE_ACTIVATE_REJECTED` |
 | POST | `/api/v1/data-sources/{sourceId}/disable` | `data:source:activate` | `DATA_SOURCE_DISABLED` |
 | GET/POST | `/api/v1/data-source-sync-tasks` | `data:sync-task:*` | `DATA_SYNC_TASK_CREATED` |
-| POST | `/api/v1/data-source-sync-tasks/{taskId}/run` | `data:sync-task:write` | `DATA_SYNC_TASK_UNCONFIGURED` |
+| POST | `/api/v1/data-source-sync-tasks/{taskId}/run` | `data:sync-task:write` | `DATA_SYNC_TASK_SUCCEEDED` / `DATA_SYNC_TASK_UNCONFIGURED` |
+
+
+### Sandbox / Docker Connector
+
+- `sourceType` 支持 `RELATIONAL_DB`、`FILE`、`OBJECT_STORAGE`、`STREAM`、`TIME_SERIES`、`INDUSTRIAL_PROTOCOL`、`API`。
+- 当 `endpoint` 包含 `sandbox` / `internal`，或本地 Docker endpoint 可探测连通时，`POST /api/v1/data-source-sync-tasks/{taskId}/run` 可通过 sandbox connector 生成导入结果：
+  - `targetDatasetId` 为空时自动创建 `RAW` 数据集、`PUBLISHED` 版本、`platform_file_object`、`dataset_file` 与 `data_lineage`。
+  - `targetDatasetId` 非空时必须与数据源同租户，否则返回 `DATA_SYNC_TARGET_TENANT_MISMATCH`。
+  - 同步任务返回 `status=SUCCEEDED`、`lastResult=SUCCESS`、`diagnosticCode=OK`、`diagnosticMessage=SANDBOX_<SOURCE_TYPE>_IMPORT_READY`。
+- 真实 connector 未配置且 endpoint 为 `TODO_CONFIRM_*` 时仍返回 `UNCONFIGURED` / `TODO_CONFIRM_*`，不得伪造真实外部系统成功。
 
 ### Dataset
 
@@ -63,3 +73,17 @@ frozen_at: 2026-05-18
 ## 4. Compatibility
 
 F009 新增 DATA 域表与 API，不修改 F006/F007/F008 既有 API 响应结构；文件对象事实继续由 `platform_file_object` 持有。
+
+## 5. 本地生产仿真数据源实验室
+
+为验收和联调提供 Docker sandbox connector：
+
+- `RELATIONAL_DB`：PostgreSQL / MySQL 源库，表级快照导入。
+- `FILE`：HTTP 文件目录，CSV/JSONL 文件快照导入。
+- `OBJECT_STORAGE`：MinIO S3 兼容 bucket，对象清单导入。
+- `API`：REST API，JSON 工单/质量事件导入。
+- `STREAM`：RabbitMQ / Kafka，事件批次导入。
+- `TIME_SERIES`：InfluxDB，时序测点快照导入。
+- `INDUSTRIAL_PROTOCOL`：OPC-UA-like TCP 仿真网关，设备点位遥测导入。
+
+本地数据源 ID 使用 `DSRC-LAB-*`，同步任务 ID 使用 `DSYNC-LAB-*`。该实验室只证明平台导入链路与数据治理对象创建能力；正式生产 connector 的网络、认证、ACL、加密、限流和审计参数仍由环境配置以 `TODO_CONFIRM_*` 确认。

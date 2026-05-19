@@ -6,12 +6,18 @@ test('TASK-data-source-dataset-management AC-01 AC-02 datasrc API driven diagnos
   await page.getByText('数据源管理').click();
   await expect(page.getByRole('heading', { name: '数据源管理' })).toBeVisible();
   await expect(page.getByText('数据源列表')).toBeVisible();
-  await expect(page.getByText('图像存储桶')).toBeVisible();
-  await expect(page.getByText('TODO_CONFIRM_WORKORDER_API_ENDPOINT', { exact: true })).toBeVisible();
+  await expect(page.getByText('对象存储', { exact: true })).toBeVisible();
+  await expect(page.getByText('关系型数据库', { exact: true })).toBeVisible();
+  await expect(page.getByText('流数据', { exact: true })).toBeVisible();
+  await expect(page.getByText('时序库', { exact: true })).toBeVisible();
+  await expect(page.getByText('工业协议', { exact: true })).toBeVisible();
+  await expect(page.getByText('外部接口', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '测试连接' }).first().click();
-  await expect(page.getByText(/SUCCESS: SANDBOX connection verified/)).toBeVisible();
+  await expect(page.getByText(/SUCCESS: SANDBOX OBJECT_STORAGE connector verified/)).toBeVisible();
   await page.getByRole('tab', { name: '同步任务' }).click();
   await expect(page.getByText('生产图像同步')).toBeVisible();
+  await page.getByRole('button', { name: '立即同步' }).first().click();
+  await expect(page.getByText(/SUCCEEDED: SANDBOX_RELATIONAL_DB_IMPORT_READY/)).toBeVisible();
 });
 
 test('TASK-data-source-dataset-management AC-03 AC-06 dataset list and detail preserve prototype IA', async ({ page }) => {
@@ -19,6 +25,7 @@ test('TASK-data-source-dataset-management AC-03 AC-06 dataset list and detail pr
   await page.getByText('数据集管理').click();
   await expect(page.getByRole('heading', { name: '数据集管理' })).toBeVisible();
   await expect(page.getByText('数据集总数')).toBeVisible();
+  await expect(page.getByText('如何导入数据集')).toBeVisible();
   await expect(page.getByRole('cell', { name: '焊缝缺陷检测数据集' })).toBeVisible();
   await page.getByText('详情').first().click();
   await expect(page.getByRole('heading', { name: '焊缝缺陷检测数据集' })).toBeVisible();

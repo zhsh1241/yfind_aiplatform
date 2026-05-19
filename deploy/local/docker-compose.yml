@@ -1,50 +1,183 @@
+name: smp-data-source-lab
 services:
   postgres:
-    image: postgres:18
+    image: postgres:16-alpine
+    container_name: smp-platform-postgres
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-smp}
-      POSTGRES_USER: ${POSTGRES_USER:-smp}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smp}
+      POSTGRES_DB: smp_platform
+      POSTGRES_USER: smp
+      POSTGRES_PASSWORD: smp_local_password
     ports:
       - "5432:5432"
+    volumes:
+      - smp_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smp}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U smp -d smp_platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: smp-platform-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - smp_redis_data:/data
 
   valkey:
     image: valkey/valkey:8.1
+    profiles: ["compat"]
+
+  mysql:
+    image: mysql:8.4
+    container_name: smp-platform-mysql
+    environment:
+      MYSQL_DATABASE: smp_source_mes
+      MYSQL_USER: smp_source
+      MYSQL_PASSWORD: smp_source_password
+      MYSQL_ROOT_PASSWORD: smp_root_password
     ports:
-      - "6379:6379"
+      - "3306:3306"
+    volumes:
+      - smp_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -psmp_root_password --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: smp-platform-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: smpminio
+      MINIO_ROOT_PASSWORD: smpminio_local_password
     ports:
       - "9000:9000"
       - "9001:9001"
+    volumes:
+      - smp_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: smp-platform-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: smp
+      RABBITMQ_DEFAULT_PASS: smp_rabbit_password
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - smp_rabbitmq_data:/var/lib/rabbitmq
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.8.0
+    container_name: smp-platform-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.8.0
+    container_name: smp-platform-kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: smp-platform-influxdb
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: smp
+      DOCKER_INFLUXDB_INIT_PASSWORD: smp_influx_password
+      DOCKER_INFLUXDB_INIT_ORG: yanfeng
+      DOCKER_INFLUXDB_INIT_BUCKET: smp_timeseries
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: smp_influx_token
+    ports:
+      - "8086:8086"
+    volumes:
+      - smp_influxdb_data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  source-api:
+    build: ./lab/api
+    container_name: smp-platform-source-api
+    ports:
+      - "8081:8081"
+
+  industrial-protocol:
+    build: ./lab/industrial
+    container_name: smp-platform-industrial
+    ports:
+      - "4840:4840"
+
+  file-source:
+    image: nginx:1.27-alpine
+    container_name: smp-platform-file-source
+    ports:
+      - "8082:80"
+    volumes:
+      - ./lab/file-source:/usr/share/nginx/html:ro
 
   backend:
     build: ../../backend
-    environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: ${POSTGRES_DB:-smp}
-      DB_USER: ${POSTGRES_USER:-smp}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-smp}
+    container_name: smp-platform-backend
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: smp_platform
+      DB_USER: smp
+      DB_PASSWORD: smp_local_password
+      SERVER_PORT: 8080
     ports:
       - "8080:8080"
 
   frontend:
     build: ../../frontend
+    container_name: smp-platform-frontend
     depends_on:
       - backend
     ports:
       - "5173:80"
+
+volumes:
+  smp_postgres_data:
+  smp_redis_data:
+  smp_mysql_data:
+  smp_minio_data:
+  smp_rabbitmq_data:
+  smp_influxdb_data:

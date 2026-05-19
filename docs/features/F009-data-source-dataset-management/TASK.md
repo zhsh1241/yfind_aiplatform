@@ -29,21 +29,21 @@ updated_at: 2026-05-18
 
 ### In Scope
 
-- 数据源列表、新建、连接测试、激活/禁用、详情与同步任务 seam。
+- 数据源列表、新建、连接测试、激活/禁用、详情与同步任务 seam；本地 sandbox connector 覆盖 `RELATIONAL_DB`、`API`、`STREAM`、`TIME_SERIES`、`INDUSTRIAL_PROTOCOL` 导入。
 - 数据集列表、统计、搜索、版本抽屉、详情、文件、权限、血缘、引用检查。
 - 上传向导复用 F007 文件对象 seam，表达对象存储/内容安全未配置状态。
 - DATA 域 Flyway 表、权限码、审计事件和后续引用 seam。
 
 ### Out of Scope
 
-- 真实 DB/OSS/Kafka/OPC-UA/API connector 生产联调。
+- 真实 DB/OSS/Kafka/OPC-UA/API connector 生产联调；生产外部系统参数仍以 `TODO_CONFIRM_*` 管理。
 - 完整数据资产门户审批中心、Pipeline 执行、标注任务与训练任务实现。
 - 真实内容安全第三方服务；F009 冻结 `SECURITY_PENDING` / `UNCONFIGURED` 阻断行为。
 
 ## 复用方案
 
 - 复用 F006 身份/权限/审计：`PlatformIdentityService`、`PlatformPrincipal`、`platform_audit_log`、RBAC 权限表。
-- 复用 F007 组织与文件元数据：`platform_tenant` BU 隔离、`platform_file_object` hash/size 校验、对象存储 `TODO_CONFIRM_MINIO_*` seam。
+- 复用 F007 组织与文件元数据：`platform_tenant` BU 隔离、`platform_file_object` hash/size 校验、对象存储 `TODO_CONFIRM_MINIO_*` seam；sandbox 同步导入生成的文件也写入该表。
 - 复用 F008 seam 思路：后续训练/标注/Pipeline 只引用 `DatasetReference`，不复制 DATA 事实源。
 - 复用前端基座：`apiClient`、`sessionStore`、`AppNavigation` 页面 key、Ant Design/TanStack Query 页面模式。
 - 不复用已删除旧实现、不复制原型 JSX、不在 `ai-adapter/` 复制数据资产事实。
@@ -60,6 +60,7 @@ updated_at: 2026-05-18
 - [x] AC-08：数据集查询、详情、下载遵循 BU 隔离；跨 BU 无授权不暴露资源存在性。
 - [x] AC-09：数据源、数据集、版本、文件、授权、删除、跨 BU 拒绝等关键事件均写审计。
 - [x] AC-10：F009 不实现完整 Pipeline、标注、数据增强、生产采集调度和真实外部 connector；仅提供后续引用 seam。
+- [x] AC-11：`RELATIONAL_DB`、`API`、`STREAM`、`TIME_SERIES`、`INDUSTRIAL_PROTOCOL` 在本地 sandbox connector 下可通过同步任务自动生成数据集、已发布版本、文件元数据、血缘与审计，未配置生产 connector 时仍返回 `UNCONFIGURED` / `TODO_CONFIRM_*`。
 
 ## 5. Definition of Done
 
@@ -69,4 +70,5 @@ updated_at: 2026-05-18
 - [x] 复用审查已完成：已确认 F009 复用 F006 身份/权限/审计、F007 组织与文件元数据、F008 后续引用 seam 设计以及现有前端 `apiClient`/session store/导航基座，未复制旧实现或原型 JSX。
 - [x] 后端 DATA API、SQL、权限、审计与测试完成。
 - [x] 前端 DATA 页面与 E2E 覆盖完成。
-- [ ] 最终 gate、review、QA 报告归档。
+- [x] sandbox connector 扩展已完成并纳入后端测试与前端 E2E。
+- [x] 最终 gate、review、QA 报告归档。
