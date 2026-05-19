@@ -48,6 +48,15 @@ const mockChannels = [{ channelId: 'NC-GLOBAL-EMAIL', channelType: 'EMAIL', scop
 const mockDataSources = [{ sourceId: 'DSRC-CABIN-MINIO', name: '图像存储桶', sourceType: 'OBJECT_STORAGE', tenantId: 'TENANT-CABIN', projectId: null, endpoint: 'minio.sandbox.internal', port: 9000, databaseName: 'weld-images', credentialMode: 'SECRET_REF', secretRefMasked: 'secret://TODO_CONFIRM_MINIO_DATASET', sharedScope: 'BU', description: '焊缝图像数据源 sandbox seam', status: 'ACTIVE', lastTestAt: '2026-05-18T00:00:00Z', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX connection verified', latencyMs: 38, updatedAt: '2026-05-18T00:00:00Z' }, { sourceId: 'DSRC-YF-API', name: '工单文本 API', sourceType: 'API', tenantId: 'TENANT-YF', projectId: null, endpoint: 'TODO_CONFIRM_WORKORDER_API_ENDPOINT', port: null, databaseName: 'workorder', credentialMode: 'SECRET_REF', secretRefMasked: 'secret://TODO_CONFIRM_WORKORDER_API', sharedScope: 'GLOBAL', description: '待确认工单 API', status: 'UNCONFIGURED', lastTestAt: null, diagnosticCode: 'DATA_SOURCE_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_WORKORDER_API_ENDPOINT', latencyMs: null, updatedAt: '2026-05-18T00:00:00Z' }];
 const mockSyncTasks = [{ taskId: 'DSYNC-001', sourceId: 'DSRC-CABIN-MINIO', sourceName: '图像存储桶', targetDatasetId: 'DATASET-WELD-DEFECT', targetDatasetName: '焊缝缺陷检测数据集', name: '生产图像同步', scheduleMode: 'HOURLY', syncScope: 'prefix=/weld', status: 'PAUSED', lastRunAt: null, lastResult: 'UNCONFIGURED', diagnosticCode: 'DATA_SYNC_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_DATA_CONNECTOR_SCHEDULER' }];
 const mockDatasets = { items: [{ datasetId: 'DATASET-WELD-DEFECT', name: '焊缝缺陷检测数据集', datasetType: 'RAW', dataType: 'IMAGE', tenantId: 'TENANT-CABIN', projectId: null, currentVersionId: 'DVER-WELD-001', currentVersionName: 'v1.0.0', status: 'ACTIVE', accessLevel: 'RESTRICTED', tags: ['焊接','质检'], recordCount: 31200, sizeBytes: 1024, ownerId: 'USR-ADMIN', ownerName: '平台管理员', description: '焊缝缺陷图片样例数据集', updatedAt: '2026-05-18T00:00:00Z' }], total: 1, page: 1, pageSize: 20, stats: { total: 1, raw: 1, preprocessed: 0, annotated: 0, restricted: 1, totalSizeBytes: 1024 } };
+const mockAnnotationTask = { taskId: 'ANN-WELD-Q2', name: '焊缝缺陷检测标注任务', scene: 'OBJECT_DETECTION', sceneLabel: '目标检测', sourceDatasetId: 'DATASET-WELD-DEFECT', sourceDatasetName: '焊缝缺陷检测数据集', templateId: 'LT-WELD-BBOX', templateName: '焊缝 BBox 模板', tenantId: 'TENANT-CABIN', status: 'IN_PROGRESS', reviewEnabled: true, prelabelEnabled: true, labelStudioEnabled: true, totalCount: 6, annotatedCount: 4, reviewedCount: 2, qualityScore: null, assignees: [{ userId: 'USR-ANNOTATOR', displayName: '标注工程师', role: 'ANNOTATOR' }, { userId: 'USR-BU-CABIN', displayName: '座舱审核员', role: 'REVIEWER' }], deadline: '2026-06-02T00:00:00Z', updatedAt: '2026-05-19T00:00:00Z' };
+const mockAnnotationTemplate = { templateId: 'LT-WELD-BBOX', name: '焊缝 BBox 模板', scene: 'OBJECT_DETECTION', labelType: 'BOUNDING_BOX', labelSchemaJson: '{"labels":["裂纹","气孔"]}', labelStudioConfigXml: '<View><Image name="image" value="$image"/></View>', status: 'PUBLISHED', tenantId: 'TENANT-CABIN', createdBy: 'USR-ADMIN', updatedAt: '2026-05-19T00:00:00Z' };
+const mockAnnotationBinding = { bindingId: 'AEXT-WELD-Q2', taskId: 'ANN-WELD-Q2', provider: 'LABEL_STUDIO', externalProjectId: null, externalUrl: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL', configStatus: 'UNCONFIGURED', lastSyncStatus: 'UNCONFIGURED', diagnosticCode: 'LABEL_STUDIO_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL;TODO_CONFIRM_LABEL_STUDIO_TOKEN_SECRET', launchUrl: null, lastSyncAt: null };
+const mockAnnotationWorkItems = [{ workItemId: 'AWI-WELD-001', taskId: 'ANN-WELD-Q2', sampleKey: 'weld/0001.jpg', sampleFileId: 'FILE-DATASET-WELD-001', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', status: 'DRAFT', predictionJson: '{"boxes":[{"label":"裂纹"}]}', annotationJson: null, submittedAt: null, updatedAt: '2026-05-19T00:00:00Z' }];
+const mockAnnotationReviewItems = [{ reviewItemId: 'ARV-WELD-001', workItemId: 'AWI-WELD-002', taskId: 'ANN-WELD-Q2', taskName: '焊缝缺陷检测标注任务', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', reviewerId: 'USR-BU-CABIN', reviewerName: '座舱审核员', status: 'REVIEW_PENDING', reviewComment: null, reviewedAt: null }];
+const mockAnnotationPublication = { publicationId: 'APUB-WELD-Q2', taskId: 'ANN-WELD-Q2', qualityStatus: 'PASSED', coverageRate: 1, formatStatus: 'COCO_READY', diagnosticCode: 'ANNOTATION_QUALITY_PASSED', diagnosticMessage: 'DAT-010 quality passed', outputDatasetId: 'DATASET-WELD-ANNOTATED', outputVersionId: 'DVER-WELD-ANN-001', publishedAt: '2026-05-19T00:00:00Z' };
+const mockAnnotationOverview = { stats: { total: 1, inProgress: 1, pendingReview: 1, completed: 0, templates: 1 }, tasks: [mockAnnotationTask], templates: [mockAnnotationTemplate] };
+const mockAnnotationDetail = { task: mockAnnotationTask, assignments: [], workItems: mockAnnotationWorkItems, reviewItems: mockAnnotationReviewItems, publications: [], externalBinding: mockAnnotationBinding };
+
 const mockDatasetDetail = { dataset: mockDatasets.items[0], versions: [{ versionId: 'DVER-WELD-001', datasetId: 'DATASET-WELD-DEFECT', versionName: 'v1.0.0', status: 'PUBLISHED', recordCount: 31200, sizeBytes: 1024, contentSafetyStatus: 'PASSED', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX_CONTENT_SAFETY_PASSED', createdAt: '2026-05-18T00:00:00Z', publishedAt: '2026-05-18T00:00:00Z' }], files: [{ id: 'DF-WELD-001', datasetId: 'DATASET-WELD-DEFECT', versionId: 'DVER-WELD-001', fileId: 'FILE-DATASET-WELD-001', fileRole: 'RAW', status: 'BOUND', objectKey: 'TENANT-CABIN/dataset/FILE-DATASET-WELD-001.csv', contentType: 'text/csv', sizeBytes: 1024, sha256: 'sha256-weld-001' }], grants: [], lineage: [{ lineageId: 'LIN-DSRC-WELD-001', sourceType: 'DATA_SOURCE', sourceId: 'DSRC-CABIN-MINIO', targetType: 'DATASET_VERSION', targetId: 'DVER-WELD-001', transformType: 'IMPORT', createdAt: '2026-05-18T00:00:00Z' }], previewStatus: 'UNSUPPORTED', previewDiagnostic: '非图片/不可预览文件显示元数据退化状态' };
 const mockPaiStatus = { status: 'UNCONFIGURED', configured: false, enabled: false, regionId: 'TODO_CONFIRM_PAI_REGION', endpoint: 'TODO_CONFIRM_PAI_ENDPOINT', workspaceId: 'TODO_CONFIRM_PAI_WORKSPACE_ID', quotaId: 'TODO_CONFIRM_PAI_QUOTA_ID', resourceGroupId: 'TODO_CONFIRM_PAI_RESOURCE_GROUP_ID', credentialMode: 'RAM_ROLE', credentialRefMasked: 'TODO_CONFIRM_PAI_RAM_ROLE_ARN', diagnosticCode: 'PAI_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_PAI_REGION;TODO_CONFIRM_PAI_WORKSPACE_ID;TODO_CONFIRM_PAI_QUOTA_ID', lastSyncAt: null, stale: false };
 const mockPaiOverview = { status: 'READY', scopeType: 'BU', scopeId: 'TENANT-CABIN', bindingId: 'PAI-BIND-CABIN', workspaceId: 'pai-ws-cabin-sandbox', quotaId: 'quota-cabin-sandbox', resourceGroupId: 'rg-cabin-general', lastSyncAt: '2026-05-17T00:00:00Z', stale: false, diagnosticCode: 'OK', diagnosticMessage: 'PAI resource sandbox snapshot synchronized', updatedFrom: 'PAI_SNAPSHOT', cards: [{ key: 'gpu', label: 'GPU 总量', used: 36, total: 48, unit: '卡', percent: 75, status: 'WARNING' }, { key: 'npu', label: 'NPU 算力', used: 6, total: 16, unit: '卡', percent: 38, status: 'READY' }, { key: 'cpu', label: 'CPU 核心', used: 128, total: 192, unit: '核', percent: 67, status: 'READY' }, { key: 'storage', label: 'PAI/OSS 存储', used: 145408, total: 204800, unit: 'GB', percent: 71, status: 'READY' }] };
@@ -61,6 +70,13 @@ vi.mock('./features/foundation/apiClient', () => ({
   apiClient: {
     get: vi.fn((url: string) => {
       if (url.includes('/api/v1/data-sources/') && url.includes('/test')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { sourceId: 'DSRC-CABIN-MINIO', result: 'SUCCESS', status: 'TESTED', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX connection verified', latencyMs: 42, traceId: 't', testedAt: '2026-05-18T00:00:00Z' } } });
+      if (url.includes('/api/v1/annotation/review-items')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationReviewItems } });
+      if (url.includes('/api/v1/annotation/overview')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationOverview } });
+      if (url.includes('/api/v1/annotation/tasks/') && url.includes('/work-items')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationWorkItems } });
+      if (url.includes('/api/v1/annotation/tasks/') && url.includes('/label-studio/status')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationBinding } });
+      if (url.includes('/api/v1/annotation/tasks/')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationDetail } });
+      if (url.includes('/api/v1/annotation/tasks')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { items: [mockAnnotationTask], total: 1, page: 1, pageSize: 20 } } });
+      if (url.includes('/api/v1/annotation/label-templates')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: [mockAnnotationTemplate] } });
       if (url.includes('/api/v1/data-sources')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockDataSources } });
       if (url.includes('/api/v1/data-source-sync-tasks')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockSyncTasks } });
       if (url.includes('/api/v1/datasets/') && url.includes('/lineage')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockDatasetDetail.lineage } });
@@ -95,9 +111,19 @@ vi.mock('./features/foundation/apiClient', () => ({
     post: vi.fn((url: string) => {
       if (url.includes('/auth/login')) {
         mockState.token = 'token-f006';
-        mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage'], sessionVersion: 1 };
+        mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview'], sessionVersion: 1 };
         return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { accessToken: 'token-f006', refreshToken: 'refresh', tokenType: 'Bearer', expiresInSeconds: 3600, user: mockState.user } } });
       }
+      if (url.includes('/api/v1/annotation/tasks/') && url.includes('/quality-check')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationPublication } });
+      if (url.includes('/api/v1/annotation/tasks/') && url.includes('/publish-dataset')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationPublication } });
+      if (url.includes('/api/v1/annotation/tasks/') && url.includes('/label-studio')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationBinding } });
+      if (url.includes('/api/v1/annotation/tasks')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationDetail } });
+      if (url.includes('/api/v1/annotation/work-items/') && url.includes('/label-studio')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationBinding } });
+      if (url.includes('/api/v1/annotation/work-items/')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { ...mockAnnotationWorkItems[0], status: 'REVIEW_PENDING', annotationJson: '{"boxes":[{"label":"缺陷"}]}' } } });
+      if (url.includes('/api/v1/annotation/review-items/') && url.includes('/approve')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { ...mockAnnotationReviewItems[0], status: 'APPROVED', reviewedAt: '2026-05-19T00:00:00Z' } } });
+      if (url.includes('/api/v1/annotation/review-items/') && url.includes('/reject')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { ...mockAnnotationReviewItems[0], status: 'REJECTED', reviewComment: '需要补充' } } });
+      if (url.includes('/api/v1/annotation/label-templates/') && url.includes('/publish')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationTemplate } });
+      if (url.includes('/api/v1/annotation/label-templates')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { ...mockAnnotationTemplate, templateId: 'LT-NEW' } } });
       if (url.includes('/platform/pai-resources/sync')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { syncId: 'PAI-SYNC-UNIT', bindingId: 'PAI-BIND-CABIN', result: 'FAILED', status: 'UNCONFIGURED', diagnosticCode: 'PAI_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_PAI_REGION', lastSyncAt: '2026-05-17T00:00:00Z', stale: true, paiRequestId: 'TODO_CONFIRM_PAI_REQUEST_ID_OR_SANDBOX' } } });
       if (url.includes('/platform/api-keys')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { ...mockApiKeys[0], id: 'AK-NEW', plainTextKey: 'smp_live_new_plaintext_once' } } });
       if (url.includes('/platform/notification-channels')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { channelId: 'NC-GLOBAL-EMAIL', result: 'UNCONFIGURED', diagnostic: 'TODO_CONFIRM_SMTP_HOST', testedAt: '2026-05-17T00:00:00Z' } } });
@@ -143,7 +169,7 @@ describe('F006 platform identity frontend', () => {
 
   it('keeps usermgmt tabs, table, role cards and permission matrix API-driven', async () => {
     mockState.token = 'token-f006';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f006', user: mockState.user, initialized: true });
     renderApp(['/usermgmt']);
 
@@ -160,7 +186,7 @@ describe('F006 platform identity frontend', () => {
 
   it('keeps perm page title, tabs, approval cards, grant list and dialogs', async () => {
     mockState.token = 'token-f006';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f006', user: mockState.user, initialized: true });
     renderApp(['/perm']);
 
@@ -177,7 +203,7 @@ describe('F006 platform identity frontend', () => {
 
   it('renders org page with prototype tabs and real organization APIs', async () => {
     mockState.token = 'token-f007';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f007', user: mockState.user, initialized: true });
     renderApp(['/org']);
 
@@ -194,7 +220,7 @@ describe('F006 platform identity frontend', () => {
 
   it('renders sys page with config, notification and one-time API key paths', async () => {
     mockState.token = 'token-f007';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f007', user: mockState.user, initialized: true });
     renderApp(['/sys']);
 
@@ -214,7 +240,7 @@ describe('F006 platform identity frontend', () => {
   it('renders resource page with PAI unconfigured guidance and prototype tabs', async () => {
     // TASK-pai-resource-integration AC-01 AC-02 AC-05 AC-06
     mockState.token = 'token-f008';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f008', user: mockState.user, initialized: true });
     renderApp(['/resource']);
 
@@ -229,6 +255,39 @@ describe('F006 platform identity frontend', () => {
     expect(screen.getByText('GPU 总量')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '手动同步 PAI' }));
     expect(await screen.findByText(/PAI 同步返回 UNCONFIGURED/)).toBeInTheDocument();
+  });
+
+
+  it('renders F012 annotation task, workbench and review pages from APIs', async () => {
+    // TASK-annotation-integration AC-01 AC-02 AC-03 AC-04 AC-05 AC-06 AC-07
+    mockState.token = 'token-f012';
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
+    useSessionStore.setState({ token: 'token-f012', user: mockState.user, initialized: true });
+    const renderRoute = (initialEntries: string[]) => (
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={initialEntries}>
+          <App />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    const { unmount } = renderApp(['/ann']);
+    expect(await screen.findByRole('heading', { name: '标注任务管理' })).toBeInTheDocument();
+    expect(await screen.findByText('焊缝缺陷检测标注任务')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText('AI 预标注').length).toBeGreaterThan(0));
+    expect(await screen.findByText(/外部标注工具未配置/)).toBeInTheDocument();
+    unmount();
+
+    const workbench = render(renderRoute(['/annwork']));
+    expect(await screen.findByRole('heading', { name: '标注工作台' })).toBeInTheDocument();
+    expect(screen.getByText('样本队列')).toBeInTheDocument();
+    expect(await screen.findByText('weld/0001.jpg')).toBeInTheDocument();
+    workbench.unmount();
+
+    render(renderRoute(['/annreview']));
+    expect(await screen.findByRole('heading', { name: '标注审核' })).toBeInTheDocument();
+    expect(screen.getByText(/DAT-004/)).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '质量检查' })).toBeInTheDocument();
   });
 
 });

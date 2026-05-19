@@ -10,7 +10,7 @@ import { ResourceManagementPage } from './features/platform/ResourceManagementPa
 import { OrganizationManagementPage } from './features/platform/OrganizationManagementPage';
 import { SystemConfigPage } from './features/platform/SystemConfigPage';
 import { UserManagementPage } from './features/platform/UserManagementPage';
-import { DataPipelineStandardPage, DataSourceManagementPage, DatasetDetailPage, DatasetManagementPage, DatasetUploadPage, OperatorMarketplacePage } from './features/data/DataPages';
+import { AnnotationReviewPage, AnnotationTasksPage, AnnotationWorkbenchPage, DataPipelineStandardPage, DataSourceManagementPage, DatasetDetailPage, DatasetManagementPage, DatasetUploadPage, OperatorMarketplacePage } from './features/data/DataPages';
 import { useSessionStore } from './features/platform/sessionStore';
 
 const { Header, Sider, Content } = Layout;
@@ -65,6 +65,9 @@ export default function App() {
             <Route path="/ds" element={canAccess('ds') ? <DatasetManagementPage /> : <NoPermission />} />
             <Route path="/up" element={canAccess('ds') ? <DatasetUploadPage /> : <NoPermission />} />
             <Route path="/dsdetail" element={canAccess('ds') ? <DatasetDetailPage /> : <NoPermission />} />
+            <Route path="/ann" element={canAccess('ann') ? <AnnotationTasksPage /> : <NoPermission />} />
+            <Route path="/annwork" element={canAccess('annwork') ? <AnnotationWorkbenchPage /> : <NoPermission />} />
+            <Route path="/annreview" element={canAccess('annreview') ? <AnnotationReviewPage /> : <NoPermission />} />
             <Route path="/pipeline" element={canAccess('pipeline') ? <DataPipelineStandardPage /> : <NoPermission />} />
             <Route path="/opmarket" element={canAccess('opmarket') ? <OperatorMarketplacePage /> : <NoPermission />} />
             {prototypePages.map((page) => (

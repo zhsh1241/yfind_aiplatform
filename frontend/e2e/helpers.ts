@@ -10,8 +10,8 @@ export const e2eUser = {
   status: 'ACTIVE',
   roles: ['SUPER_ADMIN'],
   roleNames: ['超级管理员'],
-  permissions: ['menu:dash', 'menu:hub', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:pipeline', 'menu:opmarket', 'data:pipeline:read', 'data:pipeline:write', 'data:pipeline:run', 'data:operator:read', 'data:operator:write', 'data:operator:review', 'data:standard:read', 'data:standard:write', 'data:standard:run'],
-  menuPermissions: ['dash', 'hub', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'pipeline', 'opmarket'],
+  permissions: ['menu:dash', 'menu:hub', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:pipeline', 'menu:opmarket', 'data:pipeline:read', 'data:pipeline:write', 'data:pipeline:run', 'data:operator:read', 'data:operator:write', 'data:operator:review', 'data:standard:read', 'data:standard:write', 'data:standard:run', 'menu:ann', 'menu:annwork', 'menu:annreview', 'data:annotation:read', 'data:annotation:write', 'data:annotation:assign', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish', 'data:label-template:read', 'data:label-template:write', 'data:label-template:publish'],
+  menuPermissions: ['dash', 'hub', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'pipeline', 'opmarket', 'ann', 'annwork', 'annreview'],
   sessionVersion: 1,
 };
 
@@ -51,6 +51,15 @@ const operatorList = { items: operatorItems, total: operatorItems.length, catego
 const operatorDetail = (operatorId = 'OP-NORMALIZE') => { const op = operatorItems.find((item) => item.operatorId === operatorId) ?? operatorItems[2]; return { operator: op, parameterSchemaJson: '{"type":"object","required":["profile"],"properties":{"profile":{"type":"string"}}}', inputSchemaJson: '{"dataset":"ANY"}', outputSchemaJson: '{"dataset":"PREPROCESSED"}', endpointMasked: op.kind === 'HTTP' ? 'TODO_CONFIRM_OPERATOR_HTTP_ENDPOINT' : null, credentialRefMasked: op.kind === 'HTTP' ? 'secret://TODO_CONFIRM_OPERATOR_SECRET' : null, timeoutSeconds: op.kind === 'HTTP' ? 30 : null, concurrencyLimit: op.kind === 'HTTP' ? 2 : null, reviews: op.status === 'SUBMITTED' ? [{ reviewId: 'OREV-E2E', operatorId: op.operatorId, submitterId: 'USR-ADMIN', reviewerId: null, status: 'SUBMITTED', reason: '等待安全评审', submittedAt: '2026-05-18T00:00:00Z', reviewedAt: null }] : [] }; };
 const pipelineDetail = { pipeline: { pipelineId: 'PIPE-IMG-PREP', name: '图像预处理 Pipeline', tenantId: 'TENANT-CABIN', projectId: null, status: 'VALIDATED', currentVersionId: 'PVER-IMG-PREP-001', ownerId: 'USR-ADMIN', ownerName: '平台管理员', nodeCount: 4, runCount: 0, description: '焊缝缺陷检测图像预处理 Pipeline', updatedAt: '2026-05-18T00:00:00Z' }, nodes: [{ nodeId: 'read', operatorId: 'OP-READ-DATASET', operatorName: '数据集读取', label: '读取焊缝数据集', positionX: 80, positionY: 150, configJson: '{"datasetId":"DATASET-WELD-DEFECT"}', status: 'READY' }, { nodeId: 'resize', operatorId: 'OP-IMAGE-RESIZE', operatorName: '图像缩放', label: '图像缩放', positionX: 300, positionY: 150, configJson: '{"width":1024,"height":1024}', status: 'READY' }, { nodeId: 'normalize', operatorId: 'OP-NORMALIZE', operatorName: '归一化', label: '归一化', positionX: 520, positionY: 150, configJson: '{"profile":"INDUSTRIAL_VISUAL_STANDARD"}', status: 'READY' }, { nodeId: 'format', operatorId: 'OP-FORMAT-CONVERT', operatorName: '格式转换', label: '格式转换', positionX: 740, positionY: 150, configJson: '{"targetFormat":"COCO"}', status: 'READY' }], edges: [{ edgeId: 'EDGE-read-resize', sourceNodeId: 'read', targetNodeId: 'resize', edgeType: 'DATA' }, { edgeId: 'EDGE-resize-normalize', sourceNodeId: 'resize', targetNodeId: 'normalize', edgeType: 'DATA' }, { edgeId: 'EDGE-normalize-format', sourceNodeId: 'normalize', targetNodeId: 'format', edgeType: 'DATA' }], variables: [{ name: 'batch_size', valueType: 'INT', valueKind: 'LITERAL', valueMasked: '32', required: true }, { name: 'output_bucket', valueType: 'STRING', valueKind: 'ENV_REF', valueMasked: 'TODO_CONFIRM_PIPELINE_OUTPUT_BUCKET', required: true }, { name: 'operator_secret', valueType: 'STRING', valueKind: 'SECRET_REF', valueMasked: 'secret://TODO_CONFIRM_PIPELINE_OPERATOR_SECRET', required: false }], versions: [{ versionId: 'PVER-IMG-PREP-001', pipelineId: 'PIPE-IMG-PREP', versionName: 'v1.0', note: '原型 Pipeline', dagJson: '{"nodes":4}', createdBy: 'USR-ADMIN', createdAt: '2026-05-18T00:00:00Z' }], runs: [], validation: { valid: true, diagnosticCode: 'OK', diagnosticMessage: 'DAG 校验通过', errors: [], warnings: ['TODO_CONFIRM_PIPELINE_SCHEDULER_TARGET'] } };
 const pipelineRun = { run: { runId: 'PRUN-E2E', pipelineId: 'PIPE-IMG-PREP', versionId: 'PVER-IMG-PREP-001', status: 'SUCCEEDED', triggerMode: 'MANUAL', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX_PIPELINE_RUN_SUCCEEDED', outputDatasetId: 'DATASET-PIPE-E2E', durationMs: 48000, startedAt: '2026-05-18T00:00:00Z', endedAt: '2026-05-18T00:00:48Z' }, nodeRuns: [{ nodeRunId: 'PNRUN-E2E-1', runId: 'PRUN-E2E', nodeId: 'read', operatorName: '数据集读取', status: 'SUCCEEDED', durationMs: 800, logSummary: '读取完成', errorCode: null }] };
+
+const annotationTask = { taskId: 'ANN-WELD-Q2', name: '焊缝缺陷检测标注任务', scene: 'OBJECT_DETECTION', sceneLabel: '目标检测', sourceDatasetId: 'DATASET-WELD-DEFECT', sourceDatasetName: '焊缝缺陷检测数据集', templateId: 'LT-WELD-BBOX', templateName: '焊缝 BBox 模板', tenantId: 'TENANT-CABIN', status: 'IN_PROGRESS', reviewEnabled: true, prelabelEnabled: true, labelStudioEnabled: true, totalCount: 6, annotatedCount: 4, reviewedCount: 2, qualityScore: null, assignees: [{ userId: 'USR-ANNOTATOR', displayName: '标注工程师', role: 'ANNOTATOR' }, { userId: 'USR-BU-CABIN', displayName: '座舱审核员', role: 'REVIEWER' }], deadline: '2026-06-02T00:00:00Z', updatedAt: '2026-05-19T00:00:00Z' };
+const annotationTemplate = { templateId: 'LT-WELD-BBOX', name: '焊缝 BBox 模板', scene: 'OBJECT_DETECTION', labelType: 'BOUNDING_BOX', labelSchemaJson: '{"labels":["裂纹","气孔"]}', labelStudioConfigXml: '<View><Image name="image" value="$image"/></View>', status: 'PUBLISHED', tenantId: 'TENANT-CABIN', createdBy: 'USR-ADMIN', updatedAt: '2026-05-19T00:00:00Z' };
+const annotationBinding = { bindingId: 'AEXT-WELD-Q2', taskId: 'ANN-WELD-Q2', provider: 'LABEL_STUDIO', externalProjectId: null, externalUrl: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL', configStatus: 'UNCONFIGURED', lastSyncStatus: 'UNCONFIGURED', diagnosticCode: 'LABEL_STUDIO_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL;TODO_CONFIRM_LABEL_STUDIO_TOKEN_SECRET', launchUrl: null, lastSyncAt: null };
+const annotationWorkItems = [{ workItemId: 'AWI-WELD-001', taskId: 'ANN-WELD-Q2', sampleKey: 'weld/0001.jpg', sampleFileId: 'FILE-DATASET-WELD-001', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', status: 'DRAFT', predictionJson: '{"boxes":[{"label":"裂纹"}]}', annotationJson: null, submittedAt: null, updatedAt: '2026-05-19T00:00:00Z' }];
+const annotationReviewItems = [{ reviewItemId: 'ARV-WELD-001', workItemId: 'AWI-WELD-002', taskId: 'ANN-WELD-Q2', taskName: '焊缝缺陷检测标注任务', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', reviewerId: 'USR-BU-CABIN', reviewerName: '座舱审核员', status: 'REVIEW_PENDING', reviewComment: null, reviewedAt: null }];
+const annotationPublication = { publicationId: 'APUB-WELD-Q2', taskId: 'ANN-WELD-Q2', qualityStatus: 'PASSED', coverageRate: 1, formatStatus: 'COCO_READY', diagnosticCode: 'ANNOTATION_QUALITY_PASSED', diagnosticMessage: 'DAT-010 quality passed', outputDatasetId: 'DATASET-WELD-ANNOTATED', outputVersionId: 'DVER-WELD-ANN-001', publishedAt: '2026-05-19T00:00:00Z' };
+const annotationOverview = { stats: { total: 1, inProgress: 1, pendingReview: 1, completed: 0, templates: 1 }, tasks: [annotationTask], templates: [annotationTemplate] };
+const annotationDetail = { task: annotationTask, assignments: [], workItems: annotationWorkItems, reviewItems: annotationReviewItems, publications: [], externalBinding: annotationBinding };
 
 const paiStatus = { status: 'UNCONFIGURED', configured: false, enabled: false, regionId: 'TODO_CONFIRM_PAI_REGION', endpoint: 'TODO_CONFIRM_PAI_ENDPOINT', workspaceId: 'TODO_CONFIRM_PAI_WORKSPACE_ID', quotaId: 'TODO_CONFIRM_PAI_QUOTA_ID', resourceGroupId: 'TODO_CONFIRM_PAI_RESOURCE_GROUP_ID', credentialMode: 'RAM_ROLE', credentialRefMasked: 'TODO_CONFIRM_PAI_RAM_ROLE_ARN', diagnosticCode: 'PAI_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_PAI_REGION;TODO_CONFIRM_PAI_WORKSPACE_ID;TODO_CONFIRM_PAI_QUOTA_ID', lastSyncAt: null, stale: false };
 const paiOverview = { status: 'READY', scopeType: 'BU', scopeId: 'TENANT-CABIN', bindingId: 'PAI-BIND-CABIN', workspaceId: 'pai-ws-cabin-sandbox', quotaId: 'quota-cabin-sandbox', resourceGroupId: 'rg-cabin-general', lastSyncAt: '2026-05-17T00:00:00Z', stale: false, diagnosticCode: 'OK', diagnosticMessage: 'PAI resource sandbox snapshot synchronized', updatedFrom: 'PAI_SNAPSHOT', cards: [{ key: 'gpu', label: 'GPU 总量', used: 36, total: 48, unit: '卡', percent: 75, status: 'WARNING' }, { key: 'npu', label: 'NPU 算力', used: 6, total: 16, unit: '卡', percent: 38, status: 'READY' }, { key: 'cpu', label: 'CPU 核心', used: 128, total: 192, unit: '核', percent: 67, status: 'READY' }, { key: 'storage', label: 'PAI/OSS 存储', used: 145408, total: 204800, unit: 'GB', percent: 71, status: 'READY' }] };
@@ -166,6 +175,55 @@ export async function mockPlatformApis(page: Page) {
   });
   await page.route('**/api/v1/platform/pai-resources/connection', async (route) => {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { ...paiStatus, status: 'READY', configured: true, enabled: true, regionId: 'cn-shanghai', diagnosticCode: 'OK', diagnosticMessage: 'ready for e2e' } } });
+  });
+
+  await page.route(/\/api\/v1\/annotation\/review-items(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationReviewItems } });
+  });
+  await page.route(/\/api\/v1\/annotation\/overview(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationOverview } });
+  });
+  await page.route(/\/api\/v1\/annotation\/tasks\/[^/]+\/work-items(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationWorkItems } });
+  });
+  await page.route(/\/api\/v1\/annotation\/tasks\/[^/]+\/label-studio\/status(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationBinding } });
+  });
+  await page.route(/\/api\/v1\/annotation\/tasks\/[^/]+\/label-studio\/sync-project(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationBinding } });
+  });
+  await page.route(/\/api\/v1\/annotation\/tasks\/[^/]+\/label-studio\/import-results(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationBinding } });
+  });
+  await page.route(/\/api\/v1\/annotation\/tasks\/[^/]+\/quality-check(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationPublication } });
+  });
+  await page.route(/\/api\/v1\/annotation\/tasks\/[^/]+\/publish-dataset(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationPublication } });
+  });
+  await page.route(/\/api\/v1\/annotation\/tasks\/[^/?]+(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationDetail } });
+  });
+  await page.route(/\/api\/v1\/annotation\/tasks(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: route.request().method() === 'POST' ? annotationDetail : { items: [annotationTask], total: 1, page: 1, pageSize: 20 } } });
+  });
+  await page.route(/\/api\/v1\/annotation\/label-templates\/[^/]+\/publish(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationTemplate } });
+  });
+  await page.route(/\/api\/v1\/annotation\/label-templates(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: route.request().method() === 'POST' ? { ...annotationTemplate, templateId: 'LT-E2E-NEW' } : [annotationTemplate] } });
+  });
+  await page.route(/\/api\/v1\/annotation\/work-items\/[^/]+\/label-studio\/sync-task(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationBinding } });
+  });
+  await page.route(/\/api\/v1\/annotation\/work-items\/[^/]+\/(?:draft|submit)(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { ...annotationWorkItems[0], status: 'REVIEW_PENDING', annotationJson: '{"boxes":[{"label":"缺陷"}]}' } } });
+  });
+  await page.route(/\/api\/v1\/annotation\/review-items\/[^/]+\/approve(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { ...annotationReviewItems[0], status: 'APPROVED', reviewedAt: '2026-05-19T00:00:00Z' } } });
+  });
+  await page.route(/\/api\/v1\/annotation\/review-items\/[^/]+\/reject(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { ...annotationReviewItems[0], status: 'REJECTED', reviewComment: '需要补充' } } });
   });
 
   await page.route('**/api/v1/platform/audit-logs**', async (route) => {

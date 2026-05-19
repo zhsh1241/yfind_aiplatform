@@ -5,6 +5,10 @@ import { useLocation, useNavigate } from 'react-router';
 import {
   dataApi,
   platformApi,
+  type AnnotationLabelTemplate,
+  type AnnotationReviewItem,
+  type AnnotationTaskSummary,
+  type AnnotationWorkItem,
   type DataSourceSummary,
   type DataSourceSyncTask,
   type DataStandardProfile,
@@ -46,6 +50,232 @@ const toSaveInput = (detail: PipelineDetail, nodes: PipelineNode[], variables: P
   edges: detail.edges,
   variables,
 });
+
+const annStatusText = (status?: string) => ({
+  DRAFT: '草稿',
+  ASSIGNED: '待开始',
+  IN_PROGRESS: '进行中',
+  PENDING_REVIEW: '待审核',
+  REVIEW_PENDING: '待审核',
+  APPROVED: '已通过',
+  COMPLETED: '已完成',
+  REJECTED: '已驳回',
+  PAUSED: '已暂停',
+  CANCELLED: '已取消',
+} as Record<string, string>)[status ?? ''] ?? status ?? '-';
+const pct = (done?: number, total?: number) => !total ? 0 : Math.round(((done ?? 0) / total) * 100);
+const annJson = '{"boxes":[{"label":"缺陷","x":12,"y":20,"w":80,"h":32}]}';
+
+export function AnnotationTasksPage() {
+  const currentTenantId = useSessionStore((state) => state.user?.tenantId);
+  const qc = useQueryClient();
+  const [msg, holder] = message.useMessage();
+  const [status, setStatus] = useState<string>();
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const overview = useQuery({ queryKey: ['annotation-overview'], queryFn: dataApi.annotationOverview });
+  const tasks = useQuery({ queryKey: ['annotation-tasks', status], queryFn: () => dataApi.annotationTasks({ status }) });
+  const datasets = useQuery({ queryKey: ['datasets-active-for-annotation'], queryFn: () => dataApi.datasets({ status: 'ACTIVE' }) });
+  const templates = useQuery({ queryKey: ['annotation-templates'], queryFn: () => dataApi.labelTemplates() });
+  const inv = () => Promise.all([
+    qc.invalidateQueries({ queryKey: ['annotation-overview'] }),
+    qc.invalidateQueries({ queryKey: ['annotation-tasks'] }),
+    qc.invalidateQueries({ queryKey: ['annotation-templates'] }),
+  ]);
+  const createTask = useMutation({
+    mutationFn: dataApi.createAnnotationTask,
+    onSuccess: async () => { setWizardOpen(false); await inv(); msg.success('标注任务已创建并完成分派'); },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const createTemplate = useMutation({
+    mutationFn: dataApi.createLabelTemplate,
+    onSuccess: async (created) => { await dataApi.publishLabelTemplate(created.templateId); await inv(); msg.success('标签模板已发布并生成 Label Studio config'); },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const syncLs = useMutation({ mutationFn: dataApi.syncLabelStudioProject, onSuccess: (r) => msg.warning(`Label Studio ${r.configStatus}: ${r.diagnosticMessage}`), onError: (e: Error) => msg.error(e.message) });
+  const rows = tasks.data?.items ?? overview.data?.tasks ?? [];
+  const publishedTemplates = (templates.data ?? overview.data?.templates ?? []).filter((item) => item.status === 'PUBLISHED');
+  const activeDatasets = (datasets.data?.items ?? []).filter((item) => item.status === 'ACTIVE');
+  const tabStatus: Record<string, string | undefined> = { all: undefined, running: 'IN_PROGRESS', assigned: 'ASSIGNED', review: 'PENDING_REVIEW', done: 'COMPLETED' };
+  const annSummaryCards = [
+    { n: overview.data?.stats.total ?? rows.length, l: '全部任务' },
+    { n: overview.data?.stats.inProgress ?? rows.filter((i) => i.status === 'IN_PROGRESS').length, l: '进行中' },
+    { n: overview.data?.stats.pendingReview ?? rows.filter((i) => i.status === 'PENDING_REVIEW').length, l: '待审核' },
+    { n: overview.data?.stats.templates ?? publishedTemplates.length, l: '标签模板' },
+  ];
+
+  return (
+    <div className="content-page annotation-page">
+      {holder}
+      <div className="page-hero">
+        <div>
+          <Typography.Title level={3}>标注任务管理</Typography.Title>
+          <Typography.Text type="secondary">数据集 · 标签模板/任务 · AI 预标注 · Label Studio seam · 发布 ANNOTATED 数据集</Typography.Text>
+        </div>
+        <Space wrap>
+          <Button onClick={() => setTemplateOpen(true)}>标签模板</Button>
+          <Button type="primary" onClick={() => setWizardOpen(true)}>＋ 新建标注任务</Button>
+        </Space>
+      </div>
+      <Alert type="warning" showIcon title="外部标注工具未配置 / Label Studio" description="Label Studio 与 AI 预标注使用 TODO_CONFIRM_* seam；未配置时返回 UNCONFIGURED，不伪造外部成功。" style={{ marginBottom: 16 }} />
+      <div className="summary-grid">{annSummaryCards.map((item) => <Card key={item.l}><Typography.Title level={3}>{item.n}</Typography.Title><Typography.Text type="secondary">{item.l}</Typography.Text></Card>)}</div>
+      <Tabs
+        activeKey={Object.entries(tabStatus).find(([, value]) => value === status)?.[0] ?? 'all'}
+        onChange={(key) => setStatus(tabStatus[key])}
+        items={[
+          { key: 'all', label: '全部任务' },
+          { key: 'running', label: '进行中' },
+          { key: 'assigned', label: '待开始' },
+          { key: 'review', label: '待审核' },
+          { key: 'done', label: '已完成' },
+        ].map((item) => ({ ...item, children: null }))}
+      />
+      <Table<AnnotationTaskSummary>
+        rowKey="taskId"
+        dataSource={rows}
+        loading={tasks.isLoading || overview.isLoading}
+        pagination={{ pageSize: 8 }}
+        columns={[
+          { title: '任务名称', dataIndex: 'name', render: (v, r) => <Space direction="vertical" size={0}><Typography.Text strong>{v}</Typography.Text><Typography.Text type="secondary">{r.sourceDatasetName}</Typography.Text></Space> },
+          { title: '标注类型', dataIndex: 'sceneLabel', render: (v, r) => <Space><Tag>{v}</Tag>{r.prelabelEnabled ? <Tag color="purple">AI 预标注</Tag> : null}</Space> },
+          { title: '进度', render: (_, r) => `${pct(r.annotatedCount, r.totalCount)}%（${r.annotatedCount}/${r.totalCount}）` },
+          { title: '标注员', render: (_, r) => r.assignees.filter((u) => u.role === 'ANNOTATOR').map((u) => u.displayName).join('、') || '-' },
+          { title: '质量评分', dataIndex: 'qualityScore', render: (v) => v == null ? '待质检' : <Tag color={v >= 90 ? 'green' : 'orange'}>{v}</Tag> },
+          { title: '截止', dataIndex: 'deadline', render: (v) => v ? new Date(v).toLocaleDateString('zh-CN') : 'TODO_CONFIRM_ANNOTATION_DEADLINE' },
+          { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{annStatusText(v)}</Tag> },
+          { title: '操作', render: (_, r) => <Space><a onClick={() => syncLs.mutate(r.taskId)}>Label Studio</a><a onClick={() => void navigator.clipboard?.writeText(r.taskId)}>复制ID</a></Space> },
+        ]}
+      />
+      <Modal title="＋ 新建标注任务" open={wizardOpen} onCancel={() => setWizardOpen(false)} footer={null} destroyOnHidden width={760}>
+        <Steps size="small" current={1} items={[{ title: '选择数据集' }, { title: '配置模板' }, { title: '分派审核' }]} style={{ marginBottom: 16 }} />
+        <Form layout="vertical" onFinish={(v) => createTask.mutate({ ...v, assigneeIds: ['USR-ANNOTATOR'], reviewerIds: ['USR-BU-CABIN'], prelabelModelSource: 'TODO_CONFIRM_PRELABEL_MODEL_SOURCE', prelabelConfidence: 0.7 })} initialValues={{ name: '焊缝缺陷检测标注任务', sourceDatasetId: activeDatasets[0]?.datasetId ?? 'DATASET-WELD-DEFECT', sourceVersionId: activeDatasets[0]?.currentVersionId ?? 'DVER-WELD-001', templateId: publishedTemplates[0]?.templateId ?? 'LT-WELD-BBOX', scene: 'OBJECT_DETECTION', reviewEnabled: true, prelabelEnabled: true, labelStudioEnabled: true }}>
+          <Form.Item name="sourceDatasetId" label="源数据集（必须 ACTIVE）" rules={[{ required: true }]}><Select options={activeDatasets.map((d) => ({ value: d.datasetId, label: `${d.name} · ${d.status}` }))} /></Form.Item>
+          <Form.Item name="sourceVersionId" label="数据版本"><Input placeholder="默认使用 currentVersionId" /></Form.Item>
+          <Form.Item name="templateId" label="标签模板（必须 PUBLISHED）" rules={[{ required: true }]}><Select options={publishedTemplates.map((t) => ({ value: t.templateId, label: `${t.name} · ${t.status}` }))} /></Form.Item>
+          <Form.Item name="name" label="任务名称" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="scene" label="标注场景"><Select options={[{ value: 'OBJECT_DETECTION', label: '目标检测' }, { value: 'TEXT_LABELING', label: '文本分类' }]} /></Form.Item>
+          <Space wrap>
+            <Form.Item name="reviewEnabled" label="审核"><Select options={[{ value: true, label: '启用审核' }, { value: false, label: '不审核' }]} /></Form.Item>
+            <Form.Item name="prelabelEnabled" label="AI 预标注"><Select options={[{ value: true, label: '启用 AI 预标注' }, { value: false, label: '不启用' }]} /></Form.Item>
+          </Space>
+          <Form.Item name="note" label="备注"><Input.TextArea rows={2} /></Form.Item>
+          <Alert type="info" showIcon title="分派策略" description="示例任务默认分派给 USR-ANNOTATOR 标注、USR-BU-CABIN 审核；DAT-004 阻断自审。" style={{ marginBottom: 12 }} />
+          <Button type="primary" htmlType="submit" loading={createTask.isPending}>创建任务</Button>
+        </Form>
+      </Modal>
+      <Drawer title="标签模板" open={templateOpen} onClose={() => setTemplateOpen(false)} width={720}>
+        <Alert type="info" showIcon title="Label Studio label config seam" description="模板会生成 <View> XML；workspace/storage/token 仍保留 TODO_CONFIRM_*。" style={{ marginBottom: 16 }} />
+        <Table<AnnotationLabelTemplate> rowKey="templateId" dataSource={templates.data ?? []} pagination={false} columns={[{ title: '名称', dataIndex: 'name' }, { title: '场景', dataIndex: 'scene' }, { title: '类型', dataIndex: 'labelType' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }]} />
+        <Form layout="vertical" style={{ marginTop: 16 }} initialValues={{ name: '焊缝 BBox 模板', tenantId: currentTenantId, scene: 'OBJECT_DETECTION', labelType: 'BOUNDING_BOX', labelSchemaJson: '{"labels":["裂纹","气孔"]}' }} onFinish={(v) => createTemplate.mutate(v)}>
+          <Form.Item name="name" label="模板名称"><Input /></Form.Item>
+          <Form.Item name="tenantId" label="BU"><Input /></Form.Item>
+          <Form.Item name="scene" label="场景"><Input /></Form.Item>
+          <Form.Item name="labelType" label="标注类型"><Input /></Form.Item>
+          <Form.Item name="labelSchemaJson" label="标签 Schema"><Input.TextArea rows={3} /></Form.Item>
+          <Button htmlType="submit" loading={createTemplate.isPending}>创建并发布模板</Button>
+        </Form>
+      </Drawer>
+    </div>
+  );
+}
+
+export function AnnotationWorkbenchPage() {
+  const qc = useQueryClient();
+  const [msg, holder] = message.useMessage();
+  const tasks = useQuery({ queryKey: ['annotation-workbench-tasks'], queryFn: () => dataApi.annotationTasks({ status: 'IN_PROGRESS' }) });
+  const taskId = tasks.data?.items[0]?.taskId ?? 'ANN-WELD-Q2';
+  const detail = useQuery({ queryKey: ['annotation-detail', taskId], queryFn: () => dataApi.annotationTaskDetail(taskId), enabled: Boolean(taskId) });
+  const save = useMutation({ mutationFn: (id: string) => dataApi.saveAnnotationDraft(id, annJson), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); msg.success('草稿已保存'); }, onError: (e: Error) => msg.error(e.message) });
+  const submit = useMutation({ mutationFn: (id: string) => dataApi.submitAnnotationWorkItem(id, annJson), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); msg.success('标注结果已提交，等待审核'); }, onError: (e: Error) => msg.error(e.message) });
+  const sync = useMutation({ mutationFn: dataApi.syncLabelStudioTask, onSuccess: (r) => msg.warning(`Label Studio ${r.configStatus}: ${r.diagnosticMessage}`), onError: (e: Error) => msg.error(e.message) });
+  const task = detail.data?.task;
+  const items = detail.data?.workItems ?? [];
+  return (
+    <div className="content-page annotation-workbench-page">
+      {holder}
+      <div className="page-hero">
+        <div>
+          <Typography.Title level={3}>标注工作台</Typography.Title>
+          <Typography.Text type="secondary">样本队列 · AI 预标注参考 · 草稿保存 · 提交审核闭环</Typography.Text>
+        </div>
+        <Tag color={color(task?.status)}>{annStatusText(task?.status)}</Tag>
+      </div>
+      <Alert type="warning" showIcon title="外部标注工具未配置" description={detail.data?.externalBinding?.diagnosticMessage ?? 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL'} style={{ marginBottom: 16 }} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 16 }}>
+        <Card title={task?.name ?? '标注任务'} loading={detail.isLoading}>
+          <Descriptions bordered column={1} size="small">
+            <Descriptions.Item label="源数据集">{task?.sourceDatasetName}</Descriptions.Item>
+            <Descriptions.Item label="标签模板">{task?.templateName}</Descriptions.Item>
+            <Descriptions.Item label="AI 预标注">{task?.prelabelEnabled ? '已启用 · TODO_CONFIRM_PRELABEL_MODEL_SOURCE' : '未启用'}</Descriptions.Item>
+            <Descriptions.Item label="进度">{pct(task?.annotatedCount, task?.totalCount)}%</Descriptions.Item>
+          </Descriptions>
+          <Button style={{ marginTop: 12 }} onClick={() => items[0]?.workItemId && sync.mutate(items[0].workItemId)}>同步 Label Studio task</Button>
+        </Card>
+        <Card title="样本队列">
+          <Table<AnnotationWorkItem>
+            rowKey="workItemId"
+            dataSource={items}
+            pagination={{ pageSize: 6 }}
+            columns={[
+              { title: '样本', dataIndex: 'sampleKey', render: (v) => <Typography.Text className="mono">{v}</Typography.Text> },
+              { title: '预标注', dataIndex: 'predictionJson', render: (v) => v ? <Tag color="purple">AI 预标注</Tag> : '无' },
+              { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{annStatusText(v)}</Tag> },
+              { title: '操作', render: (_, r) => <Space><Button size="small" onClick={() => save.mutate(r.workItemId)}>保存草稿</Button><Button size="small" type="primary" disabled={r.status === 'APPROVED' || r.status === 'REVIEW_PENDING'} onClick={() => submit.mutate(r.workItemId)}>提交审核</Button></Space> },
+            ]}
+          />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+export function AnnotationReviewPage() {
+  const qc = useQueryClient();
+  const [msg, holder] = message.useMessage();
+  const [reasonOpen, setReasonOpen] = useState<AnnotationReviewItem | null>(null);
+  const reviews = useQuery({ queryKey: ['annotation-review-items'], queryFn: () => dataApi.annotationReviewItems() });
+  const approve = useMutation({ mutationFn: dataApi.approveAnnotationReviewItem, onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-review-items'] }); msg.success('审核通过'); }, onError: (e: Error) => msg.error(e.message) });
+  const reject = useMutation({ mutationFn: ({ id, reason }: { id: string; reason: string }) => dataApi.rejectAnnotationReviewItem(id, reason), onSuccess: async () => { setReasonOpen(null); await qc.invalidateQueries({ queryKey: ['annotation-review-items'] }); msg.warning('已驳回并返回标注员'); }, onError: (e: Error) => msg.error(e.message) });
+  const quality = useMutation({ mutationFn: dataApi.qualityCheckAnnotationTask, onSuccess: (r) => msg.info(`${r.qualityStatus}: ${r.diagnosticMessage}`), onError: (e: Error) => msg.error(e.message) });
+  const publish = useMutation({ mutationFn: dataApi.publishAnnotationDataset, onSuccess: (r) => msg.success(`已发布 ANNOTATED 数据集：${r.outputDatasetId}`), onError: (e: Error) => msg.error(e.message) });
+  const taskIds = Array.from(new Set((reviews.data ?? []).map((item) => item.taskId)));
+  return (
+    <div className="content-page annotation-review-page">
+      {holder}
+      <div className="page-hero">
+        <div>
+          <Typography.Title level={3}>标注审核</Typography.Title>
+          <Typography.Text type="secondary">审核队列 · 通过/驳回 · DAT-004 防自审 · DAT-010 发布前质检</Typography.Text>
+        </div>
+        <Space>
+          {taskIds[0] ? <Button onClick={() => quality.mutate(taskIds[0])}>质量检查</Button> : null}
+          {taskIds[0] ? <Button type="primary" onClick={() => publish.mutate(taskIds[0])}>发布标注数据集</Button> : null}
+        </Space>
+      </div>
+      <Alert type="info" showIcon title="审核规则" description="审核人与标注员必须分离；通过后可执行质量检查并发布 ANNOTATED 数据集，同时写入 ANNOTATION 血缘。" style={{ marginBottom: 16 }} />
+      <Table<AnnotationReviewItem>
+        rowKey="reviewItemId"
+        dataSource={reviews.data ?? []}
+        loading={reviews.isLoading}
+        pagination={{ pageSize: 8 }}
+        columns={[
+          { title: '标注任务', dataIndex: 'taskName' },
+          { title: '标注员', dataIndex: 'annotatorName' },
+          { title: '审核员', dataIndex: 'reviewerName', render: (v) => v ?? '待分派' },
+          { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{annStatusText(v)}</Tag> },
+          { title: '意见', dataIndex: 'reviewComment', render: (v) => v ?? '-' },
+          { title: '操作', render: (_, r) => <Space><Button size="small" type="primary" disabled={r.status === 'APPROVED'} onClick={() => approve.mutate(r.reviewItemId)}>通过</Button><Button size="small" danger disabled={r.status === 'APPROVED'} onClick={() => setReasonOpen(r)}>驳回</Button></Space> },
+        ]}
+      />
+      <Modal title="驳回原因" open={Boolean(reasonOpen)} onCancel={() => setReasonOpen(null)} footer={null} destroyOnHidden>
+        <Form layout="vertical" initialValues={{ reason: '标注边界框不完整，请补充。' }} onFinish={(v) => reasonOpen && reject.mutate({ id: reasonOpen.reviewItemId, reason: v.reason })}>
+          <Form.Item name="reason" label="原因" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item>
+          <Button danger htmlType="submit" loading={reject.isPending}>确认驳回</Button>
+        </Form>
+      </Modal>
+    </div>
+  );
+}
 
 export function DataPipelineStandardPage() {
   const qc = useQueryClient();

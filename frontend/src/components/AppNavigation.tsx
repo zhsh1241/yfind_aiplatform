@@ -23,6 +23,7 @@ export const prototypePages: PrototypePage[] = [
   { key: 'dash', label: '工作台', domain: '工作台' },
   { key: 'ds', label: '数据集管理', domain: '数据管理' },
   { key: 'ann', label: '标注任务', domain: '数据管理' },
+  { key: 'annwork', label: '标注工作台', domain: '数据管理' },
   { key: 'datasrc', label: '数据源管理', domain: '数据管理' },
   { key: 'annreview', label: '标注审核', domain: '数据管理' },
   { key: 'lineage', label: '数据血缘', domain: '数据管理' },

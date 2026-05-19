@@ -293,6 +293,105 @@ class DataManagementControllerTest {
     }
 
     @Test
+    void annotationIntegrationManagesTemplatesTasksWorkReviewAndPublication() throws Exception {
+        // TASK-annotation-integration AC-01 AC-02 AC-03 AC-04 AC-05 AC-06 AC-07
+        String admin = login("admin", "YF");
+        JsonNode overview = getJson("/api/v1/annotation/overview", "trace-f012-overview", admin);
+        assertThat(overview.at("/code").asInt()).isZero();
+        assertThat(overview.at("/data/tasks").findValuesAsText("name")).contains("Q2焊缝检测图像标注");
+        assertThat(overview.at("/data/templates").findValuesAsText("status")).contains("PUBLISHED");
+
+        JsonNode createdTemplate = postJson("/api/v1/annotation/label-templates", "trace-f012-template-create", """
+            {"name":"单测视觉模板","tenantId":"TENANT-CABIN","scene":"OBJECT_DETECTION","labelType":"BOUNDING_BOX","labelSchemaJson":"{\\"labels\\":[\\"裂纹\\"]}"}
+            """, admin);
+        assertThat(createdTemplate.at("/data/status").asText()).isEqualTo("DRAFT");
+        String templateId = createdTemplate.at("/data/templateId").asText();
+
+        JsonNode publishedTemplate = postJson("/api/v1/annotation/label-templates/" + templateId + "/publish", "trace-f012-template-publish", "{}", admin);
+        assertThat(publishedTemplate.at("/data/status").asText()).isEqualTo("PUBLISHED");
+
+        JsonNode config = getJson("/api/v1/annotation/label-templates/" + templateId + "/label-studio-config", "trace-f012-template-config", admin);
+        assertThat(config.at("/data/configXml").asText()).contains("<View>");
+
+        JsonNode createdTask = postJson("/api/v1/annotation/tasks", "trace-f012-task-create", """
+            {"name":"F012 单测标注任务","sourceDatasetId":"DATASET-WELD-DEFECT","sourceVersionId":"DVER-WELD-001","templateId":"%s","scene":"OBJECT_DETECTION","reviewEnabled":true,"prelabelEnabled":true,"labelStudioEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"],"prelabelModelSource":"TODO_CONFIRM_PRELABEL_MODEL_SOURCE"}
+            """.formatted(templateId), admin);
+        assertThat(createdTask.at("/data/task/status").asText()).isEqualTo("IN_PROGRESS");
+        String taskId = createdTask.at("/data/task/taskId").asText();
+
+        JsonNode labelStudio = postJson("/api/v1/annotation/tasks/" + taskId + "/label-studio/sync-project", "trace-f012-labelstudio-sync", "{}", admin);
+        assertThat(labelStudio.at("/data/configStatus").asText()).isEqualTo("UNCONFIGURED");
+        assertThat(labelStudio.at("/data/diagnosticMessage").asText()).contains("TODO_CONFIRM_LABEL_STUDIO_BASE_URL");
+
+        JsonNode workItems = getJson("/api/v1/annotation/tasks/" + taskId + "/work-items", "trace-f012-work-items", admin);
+        String firstWorkItemId = workItems.at("/data/0/workItemId").asText();
+        JsonNode draft = postJson("/api/v1/annotation/work-items/" + firstWorkItemId + "/draft", "trace-f012-work-draft", """
+            {"annotationJson":"{\\"boxes\\":[{\\"label\\":\\"裂纹\\"}]}"}
+            """, admin);
+        assertThat(draft.at("/data/status").asText()).isEqualTo("DRAFT");
+        JsonNode submitted = postJson("/api/v1/annotation/work-items/" + firstWorkItemId + "/submit", "trace-f012-work-submit", """
+            {"annotationJson":"{\\"boxes\\":[{\\"label\\":\\"裂纹\\"}]}"}
+            """, admin);
+        assertThat(submitted.at("/data/status").asText()).isEqualTo("REVIEW_PENDING");
+
+        JsonNode reviews = getJson("/api/v1/annotation/review-items?taskId=" + taskId, "trace-f012-review-list", admin);
+        String reviewId = reviews.at("/data/0/reviewItemId").asText();
+        JsonNode approved = postJson("/api/v1/annotation/review-items/" + reviewId + "/approve", "trace-f012-review-approve", "{}", admin);
+        assertThat(approved.at("/data/status").asText()).isEqualTo("APPROVED");
+
+        JsonNode detailAfterFirstApprove = getJson("/api/v1/annotation/tasks/" + taskId, "trace-f012-task-detail-after-approve", admin);
+        for (JsonNode item : detailAfterFirstApprove.at("/data/workItems")) {
+            if (!"APPROVED".equals(item.at("/status").asText())) {
+                String itemId = item.at("/workItemId").asText();
+                postJson("/api/v1/annotation/work-items/" + itemId + "/submit", "trace-f012-submit-" + itemId, """
+                    {"annotationJson":"{\\"boxes\\":[{\\"label\\":\\"裂纹\\"}]}"}
+                    """, admin);
+                JsonNode pending = getJson("/api/v1/annotation/review-items?taskId=" + taskId + "&status=PENDING", "trace-f012-pending-" + itemId, admin);
+                String pendingReviewId = pending.at("/data/0/reviewItemId").asText();
+                postJson("/api/v1/annotation/review-items/" + pendingReviewId + "/approve", "trace-f012-approve-" + itemId, "{}", admin);
+            }
+        }
+
+        JsonNode quality = postJson("/api/v1/annotation/tasks/" + taskId + "/quality-check", "trace-f012-quality", "{}", admin);
+        assertThat(quality.at("/data/qualityStatus").asText()).isEqualTo("PASSED");
+        JsonNode published = postJson("/api/v1/annotation/tasks/" + taskId + "/publish-dataset", "trace-f012-publish", "{}", admin);
+        assertThat(published.at("/data/outputDatasetId").asText()).startsWith("DATASET-ANN-");
+        JsonNode output = getJson("/api/v1/datasets/" + published.at("/data/outputDatasetId").asText(), "trace-f012-output-dataset", admin);
+        assertThat(output.at("/data/dataset/datasetType").asText()).isEqualTo("ANNOTATED");
+        assertThat(output.at("/data/lineage").findValuesAsText("transformType")).contains("ANNOTATION");
+    }
+
+    @Test
+    void annotationIntegrationRejectsInactiveDatasetDraftTemplateSelfReviewAndCrossBu() throws Exception {
+        // TASK-annotation-integration AC-02 AC-05 AC-08
+        String admin = login("admin", "YF");
+        JsonNode inactiveDataset = postJson("/api/v1/datasets", "trace-f012-inactive-dataset", """
+            {"name":"F012 非活动数据集","datasetType":"RAW","dataType":"IMAGE","tenantId":"TENANT-CABIN","accessLevel":"TEAM","tags":["F012"],"recordCount":5,"sourceId":"DSRC-CABIN-MINIO"}
+            """, admin);
+        JsonNode inactiveRejected = postJson("/api/v1/annotation/tasks", "trace-f012-inactive-reject", """
+            {"name":"非活动数据集任务","sourceDatasetId":"%s","templateId":"LT-WELD-BBOX","scene":"OBJECT_DETECTION","assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
+            """.formatted(inactiveDataset.at("/data/dataset/datasetId").asText()), admin);
+        assertThat(inactiveRejected.at("/code").asInt()).isEqualTo(42200);
+        assertThat(inactiveRejected.at("/message").asText()).contains("DAT-009");
+
+        JsonNode draftTemplateRejected = postJson("/api/v1/annotation/tasks", "trace-f012-draft-template-reject", """
+            {"name":"草稿模板任务","sourceDatasetId":"DATASET-WORKORDER-TEXT","sourceVersionId":"DVER-TEXT-001","templateId":"LT-TEXT-INTENT-DRAFT","scene":"TEXT_LABELING","assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
+            """, admin);
+        assertThat(draftTemplateRejected.at("/code").asInt()).isEqualTo(42200);
+        assertThat(draftTemplateRejected.at("/message").asText()).contains("DAT-003");
+
+        JsonNode selfReviewRejected = postJson("/api/v1/annotation/tasks", "trace-f012-self-review-reject", """
+            {"name":"自审任务","sourceDatasetId":"DATASET-WELD-DEFECT","sourceVersionId":"DVER-WELD-001","templateId":"LT-WELD-BBOX","scene":"OBJECT_DETECTION","reviewEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-ANNOTATOR"]}
+            """, admin);
+        assertThat(selfReviewRejected.at("/code").asInt()).isEqualTo(42200);
+        assertThat(selfReviewRejected.at("/message").asText()).contains("DAT-004");
+
+        String qe = login("qeuser", "QE");
+        JsonNode crossBu = getJson("/api/v1/annotation/tasks/ANN-WELD-Q2", "trace-f012-cross-bu", qe);
+        assertThat(crossBu.at("/code").asInt()).isEqualTo(40400);
+    }
+
+    @Test
     void datasetLifecycleBlocksUnconfiguredSafetyAndImmutablePublishedVersion() throws Exception {
         // TASK-data-source-dataset-management AC-03 AC-04 AC-05 AC-06 AC-09
         String admin = login("admin", "YF");

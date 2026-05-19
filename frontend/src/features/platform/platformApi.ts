@@ -600,6 +600,21 @@ export type DatasetDetail = { dataset: DatasetSummary; versions: DatasetVersion[
 export type DatasetAccessRequest = { requestId: string; datasetId: string; requesterId: string; requesterName: string; purpose: string; status: string; createdAt: string; reviewedBy: string | null; reviewedAt: string | null };
 export type DatasetReference = { datasetId: string; versionId: string; status: string; usable: boolean; diagnosticCode: string; diagnosticMessage: string };
 
+export type AnnotationUser = { userId: string; displayName: string; role: string };
+export type AnnotationStats = { total: number; inProgress: number; pendingReview: number; completed: number; templates: number };
+export type AnnotationTaskSummary = { taskId: string; name: string; scene: string; sceneLabel: string; sourceDatasetId: string; sourceDatasetName: string; templateId: string; templateName: string; tenantId: string; status: string; reviewEnabled: boolean; prelabelEnabled: boolean; labelStudioEnabled: boolean; totalCount: number; annotatedCount: number; reviewedCount: number; qualityScore: number | null; assignees: AnnotationUser[]; deadline: string | null; updatedAt: string };
+export type AnnotationAssignment = { assignmentId: string; taskId: string; assigneeId: string; assigneeName: string; role: string; status: string; assignedBy: string; assignedAt: string };
+export type AnnotationLabelTemplate = { templateId: string; name: string; scene: string; labelType: string; labelSchemaJson: string; labelStudioConfigXml: string; status: string; tenantId: string; createdBy: string; updatedAt: string };
+export type AnnotationWorkItem = { workItemId: string; taskId: string; sampleKey: string; sampleFileId: string | null; annotatorId: string | null; annotatorName: string | null; status: string; predictionJson: string | null; annotationJson: string | null; submittedAt: string | null; updatedAt: string };
+export type AnnotationReviewItem = { reviewItemId: string; workItemId: string; taskId: string; taskName: string; annotatorId: string; annotatorName: string; reviewerId: string | null; reviewerName: string | null; status: string; reviewComment: string | null; reviewedAt: string | null };
+export type AnnotationPublication = { publicationId: string; taskId: string; qualityStatus: string; coverageRate: number; formatStatus: string; diagnosticCode: string; diagnosticMessage: string; outputDatasetId: string | null; outputVersionId: string | null; publishedAt: string | null };
+export type AnnotationExternalBinding = { bindingId: string; taskId: string; provider: string; externalProjectId: string | null; externalUrl: string | null; configStatus: string; lastSyncStatus: string; diagnosticCode: string; diagnosticMessage: string; launchUrl: string | null; lastSyncAt: string | null };
+export type AnnotationOverview = { stats: AnnotationStats; tasks: AnnotationTaskSummary[]; templates: AnnotationLabelTemplate[] };
+export type AnnotationTaskList = { items: AnnotationTaskSummary[]; total: number; page: number; pageSize: number };
+export type AnnotationTaskDetail = { task: AnnotationTaskSummary; assignments: AnnotationAssignment[]; workItems: AnnotationWorkItem[]; reviewItems: AnnotationReviewItem[]; publications: AnnotationPublication[]; externalBinding: AnnotationExternalBinding };
+export type AnnotationTaskCreateInput = { name: string; sourceDatasetId: string; sourceVersionId?: string | null; templateId: string; scene: string; reviewEnabled?: boolean; prelabelEnabled?: boolean; labelStudioEnabled?: boolean; prelabelModelSource?: string; prelabelConfidence?: number; assigneeIds?: string[]; reviewerIds?: string[]; deadline?: string | null; note?: string };
+export type AnnotationLabelTemplateInput = { name: string; tenantId?: string; scene: string; labelType: string; labelSchemaJson: string; labelStudioConfigXml?: string };
+
 export const dataApi = {
   async dataSources() { return unwrap<DataSourceSummary[]>(apiClient.get('/api/v1/data-sources')); },
   async createDataSource(input: Partial<DataSourceSummary> & { secretRef?: string }) { return unwrap<DataSourceSummary>(apiClient.post('/api/v1/data-sources', input)); },
@@ -646,4 +661,28 @@ export const dataApi = {
   async dataStandardTasks() { return unwrap<DataStandardTask[]>(apiClient.get('/api/v1/data-standard-tasks')); },
   async createDataStandardTask(input: { datasetId: string; name: string; standardProfile?: string; ruleJson?: string }) { return unwrap<DataStandardTask>(apiClient.post('/api/v1/data-standard-tasks', input)); },
   async runDataStandardTask(taskId: string) { return unwrap<DataStandardTask>(apiClient.post(`/api/v1/data-standard-tasks/${taskId}/run`)); },
+  async annotationOverview() { return unwrap<AnnotationOverview>(apiClient.get('/api/v1/annotation/overview')); },
+  async annotationTasks(params: { status?: string; keyword?: string; page?: number; pageSize?: number } = {}) { return unwrap<AnnotationTaskList>(apiClient.get('/api/v1/annotation/tasks', { params })); },
+  async annotationTaskDetail(taskId: string) { return unwrap<AnnotationTaskDetail>(apiClient.get(`/api/v1/annotation/tasks/${taskId}`)); },
+  async createAnnotationTask(input: AnnotationTaskCreateInput) { return unwrap<AnnotationTaskDetail>(apiClient.post('/api/v1/annotation/tasks', input)); },
+  async assignAnnotationTask(taskId: string, input: { assigneeIds: string[]; reviewerIds: string[] }) { return unwrap<AnnotationTaskDetail>(apiClient.post(`/api/v1/annotation/tasks/${taskId}/assign`, input)); },
+  async startAnnotationTask(taskId: string) { return unwrap<AnnotationTaskDetail>(apiClient.post(`/api/v1/annotation/tasks/${taskId}/start`)); },
+  async labelTemplates(params: { status?: string; scene?: string } = {}) { return unwrap<AnnotationLabelTemplate[]>(apiClient.get('/api/v1/annotation/label-templates', { params })); },
+  async createLabelTemplate(input: AnnotationLabelTemplateInput) { return unwrap<AnnotationLabelTemplate>(apiClient.post('/api/v1/annotation/label-templates', input)); },
+  async updateLabelTemplate(templateId: string, input: AnnotationLabelTemplateInput) { return unwrap<AnnotationLabelTemplate>(apiClient.put(`/api/v1/annotation/label-templates/${templateId}`, input)); },
+  async publishLabelTemplate(templateId: string) { return unwrap<AnnotationLabelTemplate>(apiClient.post(`/api/v1/annotation/label-templates/${templateId}/publish`)); },
+  async archiveLabelTemplate(templateId: string) { return unwrap<AnnotationLabelTemplate>(apiClient.post(`/api/v1/annotation/label-templates/${templateId}/archive`)); },
+  async labelStudioConfig(templateId: string) { return unwrap<{ templateId: string; configXml: string; diagnosticCode: string; diagnosticMessage: string }>(apiClient.get(`/api/v1/annotation/label-templates/${templateId}/label-studio-config`)); },
+  async annotationWorkItems(taskId: string) { return unwrap<AnnotationWorkItem[]>(apiClient.get(`/api/v1/annotation/tasks/${taskId}/work-items`)); },
+  async saveAnnotationDraft(workItemId: string, annotationJson: string) { return unwrap<AnnotationWorkItem>(apiClient.post(`/api/v1/annotation/work-items/${workItemId}/draft`, { annotationJson })); },
+  async submitAnnotationWorkItem(workItemId: string, annotationJson: string) { return unwrap<AnnotationWorkItem>(apiClient.post(`/api/v1/annotation/work-items/${workItemId}/submit`, { annotationJson })); },
+  async annotationReviewItems(params: { status?: string; taskId?: string } = {}) { return unwrap<AnnotationReviewItem[]>(apiClient.get('/api/v1/annotation/review-items', { params })); },
+  async approveAnnotationReviewItem(reviewItemId: string) { return unwrap<AnnotationReviewItem>(apiClient.post(`/api/v1/annotation/review-items/${reviewItemId}/approve`)); },
+  async rejectAnnotationReviewItem(reviewItemId: string, reason: string) { return unwrap<AnnotationReviewItem>(apiClient.post(`/api/v1/annotation/review-items/${reviewItemId}/reject`, { reason })); },
+  async qualityCheckAnnotationTask(taskId: string) { return unwrap<AnnotationPublication>(apiClient.post(`/api/v1/annotation/tasks/${taskId}/quality-check`)); },
+  async publishAnnotationDataset(taskId: string) { return unwrap<AnnotationPublication>(apiClient.post(`/api/v1/annotation/tasks/${taskId}/publish-dataset`)); },
+  async labelStudioStatus(taskId: string) { return unwrap<AnnotationExternalBinding>(apiClient.get(`/api/v1/annotation/tasks/${taskId}/label-studio/status`)); },
+  async syncLabelStudioProject(taskId: string) { return unwrap<AnnotationExternalBinding>(apiClient.post(`/api/v1/annotation/tasks/${taskId}/label-studio/sync-project`)); },
+  async syncLabelStudioTask(workItemId: string) { return unwrap<AnnotationExternalBinding>(apiClient.post(`/api/v1/annotation/work-items/${workItemId}/label-studio/sync-task`)); },
+  async importLabelStudioResults(taskId: string) { return unwrap<AnnotationExternalBinding>(apiClient.post(`/api/v1/annotation/tasks/${taskId}/label-studio/import-results`)); },
 };
