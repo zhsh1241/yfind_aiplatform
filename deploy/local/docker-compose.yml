@@ -148,6 +148,21 @@ services:
     volumes:
       - ./lab/file-source:/usr/share/nginx/html:ro
 
+  label-studio:
+    image: heartexlabs/label-studio:latest
+    container_name: smp-platform-label-studio
+    environment:
+      LABEL_STUDIO_HOST: ${LABEL_STUDIO_HOST:-http://localhost:8083}
+      CSRF_TRUSTED_ORIGINS: ${LABEL_STUDIO_CSRF_TRUSTED_ORIGINS:-http://localhost:8083}
+      SECRET_KEY: ${LABEL_STUDIO_SECRET_KEY:-smp_label_studio_local_secret_change_me}
+      LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED: "true"
+      LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /label-studio/files
+    ports:
+      - "${LABEL_STUDIO_PORT:-8083}:8080"
+    volumes:
+      - smp_label_studio_data:/label-studio/data
+      - ./lab/file-source:/label-studio/files:ro
+
   backend:
     build: ../../backend
     container_name: smp-platform-backend
@@ -181,3 +196,4 @@ volumes:
   smp_minio_data:
   smp_rabbitmq_data:
   smp_influxdb_data:
+  smp_label_studio_data:

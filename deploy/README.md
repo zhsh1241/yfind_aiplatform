@@ -48,6 +48,7 @@ powershell -ExecutionPolicy Bypass -File deploy/scripts/prepare-data-source-lab.
 | API 数据源 | `smp-platform-source-api` | 8081 | `GET /health`、`GET /api/workorders`、`GET /api/quality-events` |
 | 文件数据源 | `smp-platform-file-source` | 8082 | `weld_quality_snapshot.csv`、`weld_annotations.jsonl` |
 | 工业协议仿真 | `smp-platform-industrial` | 4840 | TCP 文本协议，发送 `READ` 返回 OPC-UA-like 点位 JSON |
+| 标注工具 | `smp-platform-label-studio` | 8083 | Label Studio 独立服务；本地访问 `http://localhost:8083`，数据卷 `smp_label_studio_data`，只读挂载 `deploy/local/lab/file-source` 作为样例文件 |
 | 后端（可选） | `smp-platform-backend` | 8080 | Spring Boot API |
 | 前端（可选） | `smp-platform-frontend` | 5173 | Web 控制台 |
 
