@@ -9,3 +9,21 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+smp:
+  label-studio:
+    enabled: false
+---
+spring:
+  config:
+    activate:
+      on-profile: labelstudio
+smp:
+  label-studio:
+    enabled: true
+    base-url: http://127.0.0.1:${labelstudio.fake.port}
+    token-secret-ref: env:LABEL_STUDIO_API_TOKEN
+    token-value: f013-secret-token
+    workspace-id: sandbox
+    storage-policy: local-file-source
+    export-format: JSON
+    timeout-ms: 2000

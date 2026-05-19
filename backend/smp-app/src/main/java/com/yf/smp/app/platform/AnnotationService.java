@@ -50,7 +50,7 @@ class UnconfiguredLabelStudioAnnotationAdapter implements LabelStudioAnnotationA
     }
 
     private AnnotationExternalBindingResponse response(AnnotationExternalBindingRecord binding, String configStatus, String syncStatus, OffsetDateTime lastSyncAt) {
-        return new AnnotationExternalBindingResponse(binding.bindingId(), binding.taskId(), "LABEL_STUDIO", null, URL, configStatus, syncStatus, "LABEL_STUDIO_UNCONFIGURED", MESSAGE, null, lastSyncAt);
+        return new AnnotationExternalBindingResponse(binding.bindingId(), binding.taskId(), "LABEL_STUDIO", null, URL, null, null, configStatus, syncStatus, "LABEL_STUDIO_UNCONFIGURED", MESSAGE, null, false, lastSyncAt);
     }
 }
 
@@ -372,7 +372,7 @@ public class AnnotationService {
         AnnotationTaskRecord task = taskVisible(principal, taskId, true);
         AnnotationExternalBindingResponse result = labelStudioAdapter.syncProject(task, binding(taskId));
         persistBinding(result);
-        audit(principal, task.tenantId(), "ANNOTATION_LABEL_STUDIO_SYNC_FAILED", "AnnotationTask", taskId, "FAILURE", "WARNING", null, result.diagnosticCode(), TRACE_TAG + ";" + result.diagnosticMessage());
+        audit(principal, task.tenantId(), "PROJECT_SYNCED".equals(result.lastSyncStatus()) ? "ANNOTATION_LABEL_STUDIO_PROJECT_SYNCED" : "ANNOTATION_LABEL_STUDIO_SYNC_FAILED", "AnnotationTask", taskId, "PROJECT_SYNCED".equals(result.lastSyncStatus()) ? "SUCCESS" : "FAILURE", "PROJECT_SYNCED".equals(result.lastSyncStatus()) ? "INFO" : "WARNING", null, result.diagnosticCode(), TRACE_TAG + ";" + result.diagnosticMessage());
         return result;
     }
 
@@ -383,6 +383,7 @@ public class AnnotationService {
         AnnotationTaskRecord task = taskRecord(item.taskId());
         AnnotationExternalBindingResponse result = labelStudioAdapter.syncTask(item, task, binding(task.taskId()));
         persistBinding(result);
+        audit(principal, task.tenantId(), "TASK_SYNCED".equals(result.lastSyncStatus()) ? "ANNOTATION_LABEL_STUDIO_TASK_SYNCED" : "ANNOTATION_LABEL_STUDIO_SYNC_FAILED", "AnnotationWorkItem", workItemId, "TASK_SYNCED".equals(result.lastSyncStatus()) ? "SUCCESS" : "FAILURE", "TASK_SYNCED".equals(result.lastSyncStatus()) ? "INFO" : "WARNING", null, result.diagnosticCode(), TRACE_TAG + ";" + result.diagnosticMessage());
         return result;
     }
 
@@ -392,7 +393,7 @@ public class AnnotationService {
         AnnotationTaskRecord task = taskVisible(principal, taskId, true);
         AnnotationExternalBindingResponse result = labelStudioAdapter.importResults(task, binding(taskId));
         persistBinding(result);
-        audit(principal, task.tenantId(), "ANNOTATION_LABEL_STUDIO_SYNC_FAILED", "AnnotationTask", taskId, "FAILURE", "WARNING", null, result.diagnosticCode(), TRACE_TAG + ";import-results");
+        audit(principal, task.tenantId(), "RESULT_IMPORTED".equals(result.lastSyncStatus()) ? "ANNOTATION_LABEL_STUDIO_RESULTS_IMPORTED" : "ANNOTATION_LABEL_STUDIO_IMPORT_FAILED", "AnnotationTask", taskId, "RESULT_IMPORTED".equals(result.lastSyncStatus()) ? "SUCCESS" : "FAILURE", "RESULT_IMPORTED".equals(result.lastSyncStatus()) ? "INFO" : "WARNING", null, result.diagnosticCode(), TRACE_TAG + ";import-results");
         return result;
     }
 
@@ -672,11 +673,27 @@ public class AnnotationService {
     }
 
     private AnnotationExternalBindingResponse bindingResponse(AnnotationExternalBindingRecord binding) {
-        return new AnnotationExternalBindingResponse(binding.bindingId(), binding.taskId(), binding.provider(), binding.externalProjectId(), binding.externalUrl(), binding.configStatus(), binding.lastSyncStatus(), binding.diagnosticCode(), binding.diagnosticMessage(), binding.launchUrl(), binding.lastSyncAt());
+        AnnotationExternalTaskBindingRecord taskBinding = latestTaskBinding(binding.taskId());
+        String externalTaskId = taskBinding == null ? null : taskBinding.externalTaskId();
+        String externalTaskUrl = taskBinding == null ? null : taskBinding.externalTaskUrl();
+        return new AnnotationExternalBindingResponse(binding.bindingId(), binding.taskId(), binding.provider(), binding.externalProjectId(), binding.externalUrl(), externalTaskId, externalTaskUrl, binding.configStatus(), binding.lastSyncStatus(), binding.diagnosticCode(), binding.diagnosticMessage(), blank(binding.launchUrl(), externalTaskUrl), isRetryable(binding.diagnosticCode()), binding.lastSyncAt());
     }
 
     private void persistBinding(AnnotationExternalBindingResponse response) {
-        jdbc.update("UPDATE annotation_external_binding SET external_project_id=?, external_url=?, config_status=?, last_sync_status=?, diagnostic_code=?, diagnostic_message=?, launch_url=?, last_sync_at=? WHERE binding_id=?", response.externalProjectId(), response.externalUrl(), response.configStatus(), response.lastSyncStatus(), response.diagnosticCode(), response.diagnosticMessage(), response.launchUrl(), response.lastSyncAt(), response.bindingId());
+        jdbc.update("UPDATE annotation_external_binding SET external_project_id=?, external_url=?, config_status=?, last_sync_status=?, diagnostic_code=?, diagnostic_message=?, launch_url=?, last_sync_at=?, last_error_at=CASE WHEN ? THEN ? ELSE last_error_at END, retry_count=CASE WHEN ? THEN retry_count + 1 ELSE retry_count END WHERE binding_id=?", response.externalProjectId(), response.externalUrl(), response.configStatus(), response.lastSyncStatus(), response.diagnosticCode(), response.diagnosticMessage(), response.launchUrl(), response.lastSyncAt(), !"SUCCESS".equals(response.lastSyncStatus()) && !"PROJECT_SYNCED".equals(response.lastSyncStatus()) && !"TASK_SYNCED".equals(response.lastSyncStatus()) && !"RESULT_IMPORTED".equals(response.lastSyncStatus()), response.lastSyncAt(), Boolean.TRUE.equals(response.retryable()), response.bindingId());
+    }
+
+    private AnnotationExternalTaskBindingRecord latestTaskBinding(String taskId) {
+        List<AnnotationExternalTaskBindingRecord> rows = jdbc.query("SELECT * FROM annotation_external_task_binding WHERE task_id=? AND provider='LABEL_STUDIO' ORDER BY COALESCE(last_sync_at, CURRENT_TIMESTAMP) DESC", (rs, n) -> taskBinding(rs), taskId);
+        return rows.isEmpty() ? null : rows.getFirst();
+    }
+
+    private AnnotationExternalTaskBindingRecord taskBinding(ResultSet rs) throws SQLException {
+        return new AnnotationExternalTaskBindingRecord(rs.getString("binding_id"), rs.getString("task_id"), rs.getString("work_item_id"), rs.getString("provider"), rs.getString("external_project_id"), rs.getString("external_task_id"), rs.getString("external_task_url"), rs.getString("sync_status"), rs.getString("import_status"), rs.getString("diagnostic_code"), rs.getString("diagnostic_message"), rs.getObject("last_sync_at", OffsetDateTime.class), rs.getObject("last_import_at", OffsetDateTime.class));
+    }
+
+    private boolean isRetryable(String code) {
+        return "LABEL_STUDIO_UNREACHABLE".equals(code) || "LABEL_STUDIO_RESULT_NOT_READY".equals(code);
     }
 
     private boolean canSeeTenant(PlatformPrincipal principal, String tenantId) {
@@ -760,4 +777,5 @@ record AnnotationLabelTemplateRecord(String templateId, String tenantId, String 
 record AnnotationWorkItemRecord(String workItemId, String taskId, String sampleFileId, String sampleKey, String annotatorId, String status, String predictionJson, String annotationJson) {}
 record ReviewRecord(String reviewItemId, String workItemId, String taskId, String annotatorId, String reviewerId, String status) {}
 record AnnotationExternalBindingRecord(String bindingId, String taskId, String provider, String externalProjectId, String externalUrl, String configStatus, String lastSyncStatus, String diagnosticCode, String diagnosticMessage, String launchUrl, OffsetDateTime lastSyncAt) {}
+record AnnotationExternalTaskBindingRecord(String bindingId, String taskId, String workItemId, String provider, String externalProjectId, String externalTaskId, String externalTaskUrl, String syncStatus, String importStatus, String diagnosticCode, String diagnosticMessage, OffsetDateTime lastSyncAt, OffsetDateTime lastImportAt) {}
 record DatasetInfo(String datasetId, String name, String datasetType, String dataType, String tenantId, String projectId, String currentVersionId, String status, long recordCount, long sizeBytes, String ownerId) {}

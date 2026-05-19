@@ -104,10 +104,13 @@ record AnnotationExternalBindingResponse(
     String provider,
     String externalProjectId,
     String externalUrl,
+    String externalTaskId,
+    String externalTaskUrl,
     String configStatus,
     String lastSyncStatus,
     String diagnosticCode,
     String diagnosticMessage,
     String launchUrl,
+    Boolean retryable,
     OffsetDateTime lastSyncAt
 ) {}

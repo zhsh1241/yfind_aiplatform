@@ -275,7 +275,7 @@ describe('F006 platform identity frontend', () => {
     expect(await screen.findByRole('heading', { name: '标注任务管理' })).toBeInTheDocument();
     expect(await screen.findByText('焊缝缺陷检测标注任务')).toBeInTheDocument();
     await waitFor(() => expect(screen.getAllByText('AI 预标注').length).toBeGreaterThan(0));
-    expect(await screen.findByText(/外部标注工具未配置/)).toBeInTheDocument();
+    expect(await screen.findByText(/外部标注工具 \/ Label Studio/)).toBeInTheDocument();
     unmount();
 
     const workbench = render(renderRoute(['/annwork']));

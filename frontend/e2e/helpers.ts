@@ -54,7 +54,10 @@ const pipelineRun = { run: { runId: 'PRUN-E2E', pipelineId: 'PIPE-IMG-PREP', ver
 
 const annotationTask = { taskId: 'ANN-WELD-Q2', name: '焊缝缺陷检测标注任务', scene: 'OBJECT_DETECTION', sceneLabel: '目标检测', sourceDatasetId: 'DATASET-WELD-DEFECT', sourceDatasetName: '焊缝缺陷检测数据集', templateId: 'LT-WELD-BBOX', templateName: '焊缝 BBox 模板', tenantId: 'TENANT-CABIN', status: 'IN_PROGRESS', reviewEnabled: true, prelabelEnabled: true, labelStudioEnabled: true, totalCount: 6, annotatedCount: 4, reviewedCount: 2, qualityScore: null, assignees: [{ userId: 'USR-ANNOTATOR', displayName: '标注工程师', role: 'ANNOTATOR' }, { userId: 'USR-BU-CABIN', displayName: '座舱审核员', role: 'REVIEWER' }], deadline: '2026-06-02T00:00:00Z', updatedAt: '2026-05-19T00:00:00Z' };
 const annotationTemplate = { templateId: 'LT-WELD-BBOX', name: '焊缝 BBox 模板', scene: 'OBJECT_DETECTION', labelType: 'BOUNDING_BOX', labelSchemaJson: '{"labels":["裂纹","气孔"]}', labelStudioConfigXml: '<View><Image name="image" value="$image"/></View>', status: 'PUBLISHED', tenantId: 'TENANT-CABIN', createdBy: 'USR-ADMIN', updatedAt: '2026-05-19T00:00:00Z' };
-const annotationBinding = { bindingId: 'AEXT-WELD-Q2', taskId: 'ANN-WELD-Q2', provider: 'LABEL_STUDIO', externalProjectId: null, externalUrl: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL', configStatus: 'UNCONFIGURED', lastSyncStatus: 'UNCONFIGURED', diagnosticCode: 'LABEL_STUDIO_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL;TODO_CONFIRM_LABEL_STUDIO_TOKEN_SECRET', launchUrl: null, lastSyncAt: null };
+const annotationBinding = { bindingId: 'AEXT-WELD-Q2', taskId: 'ANN-WELD-Q2', provider: 'LABEL_STUDIO', externalProjectId: null, externalUrl: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL', externalTaskId: null, externalTaskUrl: null, configStatus: 'UNCONFIGURED', lastSyncStatus: 'UNCONFIGURED', diagnosticCode: 'LABEL_STUDIO_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL;TODO_CONFIRM_LABEL_STUDIO_TOKEN_SECRET', launchUrl: null, retryable: false, lastSyncAt: null };
+const annotationProjectBinding = { ...annotationBinding, externalProjectId: '123', externalUrl: 'http://localhost:8083/projects/123', configStatus: 'CONFIGURED', lastSyncStatus: 'PROJECT_SYNCED', diagnosticCode: 'LABEL_STUDIO_PROJECT_SYNCED', diagnosticMessage: 'Label Studio project 已同步', launchUrl: 'http://localhost:8083/projects/123', lastSyncAt: '2026-05-19T00:00:00Z' };
+const annotationTaskBinding = { ...annotationProjectBinding, externalTaskId: '456', externalTaskUrl: 'http://localhost:8083/projects/123/data?task=456', lastSyncStatus: 'TASK_SYNCED', diagnosticCode: 'LABEL_STUDIO_TASK_SYNCED', diagnosticMessage: 'Label Studio task 已同步', launchUrl: 'http://localhost:8083/projects/123/data?task=456' };
+const annotationImportedBinding = { ...annotationTaskBinding, lastSyncStatus: 'RESULT_IMPORTED', diagnosticCode: 'LABEL_STUDIO_RESULTS_IMPORTED', diagnosticMessage: '已导入 1 条 Label Studio 标注结果' };
 const annotationWorkItems = [{ workItemId: 'AWI-WELD-001', taskId: 'ANN-WELD-Q2', sampleKey: 'weld/0001.jpg', sampleFileId: 'FILE-DATASET-WELD-001', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', status: 'DRAFT', predictionJson: '{"boxes":[{"label":"裂纹"}]}', annotationJson: null, submittedAt: null, updatedAt: '2026-05-19T00:00:00Z' }];
 const annotationReviewItems = [{ reviewItemId: 'ARV-WELD-001', workItemId: 'AWI-WELD-002', taskId: 'ANN-WELD-Q2', taskName: '焊缝缺陷检测标注任务', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', reviewerId: 'USR-BU-CABIN', reviewerName: '座舱审核员', status: 'REVIEW_PENDING', reviewComment: null, reviewedAt: null }];
 const annotationPublication = { publicationId: 'APUB-WELD-Q2', taskId: 'ANN-WELD-Q2', qualityStatus: 'PASSED', coverageRate: 1, formatStatus: 'COCO_READY', diagnosticCode: 'ANNOTATION_QUALITY_PASSED', diagnosticMessage: 'DAT-010 quality passed', outputDatasetId: 'DATASET-WELD-ANNOTATED', outputVersionId: 'DVER-WELD-ANN-001', publishedAt: '2026-05-19T00:00:00Z' };
@@ -190,10 +193,10 @@ export async function mockPlatformApis(page: Page) {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationBinding } });
   });
   await page.route(/\/api\/v1\/annotation\/tasks\/[^/]+\/label-studio\/sync-project(?:\?.*)?$/, async (route) => {
-    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationBinding } });
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationProjectBinding } });
   });
   await page.route(/\/api\/v1\/annotation\/tasks\/[^/]+\/label-studio\/import-results(?:\?.*)?$/, async (route) => {
-    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationBinding } });
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationImportedBinding } });
   });
   await page.route(/\/api\/v1\/annotation\/tasks\/[^/]+\/quality-check(?:\?.*)?$/, async (route) => {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationPublication } });
@@ -214,7 +217,7 @@ export async function mockPlatformApis(page: Page) {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: route.request().method() === 'POST' ? { ...annotationTemplate, templateId: 'LT-E2E-NEW' } : [annotationTemplate] } });
   });
   await page.route(/\/api\/v1\/annotation\/work-items\/[^/]+\/label-studio\/sync-task(?:\?.*)?$/, async (route) => {
-    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationBinding } });
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationTaskBinding } });
   });
   await page.route(/\/api\/v1\/annotation\/work-items\/[^/]+\/(?:draft|submit)(?:\?.*)?$/, async (route) => {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { ...annotationWorkItems[0], status: 'REVIEW_PENDING', annotationJson: '{"boxes":[{"label":"缺陷"}]}' } } });

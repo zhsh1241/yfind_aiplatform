@@ -6,6 +6,7 @@ import {
   dataApi,
   platformApi,
   type AnnotationLabelTemplate,
+  type AnnotationExternalBinding,
   type AnnotationReviewItem,
   type AnnotationTaskSummary,
   type AnnotationWorkItem,
@@ -65,6 +66,7 @@ const annStatusText = (status?: string) => ({
 } as Record<string, string>)[status ?? ''] ?? status ?? '-';
 const pct = (done?: number, total?: number) => !total ? 0 : Math.round(((done ?? 0) / total) * 100);
 const annJson = '{"boxes":[{"label":"缺陷","x":12,"y":20,"w":80,"h":32}]}';
+const lsStatusType = (status?: string) => ['PROJECT_SYNCED', 'TASK_SYNCED', 'RESULT_IMPORTED'].includes(status ?? '') ? 'success' : status === 'UNCONFIGURED' ? 'warning' : status?.includes('FAILED') || status?.includes('AUTH') || status?.includes('UNREACHABLE') ? 'error' : 'info';
 
 export function AnnotationTasksPage() {
   const currentTenantId = useSessionStore((state) => state.user?.tenantId);
@@ -92,7 +94,7 @@ export function AnnotationTasksPage() {
     onSuccess: async (created) => { await dataApi.publishLabelTemplate(created.templateId); await inv(); msg.success('标签模板已发布并生成 Label Studio config'); },
     onError: (e: Error) => msg.error(e.message),
   });
-  const syncLs = useMutation({ mutationFn: dataApi.syncLabelStudioProject, onSuccess: (r) => msg.warning(`Label Studio ${r.configStatus}: ${r.diagnosticMessage}`), onError: (e: Error) => msg.error(e.message) });
+  const syncLs = useMutation({ mutationFn: dataApi.syncLabelStudioProject, onSuccess: async (r) => { await inv(); (r.lastSyncStatus === 'PROJECT_SYNCED' ? msg.success : msg.warning)(`Label Studio ${r.lastSyncStatus}: ${r.diagnosticMessage}`); }, onError: (e: Error) => msg.error(e.message) });
   const rows = tasks.data?.items ?? overview.data?.tasks ?? [];
   const publishedTemplates = (templates.data ?? overview.data?.templates ?? []).filter((item) => item.status === 'PUBLISHED');
   const activeDatasets = (datasets.data?.items ?? []).filter((item) => item.status === 'ACTIVE');
@@ -110,14 +112,14 @@ export function AnnotationTasksPage() {
       <div className="page-hero">
         <div>
           <Typography.Title level={3}>标注任务管理</Typography.Title>
-          <Typography.Text type="secondary">数据集 · 标签模板/任务 · AI 预标注 · Label Studio seam · 发布 ANNOTATED 数据集</Typography.Text>
+          <Typography.Text type="secondary">数据集 · 标签模板/任务 · AI 预标注 · Label Studio 生产化联通 · 发布 ANNOTATED 数据集</Typography.Text>
         </div>
         <Space wrap>
           <Button onClick={() => setTemplateOpen(true)}>标签模板</Button>
           <Button type="primary" onClick={() => setWizardOpen(true)}>＋ 新建标注任务</Button>
         </Space>
       </div>
-      <Alert type="warning" showIcon title="外部标注工具未配置 / Label Studio" description="Label Studio 与 AI 预标注使用 TODO_CONFIRM_* seam；未配置时返回 UNCONFIGURED，不伪造外部成功。" style={{ marginBottom: 16 }} />
+      <Alert type="info" showIcon title="外部标注工具 / Label Studio" description="配置有效时创建/复用真实 Label Studio project；未配置、认证失败、网络失败和 schema 失败均展示诊断，不伪造外部成功。" style={{ marginBottom: 16 }} />
       <div className="summary-grid">{annSummaryCards.map((item) => <Card key={item.l}><Typography.Title level={3}>{item.n}</Typography.Title><Typography.Text type="secondary">{item.l}</Typography.Text></Card>)}</div>
       <Tabs
         activeKey={Object.entries(tabStatus).find(([, value]) => value === status)?.[0] ?? 'all'}
@@ -143,7 +145,7 @@ export function AnnotationTasksPage() {
           { title: '质量评分', dataIndex: 'qualityScore', render: (v) => v == null ? '待质检' : <Tag color={v >= 90 ? 'green' : 'orange'}>{v}</Tag> },
           { title: '截止', dataIndex: 'deadline', render: (v) => v ? new Date(v).toLocaleDateString('zh-CN') : 'TODO_CONFIRM_ANNOTATION_DEADLINE' },
           { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{annStatusText(v)}</Tag> },
-          { title: '操作', render: (_, r) => <Space><a onClick={() => syncLs.mutate(r.taskId)}>Label Studio</a><a onClick={() => void navigator.clipboard?.writeText(r.taskId)}>复制ID</a></Space> },
+          { title: '操作', render: (_, r) => <Space><a onClick={() => syncLs.mutate(r.taskId)}>同步 Label Studio project</a><a onClick={() => void navigator.clipboard?.writeText(r.taskId)}>复制ID</a></Space> },
         ]}
       />
       <Modal title="＋ 新建标注任务" open={wizardOpen} onCancel={() => setWizardOpen(false)} footer={null} destroyOnHidden width={760}>
@@ -185,11 +187,13 @@ export function AnnotationWorkbenchPage() {
   const tasks = useQuery({ queryKey: ['annotation-workbench-tasks'], queryFn: () => dataApi.annotationTasks({ status: 'IN_PROGRESS' }) });
   const taskId = tasks.data?.items[0]?.taskId ?? 'ANN-WELD-Q2';
   const detail = useQuery({ queryKey: ['annotation-detail', taskId], queryFn: () => dataApi.annotationTaskDetail(taskId), enabled: Boolean(taskId) });
+  const [syncedBinding, setSyncedBinding] = useState<AnnotationExternalBinding | null>(null);
   const save = useMutation({ mutationFn: (id: string) => dataApi.saveAnnotationDraft(id, annJson), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); msg.success('草稿已保存'); }, onError: (e: Error) => msg.error(e.message) });
   const submit = useMutation({ mutationFn: (id: string) => dataApi.submitAnnotationWorkItem(id, annJson), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); msg.success('标注结果已提交，等待审核'); }, onError: (e: Error) => msg.error(e.message) });
-  const sync = useMutation({ mutationFn: dataApi.syncLabelStudioTask, onSuccess: (r) => msg.warning(`Label Studio ${r.configStatus}: ${r.diagnosticMessage}`), onError: (e: Error) => msg.error(e.message) });
+  const sync = useMutation({ mutationFn: dataApi.syncLabelStudioTask, onSuccess: async (r) => { setSyncedBinding(r); await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); (r.lastSyncStatus === 'TASK_SYNCED' ? msg.success : msg.warning)(`Label Studio ${r.lastSyncStatus}: ${r.diagnosticMessage}`); }, onError: (e: Error) => msg.error(e.message) });
   const task = detail.data?.task;
   const items = detail.data?.workItems ?? [];
+  const externalBinding = syncedBinding ?? detail.data?.externalBinding;
   return (
     <div className="content-page annotation-workbench-page">
       {holder}
@@ -200,7 +204,13 @@ export function AnnotationWorkbenchPage() {
         </div>
         <Tag color={color(task?.status)}>{annStatusText(task?.status)}</Tag>
       </div>
-      <Alert type="warning" showIcon title="外部标注工具未配置" description={detail.data?.externalBinding?.diagnosticMessage ?? 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL'} style={{ marginBottom: 16 }} />
+      <Alert
+        type={lsStatusType(externalBinding?.lastSyncStatus)}
+        showIcon
+        title={`Label Studio ${externalBinding?.lastSyncStatus ?? '状态待同步'}`}
+        description={<Space direction="vertical" size={2}><span>{externalBinding?.diagnosticMessage ?? 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL'}</span>{externalBinding?.externalTaskId ? <a href={externalBinding.externalTaskUrl ?? externalBinding.launchUrl ?? undefined} target="_blank" rel="noreferrer">打开 Label Studio task：{externalBinding.externalTaskId}</a> : externalBinding?.externalProjectId ? <a href={externalBinding.launchUrl ?? undefined} target="_blank" rel="noreferrer">打开 Label Studio project：{externalBinding.externalProjectId}</a> : null}</Space>}
+        style={{ marginBottom: 16 }}
+      />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 16 }}>
         <Card title={task?.name ?? '标注任务'} loading={detail.isLoading}>
           <Descriptions bordered column={1} size="small">
@@ -210,6 +220,7 @@ export function AnnotationWorkbenchPage() {
             <Descriptions.Item label="进度">{pct(task?.annotatedCount, task?.totalCount)}%</Descriptions.Item>
           </Descriptions>
           <Button style={{ marginTop: 12 }} onClick={() => items[0]?.workItemId && sync.mutate(items[0].workItemId)}>同步 Label Studio task</Button>
+          {externalBinding?.externalTaskId ? <Button style={{ marginTop: 12, marginLeft: 8 }} href={externalBinding.externalTaskUrl ?? externalBinding.launchUrl ?? undefined} target="_blank">打开 Label Studio task</Button> : null}
         </Card>
         <Card title="样本队列">
           <Table<AnnotationWorkItem>
@@ -238,6 +249,7 @@ export function AnnotationReviewPage() {
   const reject = useMutation({ mutationFn: ({ id, reason }: { id: string; reason: string }) => dataApi.rejectAnnotationReviewItem(id, reason), onSuccess: async () => { setReasonOpen(null); await qc.invalidateQueries({ queryKey: ['annotation-review-items'] }); msg.warning('已驳回并返回标注员'); }, onError: (e: Error) => msg.error(e.message) });
   const quality = useMutation({ mutationFn: dataApi.qualityCheckAnnotationTask, onSuccess: (r) => msg.info(`${r.qualityStatus}: ${r.diagnosticMessage}`), onError: (e: Error) => msg.error(e.message) });
   const publish = useMutation({ mutationFn: dataApi.publishAnnotationDataset, onSuccess: (r) => msg.success(`已发布 ANNOTATED 数据集：${r.outputDatasetId}`), onError: (e: Error) => msg.error(e.message) });
+  const importLs = useMutation({ mutationFn: dataApi.importLabelStudioResults, onSuccess: (r) => (r.lastSyncStatus === 'RESULT_IMPORTED' ? msg.success : msg.warning)(`Label Studio ${r.lastSyncStatus}: ${r.diagnosticMessage}`), onError: (e: Error) => msg.error(e.message) });
   const taskIds = Array.from(new Set((reviews.data ?? []).map((item) => item.taskId)));
   return (
     <div className="content-page annotation-review-page">
@@ -249,6 +261,7 @@ export function AnnotationReviewPage() {
         </div>
         <Space>
           {taskIds[0] ? <Button onClick={() => quality.mutate(taskIds[0])}>质量检查</Button> : null}
+          {taskIds[0] ? <Button onClick={() => importLs.mutate(taskIds[0])}>导入 Label Studio 结果</Button> : null}
           {taskIds[0] ? <Button type="primary" onClick={() => publish.mutate(taskIds[0])}>发布标注数据集</Button> : null}
         </Space>
       </div>
