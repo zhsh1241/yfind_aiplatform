@@ -13,6 +13,8 @@ frontend/dist/
 frontend/coverage/
 deploy/**/.terraform/
 deploy/**/tmp/
+deploy/local/.env
+deploy/local/.env.local
 target/
 coverage/
 .vite/

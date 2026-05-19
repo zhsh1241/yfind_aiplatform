@@ -23,6 +23,8 @@
 | `npm --prefix frontend run build` | PASS |
 | `npm --prefix frontend run e2e -- annotation-integration.spec.ts` | PASS，3 passed |
 | `node tools/ai-scaffold/dist/cli.js gate --feature-dir docs/features/F013-label-studio-production-integration --run-e2e --skip-code-review-verdict` | PASS，全量 E2E 14 passed |
+| `docker ps --filter "name=smp-platform-label-studio"` | PASS，确认 Docker Label Studio 容器运行，宿主机端口 `8083` 映射到容器 `8080` |
+| `Invoke-WebRequest -UseBasicParsing -Headers @{Authorization='Token <LOCAL_LABEL_STUDIO_API_TOKEN>'} http://localhost:8083/api/projects` | PASS，返回 `200` 与空项目列表，证明当前 Docker Label Studio API token 可用 |
 
 ## 验收映射
 
@@ -38,4 +40,5 @@
 ## 已知非阻塞项
 
 - 生产 Label Studio URL、token secret backend、storage policy 仍为 `TODO_CONFIRM_*`，符合计划边界。
+- 本地 Docker Label Studio 已可用；真实 token 仅存在于本地运行环境，不提交到仓库。
 - 前端构建输出 chunk size warning、Ant Design deprecated warning、CSS parse warning 为既存工具/依赖提示，不阻塞当前功能。
