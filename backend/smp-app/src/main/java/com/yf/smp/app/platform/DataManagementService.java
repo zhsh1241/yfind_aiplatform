@@ -1,6 +1,10 @@
 package com.yf.smp.app.platform;
 
+import java.awt.image.BufferedImage;
 import java.nio.charset.StandardCharsets;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.net.InetSocketAddress;
@@ -15,19 +19,32 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import javax.imageio.ImageIO;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 interface DataSourceConnectionTester { DataSourceTestResult test(DataSourceRecord source); }
 record DataSourceTestResult(String result, String status, String diagnosticCode, String diagnosticMessage, Integer latencyMs) {}
+interface ContentSafetyScanner { ContentSafetyScanResult scan(String endpoint, String tenantId, String fileName, byte[] content); }
+record ContentSafetyScanResult(String status, String diagnosticCode, String diagnosticMessage) {}
 
 @Component
 class DefaultDataSourceConnectionTester implements DataSourceConnectionTester {
@@ -126,13 +143,65 @@ class DefaultDataSourceConnectionTester implements DataSourceConnectionTester {
     private String blank(String value, String fallback) { return value == null || value.isBlank() ? fallback : value; }
 }
 
+@Component
+class DefaultContentSafetyScanner implements ContentSafetyScanner {
+    private static final Duration CONNECT_TIMEOUT = Duration.ofMillis(1200);
+    private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(2);
+    private final HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+
+    @Override public ContentSafetyScanResult scan(String endpoint, String tenantId, String fileName, byte[] content) {
+        String normalizedEndpoint = endpoint == null ? "" : endpoint.trim();
+        if (normalizedEndpoint.isBlank() || normalizedEndpoint.startsWith("TODO_CONFIRM")) {
+            return new ContentSafetyScanResult("PENDING", "DATASET_UPLOAD_SECURITY_PENDING", "TODO_CONFIRM_CONTENT_SAFETY_SERVICE");
+        }
+        try {
+            String payload = """
+                {"tenantId":"%s","fileName":"%s","sizeBytes":%d}
+                """.formatted(escapeJson(tenantId), escapeJson(fileName), content == null ? 0 : content.length);
+            HttpResponse<String> response = client.send(
+                HttpRequest.newBuilder(URI.create(normalizedEndpoint))
+                    .timeout(HTTP_TIMEOUT)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(payload))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString()
+            );
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                return parseScanResponse(response.body());
+            }
+            return new ContentSafetyScanResult("PENDING", "DATASET_UPLOAD_SECURITY_PENDING", "CONTENT_SAFETY_HTTP_" + response.statusCode());
+        } catch (Exception ignored) {
+            return new ContentSafetyScanResult("PENDING", "DATASET_UPLOAD_SECURITY_PENDING", "TODO_CONFIRM_CONTENT_SAFETY_RESPONSE");
+        }
+    }
+
+    private ContentSafetyScanResult parseScanResponse(String body) {
+        String normalizedBody = body == null ? "" : body.replaceAll("\\s+", "").toUpperCase(Locale.ROOT);
+        if (normalizedBody.contains("\"STATUS\":\"BLOCKED\"") || normalizedBody.contains("\"RESULT\":\"BLOCKED\"")) {
+            return new ContentSafetyScanResult("BLOCKED", "DATASET_UPLOAD_SECURITY_BLOCKED", "检测到高风险内容");
+        }
+        if (normalizedBody.contains("\"STATUS\":\"PASSED\"") || normalizedBody.contains("\"RESULT\":\"PASSED\"")) {
+            return new ContentSafetyScanResult("PASSED", "DATASET_UPLOAD_SECURITY_PASSED", "CONTENT_SAFETY_SCANNED");
+        }
+        return new ContentSafetyScanResult("PENDING", "DATASET_UPLOAD_SECURITY_PENDING", "TODO_CONFIRM_CONTENT_SAFETY_RESPONSE");
+    }
+
+    private String escapeJson(String value) {
+        return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+}
+
 @Service
 public class DataManagementService {
     private static final String TRACE_TAG = "TASK-data-source-dataset-management";
+    private static final long MAX_UPLOAD_FILE_BYTES = 5L * 1024 * 1024;
+    private static final long MAX_UPLOAD_ZIP_BYTES = 20L * 1024 * 1024;
+    private static final Logger log = LoggerFactory.getLogger(DataManagementService.class);
     private final JdbcTemplate jdbc;
     private final PlatformIdentityService identityService;
     private final DataSourceConnectionTester connectionTester;
-    public DataManagementService(JdbcTemplate jdbc, PlatformIdentityService identityService, DataSourceConnectionTester connectionTester) { this.jdbc = jdbc; this.identityService = identityService; this.connectionTester = connectionTester; }
+    private final ContentSafetyScanner contentSafetyScanner;
+    public DataManagementService(JdbcTemplate jdbc, PlatformIdentityService identityService, DataSourceConnectionTester connectionTester, ContentSafetyScanner contentSafetyScanner) { this.jdbc = jdbc; this.identityService = identityService; this.connectionTester = connectionTester; this.contentSafetyScanner = contentSafetyScanner; }
 
     public List<DataSourceResponse> dataSources(PlatformPrincipal principal, String status, String type) {
         identityService.requirePermission(principal, "data:source:read");
@@ -201,6 +270,119 @@ public class DataManagementService {
 
     public DatasetListResponse datasets(PlatformPrincipal principal, String keyword, String datasetType, String status, String accessLevel, int page, int pageSize) {
         identityService.requirePermission(principal, "data:dataset:read"); List<DatasetSummaryResponse> v = allDatasetSummaries(principal).stream().filter(i -> blank(keyword) || i.name().toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT))).filter(i -> blank(datasetType) || i.datasetType().equalsIgnoreCase(datasetType)).filter(i -> blank(status) || i.status().equalsIgnoreCase(status)).filter(i -> blank(accessLevel) || i.accessLevel().equalsIgnoreCase(accessLevel)).toList(); int p=Math.max(1,page), ps=Math.max(1,Math.min(100,pageSize)), from=Math.min((p-1)*ps,v.size()), to=Math.min(from+ps,v.size()); return new DatasetListResponse(v.subList(from,to), v.size(), p, ps, stats(v));
+    }
+
+    @Transactional public DatasetUploadSessionResponse createDatasetUploadSession(PlatformPrincipal principal, DatasetUploadSessionCreateRequest r) {
+        identityService.requirePermission(principal, "data:dataset:write");
+        String tenantId = blank(r.tenantId(), principal.user().tenantId());
+        ensureCanSeeTenant(principal, tenantId, true);
+        if (!"LOCAL_UPLOAD".equalsIgnoreCase(blank(r.creationMode(), "LOCAL_UPLOAD"))) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_CREATION_MODE_INVALID: F015 仅支持 LOCAL_UPLOAD");
+        if (!"RAW".equalsIgnoreCase(blank(r.datasetType(), "RAW"))) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_DATASET_TYPE_INVALID: 本地上传仅支持 RAW");
+        if (!"IMAGE".equalsIgnoreCase(blank(r.dataType(), "IMAGE"))) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_DATA_TYPE_INVALID: 本地上传仅支持 IMAGE");
+        OffsetDateTime now = now();
+        String sessionId = "DUS-" + randomHex(10).toUpperCase(Locale.ROOT);
+        String name = require(r.name(), "数据集名称不能为空");
+        jdbc.update("INSERT INTO dataset_upload_session (session_id,dataset_id,version_id,tenant_id,creation_mode,status,dataset_name,dataset_type,data_type,access_level,tags,description,total_files,accepted_files,rejected_files,diagnostic_code,diagnostic_message,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", sessionId, null, null, tenantId, "LOCAL_UPLOAD", "PENDING_UPLOAD", name, "RAW", "IMAGE", upper(r.accessLevel(), "TEAM"), joinTags(r.tags()), nullIfBlank(r.description()), 0, 0, 0, "OK", "SESSION_CREATED", principal.user().id(), now);
+        audit(principal, tenantId, "DATASET_UPLOAD_SESSION_CREATED", "DatasetUploadSession", sessionId, "SUCCESS", "INFO", null, "PENDING_UPLOAD", TRACE_TAG + ";LOCAL_UPLOAD");
+        return datasetUploadSession(principal, sessionId);
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class) public DatasetUploadSessionResponse uploadDatasetSessionFiles(PlatformPrincipal principal, String sessionId, MultipartFile[] files) {
+        identityService.requirePermission(principal, "data:dataset:write");
+        DatasetUploadSessionRecord session = datasetUploadSessionRecordVisible(principal, sessionId, true);
+        ensureUploadSessionMutable(principal, session);
+        if (files == null || files.length == 0) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_EMPTY_SESSION: 请至少上传一个文件");
+        OffsetDateTime now = now();
+        jdbc.update("UPDATE dataset_upload_session SET status='UPLOADING', diagnostic_code='OK', diagnostic_message='VALIDATING_FILES' WHERE session_id=?", sessionId);
+        for (MultipartFile part : files) {
+            try {
+                processUploadPart(principal, session, part, now);
+            } catch (PlatformException exception) {
+                refreshUploadSessionCounts(sessionId);
+                throw exception;
+            }
+        }
+        refreshUploadSessionCounts(sessionId);
+        return datasetUploadSession(principal, sessionId);
+    }
+
+    public DatasetUploadSessionResponse datasetUploadSession(PlatformPrincipal principal, String sessionId) {
+        identityService.requirePermission(principal, "data:dataset:read");
+        DatasetUploadSessionRecord session = datasetUploadSessionRecordVisible(principal, sessionId, false);
+        return uploadSessionResponse(session);
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class) public DatasetUploadSessionResponse commitDatasetUploadSession(PlatformPrincipal principal, String sessionId, DatasetUploadSessionCommitRequest r) {
+        identityService.requirePermission(principal, "data:dataset:write");
+        DatasetUploadSessionRecord session = datasetUploadSessionRecordVisible(principal, sessionId, true);
+        if ("PROCESSING".equals(session.status())) {
+            return datasetUploadSession(principal, sessionId);
+        }
+        if (List.of("READY", "SECURITY_PENDING").contains(session.status())) {
+            audit(principal, session.tenantId(), "DATASET_UPLOAD_FAILED", "DatasetUploadSession", sessionId, "FAILURE", "WARNING", session.status(), "DUPLICATE_COMMIT", TRACE_TAG + ";DATASET_UPLOAD_DUPLICATE_COMMIT");
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_UPLOAD_DUPLICATE_COMMIT: upload session 已提交");
+        }
+        if ("CANCELLED".equals(session.status()) || "FAILED".equals(session.status())) throw new PlatformException(PlatformError.CONFLICT, "DATASET_UPLOAD_SESSION_STATE_INVALID: 当前 session 状态不允许提交");
+        List<DatasetUploadSessionFileRecord> uploadFiles = uploadSessionFiles(sessionId);
+        long accepted = uploadFiles.stream().filter(i -> List.of("ACCEPTED", "UPLOADED", "BOUND", "SECURITY_BLOCKED").contains(i.status())).count();
+        if (accepted == 0) {
+            jdbc.update("UPDATE dataset_upload_session SET status='FAILED',diagnostic_code='DATASET_UPLOAD_EMPTY_SESSION',diagnostic_message='EMPTY_SESSION_COMMIT_BLOCKED' WHERE session_id=?", sessionId);
+            audit(principal, session.tenantId(), "DATASET_UPLOAD_FAILED", "DatasetUploadSession", sessionId, "FAILURE", "WARNING", session.status(), "FAILED", TRACE_TAG + ";DATASET_UPLOAD_EMPTY_SESSION");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_EMPTY_SESSION: 当前上传会话没有可提交文件");
+        }
+        OffsetDateTime now = now();
+        String datasetId = blank(session.datasetId()) ? "DATASET-" + randomHex(10).toUpperCase(Locale.ROOT) : session.datasetId();
+        String versionId = blank(session.versionId()) ? "DVER-" + randomHex(10).toUpperCase(Locale.ROOT) : session.versionId();
+        ensureUploadArtifacts(session, datasetId, versionId, principal, now);
+        jdbc.update("UPDATE dataset_upload_session SET dataset_id=?,version_id=?,status='PROCESSING',diagnostic_code='OK',diagnostic_message='SECURITY_SCAN' WHERE session_id=?", datasetId, versionId, sessionId);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override public void afterCommit() {
+                CompletableFuture.runAsync(() -> processUploadSessionCommit(principal, sessionId, session.tenantId(), session.status(), uploadFiles, datasetId, versionId, now));
+            }
+        });
+        return datasetUploadSession(principal, sessionId);
+    }
+
+    private void processUploadSessionCommit(PlatformPrincipal principal, String sessionId, String tenantId, String previousStatus, List<DatasetUploadSessionFileRecord> uploadFiles, String datasetId, String versionId, OffsetDateTime now) {
+        try {
+            boolean blocked = false;
+            boolean securityPending = false;
+            long boundCount = 0;
+            long totalSize = 0;
+            for (DatasetUploadSessionFileRecord file : uploadFiles) {
+                if ("REJECTED".equals(file.status())) continue;
+                ContentSafetyScanResult scanResult = uploadFileScanResult(file);
+                if ("BLOCKED".equals(scanResult.status())) {
+                    jdbc.update("UPDATE dataset_upload_session_file SET status='SECURITY_BLOCKED',diagnostic_code='DATASET_UPLOAD_SECURITY_BLOCKED',diagnostic_message='检测到高风险内容' WHERE id=?", file.id());
+                    audit(principal, tenantId, "DATASET_SECURITY_BLOCKED", "PlatformFileObject", nullToEmpty(file.fileId()), "FAILURE", "CRITICAL", "UPLOADED", "SECURITY_BLOCKED", TRACE_TAG + ";" + file.fileName());
+                    blocked = true;
+                    continue;
+                }
+                boolean filePending = "PENDING".equals(scanResult.status());
+                if (!hasDatasetFile(versionId, file.fileId())) {
+                    jdbc.update("INSERT INTO dataset_file (id,dataset_id,version_id,file_id,file_role,status,created_at) VALUES (?,?,?,?,?,'BOUND',?)", "DF-" + randomHex(10).toUpperCase(Locale.ROOT), datasetId, versionId, file.fileId(), "RAW", now);
+                }
+                jdbc.update("UPDATE dataset_upload_session_file SET status='BOUND',diagnostic_code=?,diagnostic_message=? WHERE id=?", filePending ? "DATASET_UPLOAD_SECURITY_PENDING" : "OK", filePending ? "内容安全服务待确认，当前文件尚未进入可用版本" : "FILE_BOUND", file.id());
+                securityPending = securityPending || filePending;
+                boundCount++;
+                totalSize += file.sizeBytes() == null ? 0 : file.sizeBytes();
+            }
+            jdbc.update("UPDATE dataset_upload_session SET status='PROCESSING',diagnostic_code='OK',diagnostic_message='INDEXING_METADATA' WHERE session_id=?", sessionId);
+            String finalStatus = blocked || securityPending ? "SECURITY_PENDING" : "READY";
+            String versionSafetyStatus = blocked ? "BLOCKED" : securityPending ? "PENDING" : "PASSED";
+            String finalDiagnosticCode = blocked ? "DATASET_UPLOAD_SECURITY_BLOCKED" : securityPending ? "DATASET_UPLOAD_SECURITY_PENDING" : "DATASET_UPLOAD_READY";
+            String finalDiagnosticMessage = blocked ? "SECURITY_BLOCKED" : securityPending ? "TODO_CONFIRM_CONTENT_SAFETY_SERVICE" : "本地上传数据集已完成文件绑定，可进入后续流程";
+            jdbc.update("UPDATE dataset_version SET status=?,record_count=?,size_bytes=?,content_safety_status=?,diagnostic_code=?,diagnostic_message=? WHERE version_id=?", finalStatus, boundCount, totalSize, versionSafetyStatus, blocked || securityPending ? finalDiagnosticCode : "OK", finalDiagnosticMessage, versionId);
+            jdbc.update("UPDATE dataset SET record_count=?,size_bytes=?,status=?,updated_at=? WHERE dataset_id=?", boundCount, totalSize, blocked || securityPending ? "DRAFT" : "ACTIVE", now, datasetId);
+            jdbc.update("INSERT INTO data_lineage (lineage_id,source_type,source_id,target_type,target_id,transform_type,created_at) VALUES (?,'LOCAL_UPLOAD',?,'DATASET_VERSION',?,'IMPORT',?)", "LIN-" + randomHex(10).toUpperCase(Locale.ROOT), sessionId, versionId, now);
+            jdbc.update("UPDATE dataset_upload_session SET status='PROCESSING',diagnostic_code='OK',diagnostic_message='CREATING_VERSION' WHERE session_id=?", sessionId);
+            jdbc.update("UPDATE dataset_upload_session SET dataset_id=?,version_id=?,status=?,total_files=?,accepted_files=?,rejected_files=?,diagnostic_code=?,diagnostic_message=?,committed_at=? WHERE session_id=?", datasetId, versionId, finalStatus, uploadFiles.size(), (int) boundCount, (int) uploadFiles.stream().filter(i -> List.of("REJECTED", "SECURITY_BLOCKED").contains(i.status())).count(), finalDiagnosticCode, finalDiagnosticMessage, now, sessionId);
+            audit(principal, tenantId, blocked ? "DATASET_SECURITY_BLOCKED" : securityPending ? "DATASET_UPLOAD_FAILED" : "DATASET_UPLOAD_COMMITTED", "DatasetUploadSession", sessionId, blocked ? "FAILURE" : securityPending ? "WARNING" : "SUCCESS", blocked ? "CRITICAL" : securityPending ? "WARNING" : "INFO", previousStatus, finalStatus, TRACE_TAG + ";bound=" + boundCount);
+        } catch (Exception exception) {
+            log.error("Dataset upload commit processing failed, sessionId={}", sessionId, exception);
+            jdbc.update("UPDATE dataset_upload_session SET status='FAILED',diagnostic_code='DATASET_UPLOAD_COMMIT_FAILED',diagnostic_message='COMMIT_PROCESSING_FAILED' WHERE session_id=?", sessionId);
+            audit(principal, tenantId, "DATASET_UPLOAD_FAILED", "DatasetUploadSession", sessionId, "FAILURE", "CRITICAL", previousStatus, "FAILED", TRACE_TAG + ";commit-exception");
+        }
     }
 
     @Transactional public DatasetDetailResponse createDataset(PlatformPrincipal principal, DatasetCreateRequest r) {
@@ -295,6 +477,198 @@ public class DataManagementService {
         if (values.isEmpty()) values = jdbc.queryForList("SELECT default_value FROM platform_config_definition WHERE config_key='storage.bucket'", String.class);
         String v = values.isEmpty() ? "" : values.getFirst(); v = v == null ? "" : v.trim().replaceAll("^\"|\"$", ""); return v.isBlank() || v.startsWith("TODO_CONFIRM") ? "smp-datasets" : v;
     }
+    private void processUploadPart(PlatformPrincipal principal, DatasetUploadSessionRecord session, MultipartFile part, OffsetDateTime now) {
+        String originalName = blank(part.getOriginalFilename(), "unnamed-file");
+        String normalizedName = originalName.trim();
+        long size = part.getSize();
+        try {
+            if (normalizedName.toLowerCase(Locale.ROOT).endsWith(".zip")) {
+                if (size > MAX_UPLOAD_ZIP_BYTES) {
+                    insertRejectedUploadFile(session.sessionId(), normalizedName, size, "DATASET_UPLOAD_ZIP_SIZE_EXCEEDED", "zip 文件大小超出当前阈值");
+                    audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_REJECTED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", normalizedName, "ZIP_SIZE_EXCEEDED", TRACE_TAG);
+                    throw new PlatformException(PlatformError.PAYLOAD_TOO_LARGE, "DATASET_UPLOAD_ZIP_SIZE_EXCEEDED: zip 文件大小超出当前阈值");
+                }
+                processZipUpload(principal, session, normalizedName, part.getBytes(), now);
+                return;
+            }
+            processSingleUploadFile(principal, session, normalizedName, part.getContentType(), part.getBytes(), now);
+        } catch (IOException exception) {
+            insertRejectedUploadFile(session.sessionId(), normalizedName, size, "DATASET_UPLOAD_FILE_CORRUPTED", "文件读取失败");
+            audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_REJECTED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", normalizedName, "FILE_CORRUPTED", TRACE_TAG);
+        }
+    }
+    private void processZipUpload(PlatformPrincipal principal, DatasetUploadSessionRecord session, String zipName, byte[] bytes, OffsetDateTime now) throws IOException {
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                if (entry.isDirectory()) continue;
+                ByteArrayOutputStream output = new ByteArrayOutputStream();
+                zip.transferTo(output);
+                try {
+                    processSingleUploadFile(principal, session, entry.getName(), detectContentType(entry.getName()), output.toByteArray(), now);
+                } catch (PlatformException exception) {
+                    // zip 内按文件粒度失败，继续处理剩余 entry
+                }
+            }
+        } catch (IOException exception) {
+            insertRejectedUploadFile(session.sessionId(), zipName, (long) bytes.length, "DATASET_UPLOAD_FILE_CORRUPTED", "zip 文件内容损坏");
+            audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_REJECTED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", zipName, "ZIP_CORRUPTED", TRACE_TAG);
+        }
+    }
+    private void processSingleUploadFile(PlatformPrincipal principal, DatasetUploadSessionRecord session, String fileName, String contentType, byte[] bytes, OffsetDateTime now) {
+        long size = bytes.length;
+        if (!isSupportedImageFile(fileName, contentType)) {
+            insertRejectedUploadFile(session.sessionId(), fileName, size, "DATASET_UPLOAD_FILE_TYPE_UNSUPPORTED", "仅支持图片文件与 zip 包");
+            audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_REJECTED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", fileName, "FILE_TYPE_UNSUPPORTED", TRACE_TAG);
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "UPLOAD_FILE_FORMAT_NOT_ALLOWED: DATASET_UPLOAD_FILE_TYPE_UNSUPPORTED");
+        }
+        if (size > MAX_UPLOAD_FILE_BYTES) {
+            insertRejectedUploadFile(session.sessionId(), fileName, size, "DATASET_UPLOAD_FILE_LIMIT_EXCEEDED", "文件大小超出当前阈值");
+            audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_REJECTED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", fileName, "FILE_LIMIT_EXCEEDED", TRACE_TAG);
+            throw new PlatformException(PlatformError.PAYLOAD_TOO_LARGE, "DATASET_UPLOAD_FILE_LIMIT_EXCEEDED: 文件大小超出当前阈值");
+        }
+        if (!isValidImageContent(bytes)) {
+            insertRejectedUploadFile(session.sessionId(), fileName, size, "DATASET_UPLOAD_FILE_CORRUPTED", "图片内容损坏或无法解析");
+            audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_REJECTED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", fileName, "FILE_CORRUPTED", TRACE_TAG);
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_FILE_CORRUPTED: 图片内容损坏或无法解析");
+        }
+        ContentSafetyScanResult scanResult = contentSafetyScanner.scan(contentSafetyEndpoint(session.tenantId()), session.tenantId(), fileName, bytes);
+        String fileId = "FILE-" + randomHex(12).toUpperCase(Locale.ROOT);
+        String sha = sha256Bytes(bytes);
+        String objectKey = session.tenantId() + "/dataset/local-upload/" + session.sessionId() + "/" + sanitizeFileName(fileName);
+        jdbc.update("INSERT INTO platform_file_object (file_id,asset_type,tenant_id,project_id,bucket,object_key,expected_sha256,sha256,expected_size_bytes,size_bytes,content_type,storage_tier,status,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", fileId, "DATASET", session.tenantId(), null, datasetBucket(session.tenantId()), objectKey, sha, sha, size, size, blank(contentType, detectContentType(fileName)), "STANDARD", "AVAILABLE", principal.user().id(), now, now);
+        jdbc.update("INSERT INTO dataset_upload_session_file (id,session_id,file_name,file_id,status,size_bytes,content_type,diagnostic_code,diagnostic_message,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", "DUSF-" + randomHex(10).toUpperCase(Locale.ROOT), session.sessionId(), fileName, fileId, "UPLOADED", size, blank(contentType, detectContentType(fileName)), scanResult.diagnosticCode(), scanResult.diagnosticMessage(), now);
+        audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_ACCEPTED", "PlatformFileObject", fileId, "SUCCESS", "INFO", fileName, "UPLOADED", TRACE_TAG);
+    }
+    private void refreshUploadSessionCounts(String sessionId) {
+        Map<String, Integer> counts = new HashMap<>();
+        jdbc.query("SELECT status, COUNT(*) AS cnt FROM dataset_upload_session_file WHERE session_id=? GROUP BY status", (rs, rowNum) -> {
+            counts.put(rs.getString("status"), rs.getInt("cnt"));
+            return null;
+        }, sessionId);
+        int total = counts.values().stream().mapToInt(Integer::intValue).sum();
+        int accepted = counts.entrySet().stream().filter(e -> List.of("UPLOADED", "BOUND", "ACCEPTED").contains(e.getKey())).mapToInt(Map.Entry::getValue).sum();
+        int rejected = counts.entrySet().stream().filter(e -> List.of("REJECTED", "SECURITY_BLOCKED").contains(e.getKey())).mapToInt(Map.Entry::getValue).sum();
+        String status = total > 0 ? "UPLOADING" : "PENDING_UPLOAD";
+        jdbc.update("UPDATE dataset_upload_session SET total_files=?,accepted_files=?,rejected_files=?,status=?,diagnostic_code='OK',diagnostic_message=? WHERE session_id=?", total, accepted, rejected, status, total > 0 ? "UPLOADING_FILES" : "SESSION_CREATED", sessionId);
+    }
+    private void insertRejectedUploadFile(String sessionId, String fileName, long size, String diagnosticCode, String diagnosticMessage) {
+        jdbc.update("INSERT INTO dataset_upload_session_file (id,session_id,file_name,file_id,status,size_bytes,content_type,diagnostic_code,diagnostic_message,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", "DUSF-" + randomHex(10).toUpperCase(Locale.ROOT), sessionId, fileName, null, "REJECTED", size, detectContentType(fileName), diagnosticCode, diagnosticMessage, now());
+    }
+    private DatasetUploadSessionRecord datasetUploadSessionRecordVisible(PlatformPrincipal principal, String sessionId, boolean write) {
+        DatasetUploadSessionRecord session = uploadSession(sessionId);
+        if (!canSeeTenant(principal, session.tenantId())) {
+            audit(principal, principal.user().tenantId(), "DATASET_UPLOAD_CROSS_TENANT_DENIED", "DatasetUploadSession", sessionId, "FAILURE", "CRITICAL", principal.user().tenantId(), session.tenantId(), TRACE_TAG + ";DAT-012");
+            throw new PlatformException(write ? PlatformError.FORBIDDEN : PlatformError.NOT_FOUND, write ? "您无权访问其他 BU 的上传会话" : "资源不存在");
+        }
+        return session;
+    }
+    private void ensureUploadSessionMutable(PlatformPrincipal principal, DatasetUploadSessionRecord session) {
+        if (List.of("READY", "SECURITY_PENDING", "FAILED", "CANCELLED").contains(session.status())) {
+            audit(principal, session.tenantId(), "DATASET_UPLOAD_FAILED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", session.status(), "IMMUTABLE", TRACE_TAG + ";DATASET_UPLOAD_SESSION_STATE_INVALID");
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_UPLOAD_SESSION_STATE_INVALID: 当前会话状态不允许继续上传");
+        }
+    }
+    private DatasetUploadSessionResponse uploadSessionResponse(DatasetUploadSessionRecord session) {
+        List<DatasetUploadSessionFileRecord> files = uploadSessionFiles(session.sessionId());
+        int total = files.size();
+        int accepted = (int) files.stream().filter(i -> List.of("UPLOADED", "BOUND", "ACCEPTED").contains(i.status())).count();
+        int rejected = (int) files.stream().filter(i -> List.of("REJECTED", "SECURITY_BLOCKED").contains(i.status())).count();
+        String datasetStatus = blank(session.datasetId()) ? "DRAFT" : dataset(session.datasetId()).status();
+        String versionStatus = blank(session.versionId()) ? "DRAFT" : version(session.versionId()).status();
+        return new DatasetUploadSessionResponse(
+            session.sessionId(),
+            session.datasetId(),
+            session.versionId(),
+            session.status(),
+            session.creationMode(),
+            new DatasetUploadProgressResponse(uploadSessionPhase(session.status(), session.diagnosticMessage()), uploadSessionPercent(session.status(), session.diagnosticMessage())),
+            new DatasetUploadSummaryResponse(total, accepted, rejected),
+            datasetStatus,
+            versionStatus,
+            blank(session.diagnosticCode(), "OK"),
+            blank(session.diagnosticMessage(), "SESSION_PROCESSING"),
+            files.stream()
+                .map(i -> new DatasetUploadFileResponse(i.fileName(), i.fileId(), i.status(), i.sizeBytes(), i.contentType(), blank(i.diagnosticCode(), "OK"), blank(i.diagnosticMessage(), "OK")))
+                .toList()
+        );
+    }
+    private String uploadSessionPhase(String status, String diagnosticMessage) {
+        String diagnostic = blank(diagnosticMessage, "");
+        if ("VALIDATING_FILES".equals(diagnostic)) return "VALIDATING_FILES";
+        if ("UPLOADING_FILES".equals(diagnostic) || "UPLOAD_SUMMARY_UPDATED".equals(diagnostic)) return "UPLOADING_FILES";
+        if ("SECURITY_SCAN".equals(diagnostic)) return "SECURITY_SCAN";
+        if ("INDEXING_METADATA".equals(diagnostic)) return "INDEXING_METADATA";
+        if ("CREATING_VERSION".equals(diagnostic)) return "CREATING_VERSION";
+        return switch (blank(status, "PENDING_UPLOAD")) {
+            case "PENDING_UPLOAD" -> "PENDING_UPLOAD";
+            case "UPLOADING" -> "UPLOADING_FILES";
+            case "PROCESSING" -> "SECURITY_SCAN";
+            case "READY" -> "READY";
+            case "SECURITY_PENDING" -> "SECURITY_PENDING";
+            case "FAILED" -> "FAILED";
+            case "CANCELLED" -> "CANCELLED";
+            default -> status;
+        };
+    }
+    private int uploadSessionPercent(String status, String diagnosticMessage) {
+        String diagnostic = blank(diagnosticMessage, "");
+        if ("VALIDATING_FILES".equals(diagnostic)) return 15;
+        if ("UPLOADING_FILES".equals(diagnostic) || "UPLOAD_SUMMARY_UPDATED".equals(diagnostic)) return 45;
+        if ("SECURITY_SCAN".equals(diagnostic)) return 70;
+        if ("INDEXING_METADATA".equals(diagnostic)) return 85;
+        if ("CREATING_VERSION".equals(diagnostic)) return 95;
+        return switch (blank(status, "PENDING_UPLOAD")) {
+            case "PENDING_UPLOAD" -> 0;
+            case "UPLOADING" -> 45;
+            case "PROCESSING" -> 70;
+            case "READY", "SECURITY_PENDING", "FAILED", "CANCELLED" -> 100;
+            default -> 0;
+        };
+    }
+    private DatasetUploadSessionRecord uploadSession(String sessionId) { return jdbc.queryForObject("SELECT * FROM dataset_upload_session WHERE session_id=?", (rs,n)->new DatasetUploadSessionRecord(rs.getString("session_id"), rs.getString("dataset_id"), rs.getString("version_id"), rs.getString("tenant_id"), rs.getString("creation_mode"), rs.getString("status"), rs.getString("dataset_name"), rs.getString("dataset_type"), rs.getString("data_type"), rs.getString("access_level"), rs.getString("tags"), rs.getString("description"), rs.getInt("total_files"), rs.getInt("accepted_files"), rs.getInt("rejected_files"), rs.getString("diagnostic_code"), rs.getString("diagnostic_message"), rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class), rs.getObject("committed_at", OffsetDateTime.class)), sessionId); }
+    private List<DatasetUploadSessionFileRecord> uploadSessionFiles(String sessionId) { return jdbc.query("SELECT * FROM dataset_upload_session_file WHERE session_id=? ORDER BY created_at", (rs,n)->new DatasetUploadSessionFileRecord(rs.getString("id"), rs.getString("session_id"), rs.getString("file_name"), rs.getString("file_id"), rs.getString("status"), nullableLong(rs,"size_bytes"), rs.getString("content_type"), rs.getString("diagnostic_code"), rs.getString("diagnostic_message"), rs.getObject("created_at", OffsetDateTime.class)), sessionId); }
+    private boolean hasDatasetFile(String versionId, String fileId) { Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM dataset_file WHERE version_id=? AND file_id=?", Integer.class, versionId, fileId); return count != null && count > 0; }
+    private boolean hasRejectedUploadFile(String sessionId, String fileName) { Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM dataset_upload_session_file WHERE session_id=? AND file_name=? AND status='REJECTED'", Integer.class, sessionId, fileName); return count != null && count > 0; }
+    private boolean isSupportedImageFile(String fileName, String contentType) {
+        String name = blank(fileName, "").toLowerCase(Locale.ROOT);
+        if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".bmp") || name.endsWith(".webp")) return true;
+        return contentType != null && contentType.toLowerCase(Locale.ROOT).startsWith("image/");
+    }
+    private String contentSafetyEndpoint(String tenantId) {
+        List<String> values = jdbc.queryForList("SELECT value_json FROM platform_config_value WHERE config_key='content_safety.endpoint' AND ((scope_type='BU' AND scope_id=?) OR (scope_type='GLOBAL' AND scope_id='TENANT-YF')) ORDER BY CASE WHEN scope_type='BU' THEN 0 ELSE 1 END", String.class, tenantId);
+        if (values.isEmpty()) {
+            values = jdbc.queryForList("SELECT default_value FROM platform_config_definition WHERE config_key='content_safety.endpoint'", String.class);
+        }
+        return values.isEmpty() ? "" : nullToEmpty(values.getFirst()).replaceAll("^\"|\"$", "").trim();
+    }
+    private ContentSafetyScanResult uploadFileScanResult(DatasetUploadSessionFileRecord file) {
+        return switch (blank(file.diagnosticCode(), "OK")) {
+            case "DATASET_UPLOAD_SECURITY_BLOCKED" -> new ContentSafetyScanResult("BLOCKED", file.diagnosticCode(), file.diagnosticMessage());
+            case "DATASET_UPLOAD_SECURITY_PENDING" -> new ContentSafetyScanResult("PENDING", file.diagnosticCode(), file.diagnosticMessage());
+            case "DATASET_UPLOAD_SECURITY_PASSED" -> new ContentSafetyScanResult("PASSED", file.diagnosticCode(), file.diagnosticMessage());
+            default -> new ContentSafetyScanResult("PENDING", "DATASET_UPLOAD_SECURITY_PENDING", "TODO_CONFIRM_CONTENT_SAFETY_RESPONSE");
+        };
+    }
+    private boolean isValidImageContent(byte[] bytes) {
+        try (ByteArrayInputStream input = new ByteArrayInputStream(bytes)) {
+            BufferedImage image = ImageIO.read(input);
+            return image != null;
+        } catch (IOException exception) {
+            return false;
+        }
+    }
+    private String detectContentType(String fileName) {
+        String name = blank(fileName, "").toLowerCase(Locale.ROOT);
+        if (name.endsWith(".png")) return "image/png";
+        if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+        if (name.endsWith(".bmp")) return "image/bmp";
+        if (name.endsWith(".webp")) return "image/webp";
+        if (name.endsWith(".zip")) return "application/zip";
+        return "application/octet-stream";
+    }
+    private String sanitizeFileName(String fileName) { return blank(fileName, "file").replace('\\', '-').replace('/', '-').replace(' ', '_'); }
+    private String sha256Bytes(byte[] content) { try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content)); } catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); } }
     private String sha256(String content) { try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content.getBytes(StandardCharsets.UTF_8))); } catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); } }
     private String nextVersionNameForImport(String datasetId) { return "v" + (count("SELECT COUNT(*) FROM dataset_version WHERE dataset_id=?", datasetId) + 1) + ".0.0"; }
     private void ensureSourceReferenceable(PlatformPrincipal p, DataSourceRecord s, String action) { if(!"ACTIVE".equals(s.status()) || !"OK".equals(s.diagnosticCode()) || s.lastTestAt()==null){ audit(p,s.tenantId(),action,"DataSource",s.sourceId(),"FAILURE","WARNING",s.status(),s.diagnosticCode(),TRACE_TAG+";DAT-001"); throw new PlatformException(PlatformError.CONFLICT,"DATA_SOURCE_NOT_ACTIVE: 连接测试未通过或未激活的数据源不得被同步任务或数据集导入引用"); } }
@@ -313,7 +687,17 @@ public class DataManagementService {
         return List.of(field("sample_id","样本ID","STRING",null,true), field("label","标签","ENUM",null,false), field("metadata","元数据","JSON",null,false));
     }
     private DataStandardFieldResponse field(String standardField,String displayName,String dataType,String unit,boolean required){ return new DataStandardFieldResponse(standardField,standardField,displayName,dataType,unit,required,"MATCHED", required ? "必填、类型一致、空值率 < 1%" : "可选字段、类型一致"); }
-    private String sourceTypeForDataset(DatasetRecord d) { List<String> v = jdbc.queryForList("SELECT ds.source_type FROM data_lineage l JOIN data_source ds ON ds.source_id=l.source_id WHERE l.target_id=? AND l.source_type='DATA_SOURCE' LIMIT 1", String.class, d.currentVersionId()); return v.isEmpty() ? ("PREPROCESSED".equals(d.datasetType()) ? "PIPELINE" : "UNKNOWN") : v.getFirst(); }
+    private String sourceTypeForDataset(DatasetRecord d) {
+        List<String> dataSource = jdbc.queryForList("SELECT ds.source_type FROM data_lineage l JOIN data_source ds ON ds.source_id=l.source_id WHERE l.target_id=? AND l.source_type='DATA_SOURCE' LIMIT 1", String.class, d.currentVersionId());
+        if (!dataSource.isEmpty()) return dataSource.getFirst();
+        List<String> lineageSource = jdbc.queryForList("SELECT source_type FROM data_lineage WHERE target_id=? LIMIT 1", String.class, d.currentVersionId());
+        if (!lineageSource.isEmpty()) {
+            String source = lineageSource.getFirst();
+            if ("LOCAL_UPLOAD".equals(source)) return "LOCAL_UPLOAD";
+            if ("PIPELINE".equals(source)) return "PIPELINE";
+        }
+        return "PREPROCESSED".equals(d.datasetType()) ? "PIPELINE" : "UNKNOWN";
+    }
     private String defaultStandardProfile(DatasetRecord d) { return switch (upper(d.dataType(), "OBJECT")) { case "IMAGE", "VIDEO", "OBJECT", "FILE" -> "INDUSTRIAL_VISUAL_STANDARD"; case "TEXT" -> "WORKORDER_TEXT_STANDARD"; case "TABULAR" -> "MES_TABULAR_STANDARD"; case "EVENT" -> "STREAM_EVENT_STANDARD"; case "TIME_SERIES" -> "TIME_SERIES_STANDARD"; case "TELEMETRY" -> "INDUSTRIAL_TELEMETRY_STANDARD"; default -> "DATASET_GENERIC_STANDARD"; }; }
     private String standardRuleJson(DatasetRecord d) { return "{\"profile\":\"" + defaultStandardProfile(d) + "\",\"operators\":[\"validate\",\"dedup\",\"normalize\"],\"dataType\":\"" + d.dataType() + "\"}"; }
     private List<String> appendTag(List<String> tags, String tag) { List<String> v = new java.util.ArrayList<>(tags); if (!v.contains(tag)) v.add(tag); return v; }
@@ -353,7 +737,16 @@ public class DataManagementService {
     private String signature(String id,String event,String tenant,String opId,String op,String roles,String action,String type,String rid,String result,String risk,String before,String after,String detail,String trace,OffsetDateTime at){ try{ MessageDigest d=MessageDigest.getInstance("SHA-256"); return HexFormat.of().formatHex(d.digest(String.join("|",nullToEmpty(id),nullToEmpty(event),nullToEmpty(tenant),nullToEmpty(opId),nullToEmpty(op),nullToEmpty(roles),nullToEmpty(action),nullToEmpty(type),nullToEmpty(rid),nullToEmpty(result),nullToEmpty(risk),nullToEmpty(before),nullToEmpty(after),nullToEmpty(detail),nullToEmpty(trace),canonical(at)).getBytes(StandardCharsets.UTF_8))); }catch(NoSuchAlgorithmException e){ throw new IllegalStateException(e); } }
     private String canonical(OffsetDateTime v){ return v==null?"":v.toInstant().truncatedTo(ChronoUnit.MICROS).atOffset(ZoneOffset.UTC).toString(); } private String nextVersionName(String id){ return "v0."+(count("SELECT COUNT(*) FROM dataset_version WHERE dataset_id=?",id)+1)+".0"; } private String joinTags(List<String> tags){ return tags==null?"":String.join(",",tags.stream().map(String::trim).filter(t->!t.isBlank()).toList()); } private List<String> split(String v){ return blank(v)?List.of():Arrays.stream(v.split(",")).map(String::trim).filter(i->!i.isBlank()).toList(); }
     private String require(String v,String m){ if(blank(v)) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED,m); return v.trim(); } private String upper(String v,String d){ return blank(v,d).toUpperCase(Locale.ROOT); } private boolean blank(String v){ return v==null || v.isBlank(); } private String blank(String v,String d){ return blank(v)?d:v.trim(); } private String nullIfBlank(String v){ return blank(v)?null:v.trim(); } private String nullToEmpty(String v){ return v==null?"":v; } private Integer nullableInt(java.sql.ResultSet rs,String c)throws java.sql.SQLException{ int v=rs.getInt(c); return rs.wasNull()?null:v; } private Long nullableLong(java.sql.ResultSet rs,String c)throws java.sql.SQLException{ long v=rs.getLong(c); return rs.wasNull()?null:v; } private OffsetDateTime now(){ return OffsetDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS); } private String randomHex(int len){ return UUID.randomUUID().toString().replace("-","").substring(0,len); }
+    private void ensureUploadArtifacts(DatasetUploadSessionRecord session, String datasetId, String versionId, PlatformPrincipal principal, OffsetDateTime now) {
+        if (blank(session.datasetId())) {
+            jdbc.update("INSERT INTO dataset (dataset_id,name,dataset_type,data_type,tenant_id,project_id,status,access_level,tags,record_count,size_bytes,owner_id,description,created_at,updated_at) VALUES (?,?,?,?,?,?,'DRAFT',?,?,?,0,?,?,?,?)", datasetId, session.datasetName(), session.datasetType(), session.dataType(), session.tenantId(), null, session.accessLevel(), session.tags(), 0, principal.user().id(), session.description(), now, now);
+            jdbc.update("INSERT INTO dataset_version (version_id,dataset_id,version_name,status,record_count,size_bytes,content_safety_status,diagnostic_code,diagnostic_message,created_by,created_at) VALUES (?,?,'v0.1.0','DRAFT',0,0,'UNCONFIGURED','DATASET_UPLOAD_PENDING','PENDING_UPLOAD',?,?)", versionId, datasetId, principal.user().id(), now);
+            jdbc.update("UPDATE dataset SET current_version_id=? WHERE dataset_id=?", versionId, datasetId);
+        }
+    }
     private record SyncTaskRecord(String taskId,String sourceId,String sourceName,String targetDatasetId,String targetDatasetName,String name,String scheduleMode,String syncScope,String status,OffsetDateTime lastRunAt,String lastResult,String diagnosticCode,String diagnosticMessage,String tenantId) {}
+    private record DatasetUploadSessionRecord(String sessionId,String datasetId,String versionId,String tenantId,String creationMode,String status,String datasetName,String datasetType,String dataType,String accessLevel,String tags,String description,int totalFiles,int acceptedFiles,int rejectedFiles,String diagnosticCode,String diagnosticMessage,String createdBy,OffsetDateTime createdAt,OffsetDateTime committedAt) {}
+    private record DatasetUploadSessionFileRecord(String id,String sessionId,String fileName,String fileId,String status,Long sizeBytes,String contentType,String diagnosticCode,String diagnosticMessage,OffsetDateTime createdAt) {}
     private record DataSourceImportPlan(String datasetName,String dataType,String fileRole,String extension,String contentType,long recordCount,long sizeBytes,String description,String content) {}
     private record DataStandardTaskRecord(String taskId,String sourceDatasetId,String sourceVersionId,String outputDatasetId,String name,String standardProfile,String status,Integer qualityScoreBefore) {}
     private record DatasetRecord(String datasetId,String name,String datasetType,String dataType,String tenantId,String projectId,String currentVersionId,String currentVersionName,String status,String accessLevel,String tags,long recordCount,long sizeBytes,String ownerId,String ownerName,String description,OffsetDateTime archivedAt,OffsetDateTime deletedAt,OffsetDateTime updatedAt) {}

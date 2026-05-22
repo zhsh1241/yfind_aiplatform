@@ -40,6 +40,10 @@ test('TASK-data-source-dataset-management AC-04 upload wizard exposes F007 file 
   await page.getByRole('button', { name: '＋ 新建数据集' }).click();
   await expect(page.getByRole('heading', { name: '新建数据集 / 上传向导' })).toBeVisible();
   await expect(page.getByText(/复用 F007 文件元数据 seam/)).toBeVisible();
+  await page.locator('.ant-select').first().click();
+  await page.locator('.ant-select-item-option').filter({ hasText: '从数据源导入' }).click();
+  await page.getByRole('combobox', { name: /\*?\s*来源数据源/ }).click();
+  await page.getByTitle('Image bucket · 对象存储').click();
   await page.getByRole('button', { name: '下一步：初始化数据集' }).click();
   await expect(page.getByText('文件登记 seam')).toBeVisible();
   await expect(page.getByRole('cell', { name: 'FILE-001', exact: true })).toBeVisible();

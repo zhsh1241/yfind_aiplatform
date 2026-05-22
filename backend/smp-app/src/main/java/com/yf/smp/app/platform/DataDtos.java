@@ -8,6 +8,12 @@ record DataSourceRequest(String name, String sourceType, String tenantId, String
 record DataSourceTestResponse(String sourceId, String result, String status, String diagnosticCode, String diagnosticMessage, Integer latencyMs, String traceId, OffsetDateTime testedAt) {}
 record DataSourceSyncTaskResponse(String taskId, String sourceId, String sourceName, String targetDatasetId, String targetDatasetName, String name, String scheduleMode, String syncScope, String status, OffsetDateTime lastRunAt, String lastResult, String diagnosticCode, String diagnosticMessage) {}
 record DataSourceSyncTaskRequest(String sourceId, String targetDatasetId, String name, String scheduleMode, String syncScope) {}
+record DatasetUploadSessionCreateRequest(String name, String tenantId, String datasetType, String dataType, String accessLevel, List<String> tags, String description, String creationMode) {}
+record DatasetUploadSessionCommitRequest(Boolean publishRequested) {}
+record DatasetUploadProgressResponse(String phase, int percent) {}
+record DatasetUploadSummaryResponse(int totalFiles, int acceptedFiles, int rejectedFiles) {}
+record DatasetUploadFileResponse(String fileName, String fileId, String status, Long sizeBytes, String contentType, String diagnosticCode, String diagnosticMessage) {}
+record DatasetUploadSessionResponse(String sessionId, String datasetId, String versionId, String status, String creationMode, DatasetUploadProgressResponse progress, DatasetUploadSummaryResponse summary, String datasetStatus, String versionStatus, String diagnosticCode, String diagnosticMessage, List<DatasetUploadFileResponse> files) {}
 record DatasetSummaryResponse(String datasetId, String name, String datasetType, String dataType, String tenantId, String projectId, String currentVersionId, String currentVersionName, String status, String accessLevel, List<String> tags, long recordCount, long sizeBytes, String ownerId, String ownerName, String description, OffsetDateTime updatedAt) {}
 record DatasetStatsResponse(long total, long raw, long preprocessed, long annotated, long restricted, long totalSizeBytes) {}
 record DatasetListResponse(List<DatasetSummaryResponse> items, long total, int page, int pageSize, DatasetStatsResponse stats) {}

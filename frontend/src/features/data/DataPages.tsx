@@ -1,6 +1,6 @@
 import { Alert, Button, Card, Descriptions, Drawer, Form, Input, Modal, Select, Space, Steps, Table, Tabs, Tag, Typography, message } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
   dataApi,
@@ -15,6 +15,7 @@ import {
   type DataStandardProfile,
   type DataStandardTask,
   type DatasetDetail,
+  type DatasetUploadSession,
   type DatasetSummary,
   type DatasetVersion,
   type FileObjectSummary,
@@ -835,19 +836,250 @@ export function DatasetUploadPage() {
   const nav = useNavigate();
   const currentTenantId = useSessionStore((state) => state.user?.tenantId);
   const [msg, holder] = message.useMessage();
+  const [creationMode, setCreationMode] = useState<'DATA_SOURCE_IMPORT' | 'LOCAL_UPLOAD'>('DATA_SOURCE_IMPORT');
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState<DatasetDetail | null>(null);
+  const [uploadSession, setUploadSession] = useState<DatasetUploadSession | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<string>();
+  const [selectedLocalFiles, setSelectedLocalFiles] = useState<File[]>([]);
   const qc = useQueryClient();
   const sources = useQuery({ queryKey: ['data-sources'], queryFn: dataApi.dataSources });
-  const files = useQuery({ queryKey: ['platform-files'], queryFn: platformApi.files, enabled: step >= 1 });
-  const create = useMutation({ mutationFn: dataApi.createDataset, onSuccess: async (created) => { setDraft(created); await qc.invalidateQueries({ queryKey: ['datasets'] }); setStep(1); msg.success('数据集草稿已创建，请登记 F007 文件对象'); }, onError: (e: Error) => msg.error(e.message) });
-  const attach = useMutation({ mutationFn: ({ fileId }: { fileId: string }) => dataApi.attachFile(draft!.dataset.datasetId, draft!.versions[0].versionId, { fileId, fileRole: 'RAW' }), onSuccess: async () => { const refreshed = await dataApi.datasetDetail(draft!.dataset.datasetId); setDraft(refreshed); setStep(2); msg.success('文件登记完成，hash/size 校验通过并已绑定版本草稿'); }, onError: (e: Error) => msg.error(e.message) });
+  const activeSources = (sources.data ?? []).filter((s) => s.status === 'ACTIVE' && s.diagnosticCode === 'OK');
+  const effectiveCreationMode: 'DATA_SOURCE_IMPORT' | 'LOCAL_UPLOAD' = activeSources.length === 0 ? 'LOCAL_UPLOAD' : creationMode;
+  const files = useQuery({ queryKey: ['platform-files'], queryFn: platformApi.files, enabled: step >= 1 && effectiveCreationMode === 'DATA_SOURCE_IMPORT' });
+  const uploadSessionQuery = useQuery({
+    queryKey: ['dataset-upload-session', uploadSession?.sessionId],
+    queryFn: () => dataApi.datasetUploadSession(uploadSession!.sessionId),
+    enabled: Boolean(uploadSession?.sessionId) && uploadSession?.status === 'PROCESSING',
+    refetchInterval: (query) => {
+      const session = query.state.data as DatasetUploadSession | undefined;
+      return session && ['READY', 'SECURITY_PENDING', 'FAILED', 'CANCELLED'].includes(session.status) ? false : 400;
+    },
+  });
+  const activeUploadSession = uploadSessionQuery.data ?? uploadSession;
+  const isCommitPolling = activeUploadSession?.status === 'PROCESSING';
+  const handledTerminalSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!uploadSessionQuery.data) return;
+    if (!['READY', 'SECURITY_PENDING', 'FAILED', 'CANCELLED'].includes(uploadSessionQuery.data.status)) return;
+    const handledKey = `${uploadSessionQuery.data.sessionId}:${uploadSessionQuery.data.status}`;
+    if (handledTerminalSessionRef.current === handledKey) return;
+    handledTerminalSessionRef.current = handledKey;
+    if (uploadSessionQuery.data.status === 'FAILED' || uploadSessionQuery.data.status === 'CANCELLED') {
+      msg.error(`本地上传处理失败：${uploadSessionQuery.data.diagnosticMessage}`);
+      return;
+    }
+    void qc.invalidateQueries({ queryKey: ['datasets'] });
+    msg.success(uploadSessionQuery.data.status === 'READY' ? '本地上传数据集已创建完成。' : '本地上传已完成文件绑定，内容安全仍待处理。');
+    if (uploadSessionQuery.data.datasetId) {
+      nav('/dsdetail', { state: { datasetId: uploadSessionQuery.data.datasetId } });
+    }
+  }, [msg, nav, qc, uploadSessionQuery.data]);
+  const resetFlow = (mode: 'DATA_SOURCE_IMPORT' | 'LOCAL_UPLOAD') => {
+    setCreationMode(mode);
+    setStep(0);
+    setDraft(null);
+    setUploadSession(null);
+    handledTerminalSessionRef.current = null;
+    setSelectedFileId(undefined);
+    setSelectedLocalFiles([]);
+  };
+  const create = useMutation({
+    mutationFn: dataApi.createDataset,
+    onSuccess: async (created) => {
+      setDraft(created);
+      await qc.invalidateQueries({ queryKey: ['datasets'] });
+      setStep(1);
+      msg.success('数据源导入草稿已创建，请继续登记文件事实。');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const createUploadSession = useMutation({
+    mutationFn: dataApi.createDatasetUploadSession,
+    onSuccess: (created) => {
+      setUploadSession(created);
+      setStep(1);
+      msg.success('本地上传会话已创建，请选择图片或 zip 包。');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const uploadFiles = useMutation({
+    mutationFn: ({ sessionId, uploadFiles }: { sessionId: string; uploadFiles: File[] }) => dataApi.uploadDatasetSessionFiles(sessionId, uploadFiles),
+    onSuccess: (session) => {
+      setUploadSession(session);
+      setStep(2);
+      msg.success('文件已上传并完成平台登记。');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const commitUploadSession = useMutation({
+    mutationFn: (sessionId: string) => dataApi.commitDatasetUploadSession(sessionId, { publishRequested: false }),
+    onSuccess: (session) => {
+      setUploadSession(session);
+      if (session.status === 'PROCESSING') {
+        msg.info('正在提交数据集，平台将持续刷新阶段进度。');
+        return;
+      }
+      void qc.invalidateQueries({ queryKey: ['datasets'] });
+      msg.success(session.status === 'READY' ? '本地上传数据集已创建完成。' : '本地上传已完成文件绑定，内容安全仍待处理。');
+      if (session.datasetId) {
+        nav('/dsdetail', { state: { datasetId: session.datasetId } });
+      }
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const attach = useMutation({
+    mutationFn: ({ fileId }: { fileId: string }) => dataApi.attachFile(draft!.dataset.datasetId, draft!.versions[0].versionId, { fileId, fileRole: 'RAW' }),
+    onSuccess: async () => {
+      const refreshed = await dataApi.datasetDetail(draft!.dataset.datasetId);
+      setDraft(refreshed);
+      setStep(2);
+      msg.success('文件登记完成，hash/size 校验通过并已绑定版本草稿。');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
   const fileRows = files.data?.items ?? [];
-  return <div className="content-page">{holder}<div className="page-hero"><div><Typography.Title level={3}>新建数据集 / 上传向导</Typography.Title><Typography.Text type="secondary">三步向导 · 复用 F007 文件元数据 seam · hash/size 校验</Typography.Text></div></div><Card><Steps current={step} items={[{ title: '填写元数据' }, { title: '文件登记' }, { title: '预览确认' }]} style={{ marginBottom: 24 }} />{step === 0 && <Form layout="vertical" onFinish={(v) => create.mutate({ ...v, tenantId: currentTenantId, datasetType: 'RAW', tags: String(v.tags ?? '').split(/[,，]/).filter(Boolean), recordCount: Number(v.recordCount ?? 0) })} initialValues={{ name: '新建视觉数据集', dataType: 'IMAGE', accessLevel: 'TEAM', tags: '质检,工业视觉' }}><Form.Item name="name" label="数据集名称"><Input /></Form.Item><Form.Item name="dataType" label="数据类型"><Select options={['IMAGE', 'TEXT', 'AUDIO', 'VIDEO', 'TABULAR'].map((v) => ({ value: v, label: txt(v) }))} /></Form.Item><Form.Item name="accessLevel" label="访问级别"><Select options={['PUBLIC', 'TEAM', 'PRIVATE', 'RESTRICTED'].map((v) => ({ value: v, label: v }))} /></Form.Item><Form.Item name="sourceId" label="来源数据源"><Select options={(sources.data ?? []).filter((s) => s.status === 'ACTIVE' && s.diagnosticCode === 'OK').map((s) => ({ value: s.sourceId, label: s.name }))} /></Form.Item><Form.Item name="tags" label="标签"><Input /></Form.Item><Button type="primary" htmlType="submit" loading={create.isPending}>下一步：初始化数据集</Button></Form>}{step === 1 && <Space direction="vertical" className="full-width"><Alert type="info" showIcon title="文件登记 seam" description="选择 F007 platform_file_object，提交后后端执行 AVAILABLE、sha256 与 size 校验，并绑定到当前版本草稿。" /><Table<FileObjectSummary> rowKey="fileId" dataSource={fileRows} pagination={false} rowSelection={{ type: 'radio', selectedRowKeys: selectedFileId ? [selectedFileId] : [], onChange: (keys) => setSelectedFileId(String(keys[0])) }} columns={[{ title: '文件 ID', dataIndex: 'fileId' }, { title: 'Object Key', dataIndex: 'objectKey' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: 'hash 校验', render: (_, r) => r.expectedSha256 === r.sha256 ? '通过' : '不一致' }, { title: '大小', render: (_, r) => fmtSize(r.sizeBytes) }]} /><Button type="primary" disabled={!selectedFileId} loading={attach.isPending} onClick={() => selectedFileId && attach.mutate({ fileId: selectedFileId })}>完成文件登记并绑定版本</Button></Space>}{step === 2 && <Space direction="vertical" className="full-width"><Alert type="warning" showIcon title="文件上传 seam 已初始化" description="真实对象存储/内容安全服务未配置时保持 TODO_CONFIRM_MINIO_* / SECURITY_PENDING，不伪造发布成功。" /><Table rowKey="id" dataSource={draft?.files ?? []} pagination={false} columns={[{ title: '文件', dataIndex: 'fileId' }, { title: '状态', dataIndex: 'status' }, { title: 'Object Key', dataIndex: 'objectKey' }, { title: '大小', render: (_, r: { sizeBytes?: number | null }) => fmtSize(r.sizeBytes) }]} /><Button type="primary" onClick={() => nav('/ds')}>完成并返回数据集管理</Button></Space>}</Card></div>;
+  return (
+    <div className="content-page">
+      {holder}
+      <div className="page-hero">
+        <div>
+          <Typography.Title level={3}>新建数据集 / 上传向导</Typography.Title>
+          <Typography.Text type="secondary">双路径创建 · 数据源导入保持兼容 · 无可用数据源时支持本地上传图片</Typography.Text>
+        </div>
+      </div>
+      <Card>
+        <Alert type="info" showIcon style={{ marginBottom: 16 }} title="复用 F007 文件元数据 seam" description="数据源导入路径继续复用 platform_file_object 文件事实；本地上传路径新增 upload session + 图片文件登记能力。" />
+        <Steps
+          current={step}
+          items={[
+            { title: '填写元数据' },
+            { title: effectiveCreationMode === 'LOCAL_UPLOAD' ? '上传文件' : '登记文件' },
+            { title: effectiveCreationMode === 'LOCAL_UPLOAD' ? '提交数据集' : '预览确认' },
+          ]}
+          style={{ marginBottom: 24 }}
+        />
+        {step === 0 && (
+          <Form
+            layout="vertical"
+            initialValues={{ name: '新建视觉数据集', dataType: 'IMAGE', accessLevel: 'TEAM', tags: '质检,工业视觉' }}
+            onFinish={(values) => {
+              const tags = String(values.tags ?? '').split(/[,，]/).map((item: string) => item.trim()).filter(Boolean);
+              if (effectiveCreationMode === 'DATA_SOURCE_IMPORT') {
+                if (!values.sourceId) {
+                  msg.error('请选择一个可用数据源后再继续。');
+                  return;
+                }
+                create.mutate({
+                  name: values.name,
+                  tenantId: currentTenantId!,
+                  datasetType: 'RAW',
+                  dataType: values.dataType,
+                  accessLevel: values.accessLevel,
+                  tags,
+                  description: values.description,
+                  recordCount: Number(values.recordCount ?? 0),
+                  sourceId: values.sourceId,
+                });
+                return;
+              }
+              createUploadSession.mutate({
+                name: values.name,
+                tenantId: currentTenantId,
+                datasetType: 'RAW',
+                dataType: 'IMAGE',
+                accessLevel: values.accessLevel,
+                tags,
+                description: values.description,
+                creationMode: 'LOCAL_UPLOAD',
+              });
+            }}
+          >
+            <Form.Item label="创建方式">
+              <Select
+                value={effectiveCreationMode}
+                onChange={(value) => resetFlow(value)}
+                options={[
+                  { value: 'DATA_SOURCE_IMPORT', label: '从数据源导入', disabled: activeSources.length === 0 },
+                  { value: 'LOCAL_UPLOAD', label: '本地上传图片' },
+                ]}
+              />
+            </Form.Item>
+            {activeSources.length === 0 ? (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                title="当前无可用数据源"
+                description={
+                  <Space wrap>
+                    <span>你可以直接上传图片创建数据集，或先去配置数据源。</span>
+                    <Button size="small" type="primary" onClick={() => resetFlow('LOCAL_UPLOAD')}>直接上传图片</Button>
+                    <Button size="small" onClick={() => nav('/datasrc')}>去创建数据源</Button>
+                  </Space>
+                }
+              />
+            ) : null}
+            <Form.Item name="name" label="数据集名称" rules={[{ required: true, message: '请输入数据集名称' }]}><Input /></Form.Item>
+            <Form.Item name="dataType" label="数据类型"><Select disabled={effectiveCreationMode === 'LOCAL_UPLOAD'} options={['IMAGE', 'TEXT', 'AUDIO', 'VIDEO', 'TABULAR'].map((v) => ({ value: v, label: txt(v) }))} /></Form.Item>
+            <Form.Item name="accessLevel" label="访问级别"><Select options={['PUBLIC', 'TEAM', 'PRIVATE', 'RESTRICTED'].map((v) => ({ value: v, label: v }))} /></Form.Item>
+            {effectiveCreationMode === 'DATA_SOURCE_IMPORT' && activeSources.length > 0 ? (
+              <Form.Item name="sourceId" label="来源数据源" rules={[{ required: true, message: '请选择来源数据源' }]}>
+                <Select options={activeSources.map((s) => ({ value: s.sourceId, label: `${s.name} · ${txt(s.sourceType)}` }))} />
+              </Form.Item>
+            ) : null}
+            <Form.Item name="tags" label="标签"><Input /></Form.Item>
+            <Form.Item name="description" label="描述"><Input.TextArea rows={3} /></Form.Item>
+            <Button type="primary" htmlType="submit" loading={create.isPending || createUploadSession.isPending}>
+              {effectiveCreationMode === 'LOCAL_UPLOAD' ? '下一步：创建上传会话' : '下一步：初始化数据集'}
+            </Button>
+          </Form>
+        )}
+        {step === 1 && effectiveCreationMode === 'DATA_SOURCE_IMPORT' && (
+          <Space direction="vertical" className="full-width">
+            <Alert type="info" showIcon title="文件登记 seam" description="选择 F007 platform_file_object，提交后后端执行 AVAILABLE、sha256 与 size 校验，并绑定到当前版本草稿。" />
+            <Table<FileObjectSummary> rowKey="fileId" dataSource={fileRows} pagination={false} rowSelection={{ type: 'radio', selectedRowKeys: selectedFileId ? [selectedFileId] : [], onChange: (keys) => setSelectedFileId(String(keys[0])) }} columns={[{ title: '文件 ID', dataIndex: 'fileId' }, { title: 'Object Key', dataIndex: 'objectKey' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: 'hash 校验', render: (_, r) => r.expectedSha256 === r.sha256 ? '通过' : '不一致' }, { title: '大小', render: (_, r) => fmtSize(r.sizeBytes) }]} />
+            <Button type="primary" disabled={!selectedFileId} loading={attach.isPending} onClick={() => selectedFileId && attach.mutate({ fileId: selectedFileId })}>完成文件登记并绑定版本</Button>
+          </Space>
+        )}
+        {step === 1 && effectiveCreationMode === 'LOCAL_UPLOAD' && uploadSession && (
+          <Space direction="vertical" className="full-width">
+            <Alert type="info" showIcon title={`上传会话 ${uploadSession.sessionId}`} description={`阶段：${uploadSession.progress.phase} · ${uploadSession.progress.percent}%`} />
+            <input type="file" multiple accept="image/*,.zip" onChange={(event) => setSelectedLocalFiles(Array.from(event.target.files ?? []))} />
+            <Table rowKey="name" dataSource={selectedLocalFiles.map((file) => ({ name: file.name, type: file.type || 'application/octet-stream', size: file.size }))} pagination={false} locale={{ emptyText: '请选择本地图片或 zip 包。' }} columns={[{ title: '文件名', dataIndex: 'name' }, { title: '类型', dataIndex: 'type' }, { title: '大小', dataIndex: 'size', render: (value: number) => fmtSize(value) }]} />
+            <Button type="primary" disabled={selectedLocalFiles.length === 0} loading={uploadFiles.isPending} onClick={() => uploadFiles.mutate({ sessionId: uploadSession.sessionId, uploadFiles: selectedLocalFiles })}>上传并登记到平台</Button>
+          </Space>
+        )}
+        {step === 2 && effectiveCreationMode === 'DATA_SOURCE_IMPORT' && (
+          <Space direction="vertical" className="full-width">
+            <Alert type="warning" showIcon title="文件上传 seam 已初始化" description="真实对象存储/内容安全服务未配置时保持 TODO_CONFIRM_MINIO_* / SECURITY_PENDING，不伪造发布成功。" />
+            <Table rowKey="id" dataSource={draft?.files ?? []} pagination={false} columns={[{ title: '文件', dataIndex: 'fileId' }, { title: '状态', dataIndex: 'status' }, { title: 'Object Key', dataIndex: 'objectKey' }, { title: '大小', render: (_, r: { sizeBytes?: number | null }) => fmtSize(r.sizeBytes) }]} />
+            <Button type="primary" onClick={() => draft?.dataset.datasetId && nav('/dsdetail', { state: { datasetId: draft.dataset.datasetId } })}>查看数据集详情</Button>
+          </Space>
+        )}
+        {step === 2 && effectiveCreationMode === 'LOCAL_UPLOAD' && activeUploadSession && (
+          <Space direction="vertical" className="full-width">
+            <Alert
+              type={['READY', 'SECURITY_PENDING'].includes(activeUploadSession.status) ? 'success' : activeUploadSession.status === 'FAILED' ? 'error' : 'info'}
+              showIcon
+              title={`阶段进度：${activeUploadSession.progress.phase} · ${activeUploadSession.progress.percent}%`}
+              description={isCommitPolling ? '平台正在执行内容安全校验、元数据索引和版本创建，请等待自动刷新。' : activeUploadSession.diagnosticMessage}
+            />
+            <Alert type={activeUploadSession.summary.rejectedFiles > 0 ? 'warning' : 'success'} showIcon title={`已接收 ${activeUploadSession.summary.acceptedFiles} 个文件，拒绝 ${activeUploadSession.summary.rejectedFiles} 个文件`} description={activeUploadSession.diagnosticMessage} />
+            <Table rowKey={(row) => `${row.fileName}-${row.fileId ?? 'rejected'}`} dataSource={activeUploadSession.files} pagination={false} columns={[{ title: '文件名', dataIndex: 'fileName' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '大小', dataIndex: 'sizeBytes', render: (value: number | null) => fmtSize(value) }, { title: '诊断', dataIndex: 'diagnosticMessage' }]} />
+            <Space wrap>
+              <Button onClick={() => setStep(1)}>继续追加文件</Button>
+              <Button type="primary" disabled={activeUploadSession.summary.acceptedFiles === 0 || isCommitPolling} loading={commitUploadSession.isPending || isCommitPolling} onClick={() => commitUploadSession.mutate(activeUploadSession.sessionId)}>{isCommitPolling ? '处理中...' : '提交并创建数据集'}</Button>
+            </Space>
+          </Space>
+        )}
+      </Card>
+    </div>
+  );
 }
 
 export function DatasetDetailPage() {
+  const nav = useNavigate();
   const loc = useLocation() as { state?: { datasetId?: string } };
   const datasetId = loc.state?.datasetId ?? 'DATASET-WELD-DEFECT';
   const detail = useQuery({ queryKey: ['dataset-detail', datasetId], queryFn: () => dataApi.datasetDetail(datasetId) });
@@ -876,5 +1108,6 @@ export function DatasetDetailPage() {
     { title: 'SHA256', dataIndex: 'sha256', render: (v: string | null) => v ? <Typography.Text className="mono" copyable>{v}</Typography.Text> : '-' },
     { title: '下载', render: (_: unknown, r: { fileId: string; status: string }) => <Button size="small" disabled={r.status !== 'BOUND'} loading={download.isPending} onClick={() => download.mutate(r.fileId)}>获取下载链接</Button> },
   ];
-  return <div className="content-page">{holder}<div className="page-hero"><div><Typography.Title level={3}>{d?.dataset.name ?? '数据集详情'}</Typography.Title><Typography.Text type="secondary">概览 · 版本 · 文件 · 权限 · 血缘 · 样例预览</Typography.Text></div><Button onClick={() => ref.mutate()}>请求引用检查</Button></div>{ref.data ? <Alert type="success" showIcon title={`DatasetReference 可用：${ref.data.versionId}`} style={{ marginBottom: 16 }} /> : null}<Card loading={detail.isLoading}><Descriptions bordered column={2}><Descriptions.Item label="数据类型">{txt(d?.dataset.dataType)}</Descriptions.Item><Descriptions.Item label="状态"><Tag color={color(d?.dataset.status)}>{d?.dataset.status}</Tag></Descriptions.Item><Descriptions.Item label="权限"><Tag color={d?.dataset.accessLevel === 'RESTRICTED' ? 'red' : 'blue'}>{d?.dataset.accessLevel}</Tag></Descriptions.Item><Descriptions.Item label="样本数">{d?.dataset.recordCount.toLocaleString('zh-CN')}</Descriptions.Item><Descriptions.Item label="标签">{d?.dataset.tags.map((t) => <Tag key={t}>{t}</Tag>)}</Descriptions.Item><Descriptions.Item label="预览状态">{d?.previewStatus} · {d?.previewDiagnostic}</Descriptions.Item></Descriptions></Card><Card title={`文件信息（${d?.files.length ?? 0}）`} style={{ marginTop: 16 }} loading={detail.isLoading}><Table rowKey="id" dataSource={d?.files ?? []} pagination={false} columns={fileColumns} locale={{ emptyText: '暂无已绑定文件；请通过上传向导完成文件登记并绑定版本。' }} /></Card><Tabs items={[{ key: 'versions', label: '版本历史', children: <Table rowKey="versionId" dataSource={d?.versions ?? []} pagination={false} columns={[{ title: '版本', dataIndex: 'versionName' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '内容安全', dataIndex: 'contentSafetyStatus' }, { title: '诊断', dataIndex: 'diagnosticMessage' }]} /> }, { key: 'files', label: `文件元数据（${d?.files.length ?? 0}）`, children: <Table rowKey="id" dataSource={d?.files ?? []} pagination={false} columns={fileColumns} locale={{ emptyText: '暂无文件元数据' }} /> }, { key: 'lineage', label: '血缘', children: <Table rowKey="lineageId" dataSource={d?.lineage ?? []} pagination={false} columns={[{ title: '来源', dataIndex: 'sourceType' }, { title: 'Source ID', dataIndex: 'sourceId' }, { title: '目标', dataIndex: 'targetId' }, { title: '转换', dataIndex: 'transformType' }]} /> }, { key: 'access', label: '权限授权', children: <Table rowKey="grantId" dataSource={d?.grants ?? []} pagination={false} columns={[{ title: '用户', dataIndex: 'userName' }, { title: '状态', dataIndex: 'status' }, { title: '有效期', dataIndex: 'expiresAt' }]} /> }]} /></div>;
+  const canCreateAnnotationTask = d?.dataset.status === 'ACTIVE';
+  return <div className="content-page">{holder}<div className="page-hero"><div><Typography.Title level={3}>{d?.dataset.name ?? '数据集详情'}</Typography.Title><Typography.Text type="secondary">概览 · 版本 · 文件 · 权限 · 血缘 · 样例预览</Typography.Text></div><Space wrap><Button onClick={() => ref.mutate()}>请求引用检查</Button><Button type="primary" disabled={!canCreateAnnotationTask} onClick={() => nav('/ann')}>创建标注任务</Button></Space></div>{!canCreateAnnotationTask ? <Alert type="warning" showIcon style={{ marginBottom: 16 }} title="当前数据集尚未达到可发起标注任务的状态" description="仅 ACTIVE / 可用状态的数据集可继续发起标注任务；如处于 SECURITY_PENDING，请等待内容安全结果。" /> : null}{ref.data ? <Alert type="success" showIcon title={`DatasetReference 可用：${ref.data.versionId}`} style={{ marginBottom: 16 }} /> : null}<Card loading={detail.isLoading}><Descriptions bordered column={2}><Descriptions.Item label="数据类型">{txt(d?.dataset.dataType)}</Descriptions.Item><Descriptions.Item label="状态"><Tag color={color(d?.dataset.status)}>{d?.dataset.status}</Tag></Descriptions.Item><Descriptions.Item label="权限"><Tag color={d?.dataset.accessLevel === 'RESTRICTED' ? 'red' : 'blue'}>{d?.dataset.accessLevel}</Tag></Descriptions.Item><Descriptions.Item label="样本数">{d?.dataset.recordCount.toLocaleString('zh-CN')}</Descriptions.Item><Descriptions.Item label="标签">{d?.dataset.tags.map((t) => <Tag key={t}>{t}</Tag>)}</Descriptions.Item><Descriptions.Item label="预览状态">{d?.previewStatus} · {d?.previewDiagnostic}</Descriptions.Item></Descriptions></Card><Card title={`文件信息（${d?.files.length ?? 0}）`} style={{ marginTop: 16 }} loading={detail.isLoading}><Table rowKey="id" dataSource={d?.files ?? []} pagination={false} columns={fileColumns} locale={{ emptyText: '暂无已绑定文件；请通过上传向导完成文件登记并绑定版本。' }} /></Card><Tabs items={[{ key: 'versions', label: '版本历史', children: <Table rowKey="versionId" dataSource={d?.versions ?? []} pagination={false} columns={[{ title: '版本', dataIndex: 'versionName' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '内容安全', dataIndex: 'contentSafetyStatus' }, { title: '诊断', dataIndex: 'diagnosticMessage' }]} /> }, { key: 'files', label: `文件元数据（${d?.files.length ?? 0}）`, children: <Table rowKey="id" dataSource={d?.files ?? []} pagination={false} columns={fileColumns} locale={{ emptyText: '暂无文件元数据' }} /> }, { key: 'lineage', label: '血缘', children: <Table rowKey="lineageId" dataSource={d?.lineage ?? []} pagination={false} columns={[{ title: '来源', dataIndex: 'sourceType' }, { title: 'Source ID', dataIndex: 'sourceId' }, { title: '目标', dataIndex: 'targetId' }, { title: '转换', dataIndex: 'transformType' }]} /> }, { key: 'access', label: '权限授权', children: <Table rowKey="grantId" dataSource={d?.grants ?? []} pagination={false} columns={[{ title: '用户', dataIndex: 'userName' }, { title: '状态', dataIndex: 'status' }, { title: '有效期', dataIndex: 'expiresAt' }]} /> }]} /></div>;
 }

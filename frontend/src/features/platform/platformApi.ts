@@ -589,6 +589,10 @@ export type DataStandardOverview = { stats: { datasetCount: number; profiledCoun
 export type DataSourceSummary = { sourceId: string; name: string; sourceType: string; tenantId: string; projectId: string | null; endpoint: string; port: number | null; databaseName: string | null; credentialMode: string; secretRefMasked: string | null; sharedScope: string; description: string | null; status: string; lastTestAt: string | null; diagnosticCode: string | null; diagnosticMessage: string | null; latencyMs: number | null; updatedAt: string };
 export type DataSourceTestResult = { sourceId: string; result: string; status: string; diagnosticCode: string; diagnosticMessage: string; latencyMs: number | null; traceId: string; testedAt: string };
 export type DataSourceSyncTask = { taskId: string; sourceId: string; sourceName: string; targetDatasetId: string | null; targetDatasetName: string | null; name: string; scheduleMode: string; syncScope: string | null; status: string; lastRunAt: string | null; lastResult: string | null; diagnosticCode: string | null; diagnosticMessage: string | null };
+export type DatasetUploadProgress = { phase: string; percent: number };
+export type DatasetUploadSummary = { totalFiles: number; acceptedFiles: number; rejectedFiles: number };
+export type DatasetUploadFile = { fileName: string; fileId: string | null; status: string; sizeBytes: number | null; contentType: string | null; diagnosticCode: string; diagnosticMessage: string };
+export type DatasetUploadSession = { sessionId: string; datasetId: string | null; versionId: string | null; status: string; creationMode: string; progress: DatasetUploadProgress; summary: DatasetUploadSummary; datasetStatus: string | null; versionStatus: string | null; diagnosticCode: string; diagnosticMessage: string; files: DatasetUploadFile[] };
 export type DatasetSummary = { datasetId: string; name: string; datasetType: string; dataType: string; tenantId: string; projectId: string | null; currentVersionId: string | null; currentVersionName: string | null; status: string; accessLevel: string; tags: string[]; recordCount: number; sizeBytes: number; ownerId: string; ownerName: string; description: string | null; updatedAt: string };
 export type DatasetStats = { total: number; raw: number; preprocessed: number; annotated: number; restricted: number; totalSizeBytes: number };
 export type DatasetList = { items: DatasetSummary[]; total: number; page: number; pageSize: number; stats: DatasetStats };
@@ -625,6 +629,20 @@ export const dataApi = {
   async syncTasks() { return unwrap<DataSourceSyncTask[]>(apiClient.get('/api/v1/data-source-sync-tasks')); },
   async createSyncTask(input: { sourceId: string; targetDatasetId?: string; name: string; scheduleMode: string; syncScope?: string }) { return unwrap<DataSourceSyncTask>(apiClient.post('/api/v1/data-source-sync-tasks', input)); },
   async runSyncTask(taskId: string) { return unwrap<DataSourceSyncTask>(apiClient.post(`/api/v1/data-source-sync-tasks/${taskId}/run`)); },
+  async createDatasetUploadSession(input: { name: string; tenantId?: string; datasetType: string; dataType: string; accessLevel: string; tags: string[]; description?: string; creationMode: 'LOCAL_UPLOAD' }) {
+    return unwrap<DatasetUploadSession>(apiClient.post('/api/v1/dataset-upload-sessions', input));
+  },
+  async uploadDatasetSessionFiles(sessionId: string, files: File[]) {
+    const formData = new FormData();
+    files.forEach((file) => formData.append('files', file));
+    return unwrap<DatasetUploadSession>(apiClient.post(`/api/v1/dataset-upload-sessions/${sessionId}/files`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }));
+  },
+  async datasetUploadSession(sessionId: string) {
+    return unwrap<DatasetUploadSession>(apiClient.get(`/api/v1/dataset-upload-sessions/${sessionId}`));
+  },
+  async commitDatasetUploadSession(sessionId: string, input: { publishRequested?: boolean } = {}) {
+    return unwrap<DatasetUploadSession>(apiClient.post(`/api/v1/dataset-upload-sessions/${sessionId}/commit`, input));
+  },
   async datasets(params: { keyword?: string; datasetType?: string; status?: string; accessLevel?: string } = {}) { return unwrap<DatasetList>(apiClient.get('/api/v1/datasets', { params })); },
   async createDataset(input: { name: string; datasetType: string; dataType: string; tenantId: string; accessLevel: string; tags: string[]; description?: string; recordCount?: number; sourceId?: string }) { return unwrap<DatasetDetail>(apiClient.post('/api/v1/datasets', input)); },
   async updateDataset(datasetId: string, input: { name?: string; accessLevel?: string; tags?: string[]; description?: string }) { return unwrap<DatasetDetail>(apiClient.put(`/api/v1/datasets/${datasetId}`, input)); },

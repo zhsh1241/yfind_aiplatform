@@ -5,12 +5,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yf.smp.app.web.TraceIdFilter;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.function.Function;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+import javax.imageio.ImageIO;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -24,6 +35,266 @@ class DataManagementControllerTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient client = HttpClient.newHttpClient();
+
+    @Test
+    void localDatasetUploadSessionCreatesReceivesFilesQueriesAndCommits() throws Exception {
+        // TASK-local-dataset-upload AC-02 AC-03 AC-05 AC-06
+        String admin = login("admin", "YF");
+        HttpServer server = mockContentSafetyServer("""
+            {"status":"PASSED"}
+            """);
+        try {
+            putJson("/api/v1/platform/configs/content_safety.endpoint", "trace-f015-config-content-safety", """
+                {"scopeType":"BU","scopeId":"TENANT-CABIN","value":"%s","reason":"F015 test override"}
+                """.formatted(serverEndpoint(server)), admin);
+            String buAdmin = login("buadmin", "CABIN");
+            JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-session-create", """
+                {"name":"F015 本地上传图片数据集","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","description":"本地上传创建","creationMode":"LOCAL_UPLOAD"}
+                """, buAdmin);
+            assertThat(created.at("/code").asInt()).isZero();
+            String sessionId = created.at("/data/sessionId").asText();
+            assertThat(created.at("/data/status").asText()).isEqualTo("PENDING_UPLOAD");
+            assertThat(created.at("/data/datasetId").isNull()).isTrue();
+            assertThat(created.at("/data/versionId").isNull()).isTrue();
+
+            JsonNode queriedBeforeUpload = getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-session-query-before", buAdmin);
+            assertThat(queriedBeforeUpload.at("/data/sessionId").asText()).isEqualTo(sessionId);
+            assertThat(queriedBeforeUpload.at("/data/summary/acceptedFiles").asInt()).isZero();
+
+            JsonNode uploaded = postMultipart(
+                "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
+                "trace-f015-session-upload",
+                List.of(new MultipartPart("files", "weld-1.jpg", "image/jpeg", imageBytes("jpg"))),
+                buAdmin
+            );
+            assertThat(uploaded.at("/code").asInt()).isZero();
+            assertThat(uploaded.at("/data/status").asText()).isEqualTo("UPLOADING");
+            assertThat(uploaded.at("/data/summary/acceptedFiles").asInt()).isEqualTo(1);
+            assertThat(uploaded.at("/data/files/0/status").asText()).isEqualTo("UPLOADED");
+
+            JsonNode queriedAfterUpload = getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-session-query-after", buAdmin);
+            assertThat(queriedAfterUpload.at("/data/files").size()).isEqualTo(1);
+            assertThat(queriedAfterUpload.at("/data/files/0/fileName").asText()).isEqualTo("weld-1.jpg");
+
+            JsonNode committed = postJson("/api/v1/dataset-upload-sessions/" + sessionId + "/commit", "trace-f015-session-commit", "{\"publishRequested\":false}", buAdmin);
+            assertThat(committed.at("/code").asInt()).isZero();
+            assertThat(committed.at("/data/status").asText()).isEqualTo("PROCESSING");
+            assertThat(committed.at("/data/progress/phase").asText()).isEqualTo("SECURITY_SCAN");
+
+            JsonNode completed = waitForUploadSessionStatus(sessionId, buAdmin, "READY");
+            assertThat(completed.at("/data/datasetStatus").asText()).isEqualTo("ACTIVE");
+            assertThat(completed.at("/data/versionStatus").asText()).isEqualTo("READY");
+            String datasetId = completed.at("/data/datasetId").asText();
+            String versionId = completed.at("/data/versionId").asText();
+            assertThat(datasetId).startsWith("DATASET-");
+            assertThat(versionId).startsWith("DVER-");
+
+            JsonNode detail = getJson("/api/v1/datasets/" + datasetId, "trace-f015-dataset-detail", buAdmin);
+            assertThat(detail.at("/data/dataset/status").asText()).isEqualTo("ACTIVE");
+            assertThat(detail.at("/data/dataset/currentVersionId").asText()).isEqualTo(versionId);
+            assertThat(detail.at("/data/files/0/fileRole").asText()).isEqualTo("RAW");
+            assertThat(detail.at("/data/lineage/0/sourceType").asText()).isEqualTo("LOCAL_UPLOAD");
+
+            JsonNode audit = getJson("/api/v1/platform/audit-logs?action=DATASET_UPLOAD_COMMITTED", "trace-f015-audit", admin);
+            assertThat(audit.at("/data/items/0/action").asText()).isEqualTo("DATASET_UPLOAD_COMMITTED");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void localDatasetUploadRejectsIllegalFormatAndPreventsEmptyCommit() throws Exception {
+        // TASK-local-dataset-upload AC-02 AC-04 AC-06
+        String buAdmin = login("buadmin", "CABIN");
+        JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-invalid-create", """
+            {"name":"F015 非法格式","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","creationMode":"LOCAL_UPLOAD"}
+            """, buAdmin);
+        String sessionId = created.at("/data/sessionId").asText();
+
+        JsonNode rejected = postMultipart(
+            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
+            "trace-f015-invalid-upload",
+            List.of(new MultipartPart("files", "bad.txt", "text/plain", "not-an-image".getBytes(StandardCharsets.UTF_8))),
+            buAdmin
+        );
+        assertThat(rejected.at("/code").asInt()).isEqualTo(42200);
+        assertThat(rejected.at("/message").asText()).contains("UPLOAD_FILE_FORMAT_NOT_ALLOWED");
+
+        JsonNode queried = getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-invalid-query", buAdmin);
+        assertThat(queried.at("/data/sessionId").asText()).isEqualTo(sessionId);
+        assertThat(queried.at("/data/summary/acceptedFiles").asInt()).isZero();
+        assertThat(queried.at("/data/summary/rejectedFiles").asInt()).isEqualTo(1);
+        assertThat(queried.at("/data/files/0/diagnosticCode").asText()).isEqualTo("DATASET_UPLOAD_FILE_TYPE_UNSUPPORTED");
+
+        JsonNode commitRejected = postJson("/api/v1/dataset-upload-sessions/" + sessionId + "/commit", "trace-f015-invalid-commit", "{\"publishRequested\":false}", buAdmin);
+        assertThat(commitRejected.at("/code").asInt()).isEqualTo(42200);
+        assertThat(commitRejected.at("/message").asText()).contains("DATASET_UPLOAD_EMPTY_SESSION");
+    }
+
+    @Test
+    void localDatasetUploadSecurityBlockedFilesDoNotEnterReadyVersion() throws Exception {
+        // TASK-local-dataset-upload AC-04 AC-06
+        String admin = login("admin", "YF");
+        HttpServer server = mockContentSafetyServer(requestBody ->
+            requestBody.contains("risk-photo.jpg")
+                ? "{\"status\":\"BLOCKED\"}"
+                : "{\"status\":\"PASSED\"}"
+        );
+        try {
+            putJson("/api/v1/platform/configs/content_safety.endpoint", "trace-f015-config-content-safety-block", """
+                {"scopeType":"BU","scopeId":"TENANT-CABIN","value":"%s","reason":"F015 block test override"}
+                """.formatted(serverEndpoint(server)), admin);
+            String buAdmin = login("buadmin", "CABIN");
+            JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-security-block-create", """
+                {"name":"F015 安全拦截","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","creationMode":"LOCAL_UPLOAD"}
+                """, buAdmin);
+            String sessionId = created.at("/data/sessionId").asText();
+
+            JsonNode uploaded = postMultipart(
+                "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
+                "trace-f015-security-block-upload",
+                List.of(
+                    new MultipartPart("files", "risk-photo.jpg", "image/jpeg", imageBytes("jpg")),
+                    new MultipartPart("files", "safe-photo.jpg", "image/jpeg", imageBytes("jpg"))
+                ),
+                buAdmin
+            );
+            assertThat(uploaded.at("/code").asInt()).isZero();
+
+            JsonNode committed = postJson("/api/v1/dataset-upload-sessions/" + sessionId + "/commit", "trace-f015-security-block-commit", "{\"publishRequested\":false}", buAdmin);
+            assertThat(committed.at("/code").asInt()).isZero();
+            assertThat(committed.at("/data/status").asText()).isEqualTo("PROCESSING");
+
+            JsonNode completed = waitForUploadSessionStatus(sessionId, buAdmin, "SECURITY_PENDING");
+            assertThat(completed.at("/data/datasetStatus").asText()).isEqualTo("DRAFT");
+            assertThat(completed.at("/data/versionStatus").asText()).isEqualTo("SECURITY_PENDING");
+            assertThat(completed.at("/data/files").findValuesAsText("status")).contains("SECURITY_BLOCKED", "BOUND");
+
+            String datasetId = completed.at("/data/datasetId").asText();
+            JsonNode detail = getJson("/api/v1/datasets/" + datasetId, "trace-f015-security-block-detail", buAdmin);
+            assertThat(detail.at("/data/dataset/status").asText()).isEqualTo("DRAFT");
+            assertThat(detail.at("/data/files").size()).isEqualTo(1);
+
+            JsonNode audit = getJson("/api/v1/platform/audit-logs?action=DATASET_SECURITY_BLOCKED", "trace-f015-security-block-audit", admin);
+            assertThat(audit.at("/data/items/0/action").asText()).isEqualTo("DATASET_SECURITY_BLOCKED");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void localDatasetUploadSecurityPendingDoesNotPretendReady() throws Exception {
+        // TASK-local-dataset-upload AC-04 AC-06
+        String admin = login("admin", "YF");
+        putJson("/api/v1/platform/configs/content_safety.endpoint", "trace-f015-config-content-safety-pending", """
+            {"scopeType":"BU","scopeId":"TENANT-CABIN","value":"TODO_CONFIRM_CONTENT_SAFETY_ENDPOINT","reason":"F015 pending test reset"}
+            """, admin);
+        String buAdmin = login("buadmin", "CABIN");
+        JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-security-pending-create", """
+            {"name":"F015 安全待确认","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","creationMode":"LOCAL_UPLOAD"}
+            """, buAdmin);
+        String sessionId = created.at("/data/sessionId").asText();
+
+        JsonNode uploaded = postMultipart(
+            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
+            "trace-f015-security-pending-upload",
+            List.of(new MultipartPart("files", "pending-review.jpg", "image/jpeg", imageBytes("jpg"))),
+            buAdmin
+        );
+        assertThat(uploaded.at("/code").asInt()).isZero();
+
+        JsonNode committed = postJson("/api/v1/dataset-upload-sessions/" + sessionId + "/commit", "trace-f015-security-pending-commit", "{\"publishRequested\":false}", buAdmin);
+        assertThat(committed.at("/code").asInt()).isZero();
+        assertThat(committed.at("/data/status").asText()).isEqualTo("PROCESSING");
+        assertThat(committed.at("/data/progress/phase").asText()).isEqualTo("SECURITY_SCAN");
+
+        JsonNode completed = waitForUploadSessionStatus(sessionId, buAdmin, "SECURITY_PENDING");
+        assertThat(completed.at("/data/datasetStatus").asText()).isEqualTo("DRAFT");
+        assertThat(completed.at("/data/versionStatus").asText()).isEqualTo("SECURITY_PENDING");
+        assertThat(completed.at("/data/diagnosticCode").asText()).isEqualTo("DATASET_UPLOAD_SECURITY_PENDING");
+        assertThat(completed.at("/data/diagnosticMessage").asText()).contains("TODO_CONFIRM_CONTENT_SAFETY_SERVICE");
+    }
+
+    @Test
+    void localDatasetUploadZipContinuesAfterIllegalEntry() throws Exception {
+        // TASK-local-dataset-upload AC-02 AC-03 AC-06
+        String admin = login("admin", "YF");
+        putJson("/api/v1/platform/configs/content_safety.endpoint", "trace-f015-config-content-safety-zip", """
+            {"scopeType":"BU","scopeId":"TENANT-CABIN","value":"https://content-safety.sandbox.internal","reason":"F015 zip test override"}
+            """, admin);
+        String buAdmin = login("buadmin", "CABIN");
+        JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-zip-create", """
+            {"name":"F015 zip 混合上传","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","creationMode":"LOCAL_UPLOAD"}
+            """, buAdmin);
+        String sessionId = created.at("/data/sessionId").asText();
+
+        byte[] zipBytes = zipOf(
+            new ZipPart("good-1.jpg", imageBytes("jpg")),
+            new ZipPart("bad.txt", "bad".getBytes(StandardCharsets.UTF_8)),
+            new ZipPart("good-2.png", imageBytes("png"))
+        );
+        JsonNode uploaded = postMultipart(
+            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
+            "trace-f015-zip-upload",
+            List.of(new MultipartPart("files", "mixed.zip", "application/zip", zipBytes)),
+            buAdmin
+        );
+        assertThat(uploaded.at("/code").asInt()).isZero();
+        assertThat(uploaded.at("/data/summary/acceptedFiles").asInt()).isEqualTo(2);
+        assertThat(uploaded.at("/data/summary/rejectedFiles").asInt()).isEqualTo(1);
+    }
+
+    @Test
+    void localDatasetUploadRejectsOversizedFileWith413AndRetainsDiagnostic() throws Exception {
+        // TASK-local-dataset-upload AC-02 AC-04 AC-06
+        String buAdmin = login("buadmin", "CABIN");
+        JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-oversize-create", """
+            {"name":"F015 超限文件","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","creationMode":"LOCAL_UPLOAD"}
+            """, buAdmin);
+        String sessionId = created.at("/data/sessionId").asText();
+
+        JsonNode rejected = postMultipart(
+            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
+            "trace-f015-oversize-upload",
+            List.of(new MultipartPart("files", "too-large.jpg", "image/jpeg", new byte[5 * 1024 * 1024 + 1])),
+            buAdmin
+        );
+        assertThat(rejected.at("/code").asInt()).isEqualTo(41300);
+        assertThat(rejected.at("/message").asText()).contains("DATASET_UPLOAD_FILE_LIMIT_EXCEEDED");
+    }
+
+    @Test
+    void localDatasetUploadRejectsCorruptedImagePayload() throws Exception {
+        // TASK-local-dataset-upload AC-02 AC-04 AC-06
+        String buAdmin = login("buadmin", "CABIN");
+        JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-corrupt-create", """
+            {"name":"F015 损坏图片","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","creationMode":"LOCAL_UPLOAD"}
+            """, buAdmin);
+        String sessionId = created.at("/data/sessionId").asText();
+
+        JsonNode rejected = postMultipart(
+            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
+            "trace-f015-corrupt-upload",
+            List.of(new MultipartPart("files", "broken.png", "image/png", "not-a-real-image".getBytes(StandardCharsets.UTF_8))),
+            buAdmin
+        );
+        assertThat(rejected.at("/code").asInt()).isEqualTo(42200);
+        assertThat(rejected.at("/message").asText()).contains("DATASET_UPLOAD_FILE_CORRUPTED");
+
+        JsonNode queried = getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-corrupt-query", buAdmin);
+        assertThat(queried.at("/data/summary/rejectedFiles").asInt()).isEqualTo(1);
+        assertThat(queried.at("/data/files/0/diagnosticCode").asText()).isEqualTo("DATASET_UPLOAD_FILE_CORRUPTED");
+    }
+
+    @Test
+    void localDatasetUploadPermissionChainBlocksUnauthorizedRole() throws Exception {
+        // TASK-local-dataset-upload AC-06
+        String qe = login("qeuser", "QE");
+        JsonNode forbidden = postJson("/api/v1/dataset-upload-sessions", "trace-f015-permission", """
+            {"datasetName":"QE 无权限上传","tenantId":"TENANT-QE","accessLevel":"TEAM","dataType":"IMAGE"}
+            """, qe);
+        assertThat(forbidden.at("/code").asInt()).isEqualTo(40300);
+    }
 
     @Test
     void connectorProbeAcceptsHttpEndpointForTcpOnlyIndustrialProtocol() throws Exception {
@@ -479,9 +750,92 @@ class DataManagementControllerTest {
         return send(builder.build());
     }
 
+    private JsonNode postMultipart(String path, String traceId, List<MultipartPart> parts, String token) throws Exception {
+        String boundary = "----SMPBoundary" + System.nanoTime();
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        for (MultipartPart part : parts) {
+            body.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+            body.write(("Content-Disposition: form-data; name=\"" + part.name() + "\"; filename=\"" + part.fileName() + "\"\r\n").getBytes(StandardCharsets.UTF_8));
+            body.write(("Content-Type: " + part.contentType() + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+            body.write(part.content());
+            body.write("\r\n".getBytes(StandardCharsets.UTF_8));
+        }
+        body.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+        var builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+            .header(TraceIdFilter.TRACE_HEADER, traceId)
+            .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+            .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()));
+        if (token != null) builder.header("Authorization", "Bearer " + token);
+        return send(builder.build());
+    }
+
     private JsonNode send(HttpRequest request) throws Exception {
         var response = client.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() < 400) assertThat(response.headers().firstValue(TraceIdFilter.TRACE_HEADER)).isPresent();
         return objectMapper.readTree(response.body());
     }
+
+    private JsonNode waitForUploadSessionStatus(String sessionId, String token, String expectedStatus) throws Exception {
+        JsonNode latest = null;
+        for (int i = 0; i < 100; i++) {
+            latest = getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-poll-" + i, token);
+            if (expectedStatus.equals(latest.at("/data/status").asText())) {
+                return latest;
+            }
+            Thread.sleep(100);
+        }
+        return latest == null ? getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-poll-timeout", token) : latest;
+    }
+
+    private HttpServer mockContentSafetyServer(String responseBody) throws Exception {
+        return mockContentSafetyServer(ignored -> responseBody);
+    }
+
+    private HttpServer mockContentSafetyServer(Function<String, String> responseFactory) throws Exception {
+        HttpServer server = HttpServer.create(new java.net.InetSocketAddress(0), 0);
+        server.createContext("/scan", exchange -> {
+            String requestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            respondJson(exchange, responseFactory.apply(requestBody));
+        });
+        server.start();
+        return server;
+    }
+
+    private String serverEndpoint(HttpServer server) {
+        return "http://127.0.0.1:" + server.getAddress().getPort() + "/scan";
+    }
+
+    private void respondJson(HttpExchange exchange, String body) throws java.io.IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+            output.write(bytes);
+        }
+    }
+
+    private byte[] zipOf(ZipPart... parts) throws Exception {
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream();
+             ZipOutputStream zip = new ZipOutputStream(output)) {
+            for (ZipPart part : parts) {
+                zip.putNextEntry(new ZipEntry(part.name()));
+                zip.write(part.bytes());
+                zip.closeEntry();
+            }
+            zip.finish();
+            return output.toByteArray();
+        }
+    }
+
+    private byte[] imageBytes(String format) throws Exception {
+        BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB);
+        image.setRGB(0, 0, 0x00FF00);
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            ImageIO.write(image, format, output);
+            return output.toByteArray();
+        }
+    }
+
+    private record MultipartPart(String name, String fileName, String contentType, byte[] content) {}
+    private record ZipPart(String name, byte[] bytes) {}
 }

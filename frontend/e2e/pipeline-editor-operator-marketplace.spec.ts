@@ -5,6 +5,7 @@ test('TASK-pipeline-editor-operator-marketplace AC-01 AC-02 AC-03 AC-05 AC-06 AC
   await seedAuthenticatedSession(page);
 
   await page.getByText('Pipeline编辑器').click();
+  await page.waitForURL('**/pipeline');
   await expect(page.getByRole('heading', { name: 'Pipeline编辑器' })).toBeVisible();
   await expect(page.getByText('算子库', { exact: true })).toBeVisible();
   await expect(page.getByText('DAG 画布', { exact: true })).toBeVisible();

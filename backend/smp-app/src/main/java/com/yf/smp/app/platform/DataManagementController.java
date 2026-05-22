@@ -2,7 +2,9 @@ package com.yf.smp.app.platform;
 
 import com.yf.smp.common.api.ApiResponse;
 import java.util.List;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -23,6 +25,10 @@ public class DataManagementController {
     @PostMapping("/data-source-sync-tasks/{id}/run") ResponseEntity<ApiResponse<DataSourceSyncTaskResponse>> runSyncTask(@RequestHeader(name="Authorization",required=false) String a,@PathVariable String id){ return PlatformResponses.ok(service.runSyncTask(principal(a),id)); }
     @GetMapping("/datasets") ResponseEntity<ApiResponse<DatasetListResponse>> datasets(@RequestHeader(name="Authorization",required=false) String a,@RequestParam(required=false) String keyword,@RequestParam(required=false) String datasetType,@RequestParam(required=false) String status,@RequestParam(required=false) String accessLevel,@RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="20") int pageSize){ return PlatformResponses.ok(service.datasets(principal(a),keyword,datasetType,status,accessLevel,page,pageSize)); }
     @PostMapping("/datasets") ResponseEntity<ApiResponse<DatasetDetailResponse>> createDataset(@RequestHeader(name="Authorization",required=false) String a,@RequestBody DatasetCreateRequest r){ return PlatformResponses.ok(service.createDataset(principal(a),r)); }
+    @PostMapping("/dataset-upload-sessions") ResponseEntity<ApiResponse<DatasetUploadSessionResponse>> createDatasetUploadSession(@RequestHeader(name="Authorization",required=false) String a,@RequestBody DatasetUploadSessionCreateRequest r){ return PlatformResponses.ok(service.createDatasetUploadSession(principal(a),r)); }
+    @PostMapping(value="/dataset-upload-sessions/{sessionId}/files", consumes=MediaType.MULTIPART_FORM_DATA_VALUE) ResponseEntity<ApiResponse<DatasetUploadSessionResponse>> uploadDatasetSessionFiles(@RequestHeader(name="Authorization",required=false) String a,@PathVariable String sessionId,@RequestPart("files") MultipartFile[] files){ return PlatformResponses.ok(service.uploadDatasetSessionFiles(principal(a),sessionId,files)); }
+    @GetMapping("/dataset-upload-sessions/{sessionId}") ResponseEntity<ApiResponse<DatasetUploadSessionResponse>> datasetUploadSession(@RequestHeader(name="Authorization",required=false) String a,@PathVariable String sessionId){ return PlatformResponses.ok(service.datasetUploadSession(principal(a),sessionId)); }
+    @PostMapping("/dataset-upload-sessions/{sessionId}/commit") ResponseEntity<ApiResponse<DatasetUploadSessionResponse>> commitDatasetUploadSession(@RequestHeader(name="Authorization",required=false) String a,@PathVariable String sessionId,@RequestBody(required=false) DatasetUploadSessionCommitRequest r){ return PlatformResponses.ok(service.commitDatasetUploadSession(principal(a),sessionId,r==null?new DatasetUploadSessionCommitRequest(false):r)); }
     @GetMapping("/datasets/{id}") ResponseEntity<ApiResponse<DatasetDetailResponse>> datasetDetail(@RequestHeader(name="Authorization",required=false) String a,@PathVariable String id){ return PlatformResponses.ok(service.datasetDetail(principal(a),id)); }
     @PutMapping("/datasets/{id}") ResponseEntity<ApiResponse<DatasetDetailResponse>> updateDataset(@RequestHeader(name="Authorization",required=false) String a,@PathVariable String id,@RequestBody DatasetUpdateRequest r){ return PlatformResponses.ok(service.updateDataset(principal(a),id,r)); }
     @PostMapping("/datasets/{id}/versions") ResponseEntity<ApiResponse<DatasetVersionResponse>> createVersion(@RequestHeader(name="Authorization",required=false) String a,@PathVariable String id,@RequestBody(required=false) DatasetVersionCreateRequest r){ return PlatformResponses.ok(service.createVersion(principal(a),id,r==null?new DatasetVersionCreateRequest(null,null):r)); }

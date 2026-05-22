@@ -9,3 +9,11 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+  servlet:
+    multipart:
+      max-file-size: 32MB
+      max-request-size: 64MB
+server:
+  tomcat:
+    max-swallow-size: 64MB
+    max-http-form-post-size: 64MB
