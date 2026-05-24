@@ -27,11 +27,12 @@ test('TASK-data-source-dataset-management AC-03 AC-06 dataset list and detail pr
   await expect(page.getByText('数据集总数')).toBeVisible();
   await expect(page.getByText('如何导入数据集')).toBeVisible();
   await expect(page.getByRole('cell', { name: '焊缝缺陷检测数据集' })).toBeVisible();
+  await expect(page.getByText('版本数')).toBeVisible();
   await page.getByText('详情').first().click();
   await expect(page.getByRole('heading', { name: '焊缝缺陷检测数据集' })).toBeVisible();
   await expect(page.getByText('版本历史')).toBeVisible();
   await expect(page.getByRole('tab', { name: '血缘' })).toBeVisible();
-  await expect(page.getByText(/非图片\/不可预览文件/)).toBeVisible();
+  await expect(page.getByText('所选版本', { exact: true })).toBeVisible();
 });
 
 test('TASK-data-source-dataset-management AC-04 upload wizard exposes F007 file seam', async ({ page }) => {

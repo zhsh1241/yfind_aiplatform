@@ -269,21 +269,54 @@ public class DataManagementService {
     }
 
     public DatasetListResponse datasets(PlatformPrincipal principal, String keyword, String datasetType, String status, String accessLevel, int page, int pageSize) {
-        identityService.requirePermission(principal, "data:dataset:read"); List<DatasetSummaryResponse> v = allDatasetSummaries(principal).stream().filter(i -> blank(keyword) || i.name().toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT))).filter(i -> blank(datasetType) || i.datasetType().equalsIgnoreCase(datasetType)).filter(i -> blank(status) || i.status().equalsIgnoreCase(status)).filter(i -> blank(accessLevel) || i.accessLevel().equalsIgnoreCase(accessLevel)).toList(); int p=Math.max(1,page), ps=Math.max(1,Math.min(100,pageSize)), from=Math.min((p-1)*ps,v.size()), to=Math.min(from+ps,v.size()); return new DatasetListResponse(v.subList(from,to), v.size(), p, ps, stats(v));
+        identityService.requirePermission(principal, "data:dataset:read");
+        List<DatasetSummaryResponse> visible = allDatasetSummaries(principal).stream()
+            .filter(i -> blank(keyword) || i.name().toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT)))
+            .filter(i -> blank(datasetType) || i.datasetType().equalsIgnoreCase(datasetType))
+            .filter(i -> blank(status) || i.status().equalsIgnoreCase(status))
+            .filter(i -> blank(accessLevel) || i.accessLevel().equalsIgnoreCase(accessLevel))
+            .toList();
+        int normalizedPage = Math.max(1, page);
+        int normalizedPageSize = Math.max(1, Math.min(100, pageSize));
+        int from = Math.min((normalizedPage - 1) * normalizedPageSize, visible.size());
+        int to = Math.min(from + normalizedPageSize, visible.size());
+        return new DatasetListResponse(visible.subList(from, to), visible.size(), normalizedPage, normalizedPageSize, stats(visible));
     }
 
-    @Transactional public DatasetUploadSessionResponse createDatasetUploadSession(PlatformPrincipal principal, DatasetUploadSessionCreateRequest r) {
+    @Transactional
+    public DatasetUploadSessionResponse createDatasetUploadSession(PlatformPrincipal principal, DatasetUploadSessionCreateRequest r) {
         identityService.requirePermission(principal, "data:dataset:write");
         String tenantId = blank(r.tenantId(), principal.user().tenantId());
-        ensureCanSeeTenant(principal, tenantId, true);
-        if (!"LOCAL_UPLOAD".equalsIgnoreCase(blank(r.creationMode(), "LOCAL_UPLOAD"))) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_CREATION_MODE_INVALID: F015 仅支持 LOCAL_UPLOAD");
-        if (!"RAW".equalsIgnoreCase(blank(r.datasetType(), "RAW"))) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_DATASET_TYPE_INVALID: 本地上传仅支持 RAW");
-        if (!"IMAGE".equalsIgnoreCase(blank(r.dataType(), "IMAGE"))) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_DATA_TYPE_INVALID: 本地上传仅支持 IMAGE");
+        ensureCanSeeTenant(principal, tenantId, false);
+        if (!"LOCAL_UPLOAD".equalsIgnoreCase(blank(r.creationMode(), "LOCAL_UPLOAD"))) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_CREATION_MODE_INVALID: F015 仅支持 LOCAL_UPLOAD");
+        }
+        if (!"RAW".equalsIgnoreCase(blank(r.datasetType(), "RAW"))) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_DATASET_TYPE_INVALID: 本地上传仅支持 RAW");
+        }
+        if (!"IMAGE".equalsIgnoreCase(blank(r.dataType(), "IMAGE"))) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_DATA_TYPE_INVALID: 本地上传仅支持 IMAGE");
+        }
+        String targetAction = upper(r.targetAction(), "CREATE_DATASET");
+        String targetDatasetId = null;
+        String targetVersionId = null;
+        if ("APPEND_VERSION".equals(targetAction)) {
+            targetDatasetId = require(r.targetDatasetId(), "APPEND_VERSION 模式缺少目标数据集");
+            targetVersionId = require(r.targetVersionId(), "APPEND_VERSION 模式缺少目标版本");
+            assertAppendTargetWritable(principal, targetDatasetId, targetVersionId);
+        }
         OffsetDateTime now = now();
         String sessionId = "DUS-" + randomHex(10).toUpperCase(Locale.ROOT);
         String name = require(r.name(), "数据集名称不能为空");
-        jdbc.update("INSERT INTO dataset_upload_session (session_id,dataset_id,version_id,tenant_id,creation_mode,status,dataset_name,dataset_type,data_type,access_level,tags,description,total_files,accepted_files,rejected_files,diagnostic_code,diagnostic_message,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", sessionId, null, null, tenantId, "LOCAL_UPLOAD", "PENDING_UPLOAD", name, "RAW", "IMAGE", upper(r.accessLevel(), "TEAM"), joinTags(r.tags()), nullIfBlank(r.description()), 0, 0, 0, "OK", "SESSION_CREATED", principal.user().id(), now);
-        audit(principal, tenantId, "DATASET_UPLOAD_SESSION_CREATED", "DatasetUploadSession", sessionId, "SUCCESS", "INFO", null, "PENDING_UPLOAD", TRACE_TAG + ";LOCAL_UPLOAD");
+        jdbc.update("""
+            INSERT INTO dataset_upload_session
+            (session_id,dataset_id,version_id,tenant_id,creation_mode,status,dataset_name,dataset_type,data_type,access_level,tags,description,total_files,accepted_files,rejected_files,diagnostic_code,diagnostic_message,created_by,created_at,target_action,target_dataset_id,target_version_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            sessionId, null, null, tenantId, "LOCAL_UPLOAD", "PENDING_UPLOAD", name, "RAW", "IMAGE",
+            upper(r.accessLevel(), "TEAM"), joinTags(r.tags()), nullIfBlank(r.description()),
+            0, 0, 0, "OK", "SESSION_CREATED", principal.user().id(), now, targetAction, targetDatasetId, targetVersionId);
+        audit(principal, tenantId, "DATASET_UPLOAD_SESSION_CREATED", "DatasetUploadSession", sessionId, "SUCCESS", "INFO", null, "PENDING_UPLOAD", TRACE_TAG + ";" + targetAction);
         return datasetUploadSession(principal, sessionId);
     }
 
@@ -312,7 +345,8 @@ public class DataManagementService {
         return uploadSessionResponse(session);
     }
 
-    @Transactional(noRollbackFor = PlatformException.class) public DatasetUploadSessionResponse commitDatasetUploadSession(PlatformPrincipal principal, String sessionId, DatasetUploadSessionCommitRequest r) {
+    @Transactional(noRollbackFor = PlatformException.class)
+    public DatasetUploadSessionResponse commitDatasetUploadSession(PlatformPrincipal principal, String sessionId, DatasetUploadSessionCommitRequest r) {
         identityService.requirePermission(principal, "data:dataset:write");
         DatasetUploadSessionRecord session = datasetUploadSessionRecordVisible(principal, sessionId, true);
         if ("PROCESSING".equals(session.status())) {
@@ -322,7 +356,9 @@ public class DataManagementService {
             audit(principal, session.tenantId(), "DATASET_UPLOAD_FAILED", "DatasetUploadSession", sessionId, "FAILURE", "WARNING", session.status(), "DUPLICATE_COMMIT", TRACE_TAG + ";DATASET_UPLOAD_DUPLICATE_COMMIT");
             throw new PlatformException(PlatformError.CONFLICT, "DATASET_UPLOAD_DUPLICATE_COMMIT: upload session 已提交");
         }
-        if ("CANCELLED".equals(session.status()) || "FAILED".equals(session.status())) throw new PlatformException(PlatformError.CONFLICT, "DATASET_UPLOAD_SESSION_STATE_INVALID: 当前 session 状态不允许提交");
+        if ("CANCELLED".equals(session.status()) || "FAILED".equals(session.status())) {
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_UPLOAD_SESSION_STATE_INVALID: 当前 session 状态不允许提交");
+        }
         List<DatasetUploadSessionFileRecord> uploadFiles = uploadSessionFiles(sessionId);
         long accepted = uploadFiles.stream().filter(i -> List.of("ACCEPTED", "UPLOADED", "BOUND", "SECURITY_BLOCKED").contains(i.status())).count();
         if (accepted == 0) {
@@ -330,20 +366,23 @@ public class DataManagementService {
             audit(principal, session.tenantId(), "DATASET_UPLOAD_FAILED", "DatasetUploadSession", sessionId, "FAILURE", "WARNING", session.status(), "FAILED", TRACE_TAG + ";DATASET_UPLOAD_EMPTY_SESSION");
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_EMPTY_SESSION: 当前上传会话没有可提交文件");
         }
+        if ("APPEND_VERSION".equals(session.targetAction())) {
+            assertAppendTargetWritable(principal, session.targetDatasetId(), session.targetVersionId());
+        }
         OffsetDateTime now = now();
-        String datasetId = blank(session.datasetId()) ? "DATASET-" + randomHex(10).toUpperCase(Locale.ROOT) : session.datasetId();
-        String versionId = blank(session.versionId()) ? "DVER-" + randomHex(10).toUpperCase(Locale.ROOT) : session.versionId();
+        String datasetId = "APPEND_VERSION".equals(session.targetAction()) ? session.targetDatasetId() : blank(session.datasetId()) ? "DATASET-" + randomHex(10).toUpperCase(Locale.ROOT) : session.datasetId();
+        String versionId = "APPEND_VERSION".equals(session.targetAction()) ? session.targetVersionId() : blank(session.versionId()) ? "DVER-" + randomHex(10).toUpperCase(Locale.ROOT) : session.versionId();
         ensureUploadArtifacts(session, datasetId, versionId, principal, now);
         jdbc.update("UPDATE dataset_upload_session SET dataset_id=?,version_id=?,status='PROCESSING',diagnostic_code='OK',diagnostic_message='SECURITY_SCAN' WHERE session_id=?", datasetId, versionId, sessionId);
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override public void afterCommit() {
-                CompletableFuture.runAsync(() -> processUploadSessionCommit(principal, sessionId, session.tenantId(), session.status(), uploadFiles, datasetId, versionId, now));
+                CompletableFuture.runAsync(() -> processUploadSessionCommit(principal, sessionId, session, uploadFiles, datasetId, versionId, now));
             }
         });
         return datasetUploadSession(principal, sessionId);
     }
 
-    private void processUploadSessionCommit(PlatformPrincipal principal, String sessionId, String tenantId, String previousStatus, List<DatasetUploadSessionFileRecord> uploadFiles, String datasetId, String versionId, OffsetDateTime now) {
+    private void processUploadSessionCommit(PlatformPrincipal principal, String sessionId, DatasetUploadSessionRecord session, List<DatasetUploadSessionFileRecord> uploadFiles, String datasetId, String versionId, OffsetDateTime now) {
         try {
             boolean blocked = false;
             boolean securityPending = false;
@@ -354,7 +393,7 @@ public class DataManagementService {
                 ContentSafetyScanResult scanResult = uploadFileScanResult(file);
                 if ("BLOCKED".equals(scanResult.status())) {
                     jdbc.update("UPDATE dataset_upload_session_file SET status='SECURITY_BLOCKED',diagnostic_code='DATASET_UPLOAD_SECURITY_BLOCKED',diagnostic_message='检测到高风险内容' WHERE id=?", file.id());
-                    audit(principal, tenantId, "DATASET_SECURITY_BLOCKED", "PlatformFileObject", nullToEmpty(file.fileId()), "FAILURE", "CRITICAL", "UPLOADED", "SECURITY_BLOCKED", TRACE_TAG + ";" + file.fileName());
+                    audit(principal, session.tenantId(), "DATASET_SECURITY_BLOCKED", "PlatformFileObject", nullToEmpty(file.fileId()), "FAILURE", "CRITICAL", "UPLOADED", "SECURITY_BLOCKED", TRACE_TAG + ";" + file.fileName());
                     blocked = true;
                     continue;
                 }
@@ -368,40 +407,265 @@ public class DataManagementService {
                 totalSize += file.sizeBytes() == null ? 0 : file.sizeBytes();
             }
             jdbc.update("UPDATE dataset_upload_session SET status='PROCESSING',diagnostic_code='OK',diagnostic_message='INDEXING_METADATA' WHERE session_id=?", sessionId);
-            String finalStatus = blocked || securityPending ? "SECURITY_PENDING" : "READY";
-            String versionSafetyStatus = blocked ? "BLOCKED" : securityPending ? "PENDING" : "PASSED";
-            String finalDiagnosticCode = blocked ? "DATASET_UPLOAD_SECURITY_BLOCKED" : securityPending ? "DATASET_UPLOAD_SECURITY_PENDING" : "DATASET_UPLOAD_READY";
-            String finalDiagnosticMessage = blocked ? "SECURITY_BLOCKED" : securityPending ? "TODO_CONFIRM_CONTENT_SAFETY_SERVICE" : "本地上传数据集已完成文件绑定，可进入后续流程";
-            jdbc.update("UPDATE dataset_version SET status=?,record_count=?,size_bytes=?,content_safety_status=?,diagnostic_code=?,diagnostic_message=? WHERE version_id=?", finalStatus, boundCount, totalSize, versionSafetyStatus, blocked || securityPending ? finalDiagnosticCode : "OK", finalDiagnosticMessage, versionId);
-            jdbc.update("UPDATE dataset SET record_count=?,size_bytes=?,status=?,updated_at=? WHERE dataset_id=?", boundCount, totalSize, blocked || securityPending ? "DRAFT" : "ACTIVE", now, datasetId);
+            boolean appendMode = "APPEND_VERSION".equals(session.targetAction());
+            String sessionFinalStatus = appendMode ? "READY" : blocked || securityPending ? "SECURITY_PENDING" : "READY";
+            String versionFinalStatus = appendMode ? "SECURITY_PENDING" : blocked || securityPending ? "SECURITY_PENDING" : "READY";
+            String versionSafetyStatus = blocked ? "BLOCKED" : "PENDING";
+            String finalDiagnosticCode = appendMode ? "DATASET_UPLOAD_APPEND_READY" : blocked ? "DATASET_UPLOAD_SECURITY_BLOCKED" : securityPending ? "DATASET_UPLOAD_SECURITY_PENDING" : "DATASET_UPLOAD_READY";
+            String finalDiagnosticMessage = appendMode
+                ? "文件已追加到既有版本，等待内容安全与索引完成"
+                : blocked ? "SECURITY_BLOCKED"
+                : securityPending ? "TODO_CONFIRM_CONTENT_SAFETY_SERVICE"
+                : "本地上传数据集已完成文件绑定，可进入后续流程";
+            jdbc.update("UPDATE dataset_version SET status=?,record_count=?,size_bytes=?,content_safety_status=?,diagnostic_code=?,diagnostic_message=? WHERE version_id=?", versionFinalStatus, boundCount + existingFileCount(versionId), totalSize + existingFileSize(versionId), versionSafetyStatus, appendMode ? "DATASET_UPLOAD_APPEND_READY" : blocked || securityPending ? finalDiagnosticCode : "OK", finalDiagnosticMessage, versionId);
+            recalc(datasetId, versionId);
+            jdbc.update("UPDATE dataset SET status=?,updated_at=? WHERE dataset_id=?", appendMode || (!blocked && !securityPending) ? "ACTIVE" : "DRAFT", now, datasetId);
             jdbc.update("INSERT INTO data_lineage (lineage_id,source_type,source_id,target_type,target_id,transform_type,created_at) VALUES (?,'LOCAL_UPLOAD',?,'DATASET_VERSION',?,'IMPORT',?)", "LIN-" + randomHex(10).toUpperCase(Locale.ROOT), sessionId, versionId, now);
             jdbc.update("UPDATE dataset_upload_session SET status='PROCESSING',diagnostic_code='OK',diagnostic_message='CREATING_VERSION' WHERE session_id=?", sessionId);
-            jdbc.update("UPDATE dataset_upload_session SET dataset_id=?,version_id=?,status=?,total_files=?,accepted_files=?,rejected_files=?,diagnostic_code=?,diagnostic_message=?,committed_at=? WHERE session_id=?", datasetId, versionId, finalStatus, uploadFiles.size(), (int) boundCount, (int) uploadFiles.stream().filter(i -> List.of("REJECTED", "SECURITY_BLOCKED").contains(i.status())).count(), finalDiagnosticCode, finalDiagnosticMessage, now, sessionId);
-            audit(principal, tenantId, blocked ? "DATASET_SECURITY_BLOCKED" : securityPending ? "DATASET_UPLOAD_FAILED" : "DATASET_UPLOAD_COMMITTED", "DatasetUploadSession", sessionId, blocked ? "FAILURE" : securityPending ? "WARNING" : "SUCCESS", blocked ? "CRITICAL" : securityPending ? "WARNING" : "INFO", previousStatus, finalStatus, TRACE_TAG + ";bound=" + boundCount);
+            jdbc.update("UPDATE dataset_upload_session SET dataset_id=?,version_id=?,status=?,total_files=?,accepted_files=?,rejected_files=?,diagnostic_code=?,diagnostic_message=?,committed_at=? WHERE session_id=?", datasetId, versionId, sessionFinalStatus, uploadFiles.size(), (int) boundCount, (int) uploadFiles.stream().filter(i -> List.of("REJECTED", "SECURITY_BLOCKED").contains(i.status())).count(), finalDiagnosticCode, finalDiagnosticMessage, now, sessionId);
+            String event = appendMode ? "DATASET_UPLOAD_APPEND_COMMITTED" : blocked ? "DATASET_SECURITY_BLOCKED" : securityPending ? "DATASET_UPLOAD_FAILED" : "DATASET_UPLOAD_COMMITTED";
+            audit(principal, session.tenantId(), event, "DatasetUploadSession", sessionId, blocked ? "FAILURE" : appendMode ? "SUCCESS" : securityPending ? "WARNING" : "SUCCESS", blocked ? "CRITICAL" : appendMode ? "INFO" : securityPending ? "WARNING" : "INFO", session.status(), sessionFinalStatus, TRACE_TAG + ";bound=" + boundCount);
         } catch (Exception exception) {
             log.error("Dataset upload commit processing failed, sessionId={}", sessionId, exception);
             jdbc.update("UPDATE dataset_upload_session SET status='FAILED',diagnostic_code='DATASET_UPLOAD_COMMIT_FAILED',diagnostic_message='COMMIT_PROCESSING_FAILED' WHERE session_id=?", sessionId);
-            audit(principal, tenantId, "DATASET_UPLOAD_FAILED", "DatasetUploadSession", sessionId, "FAILURE", "CRITICAL", previousStatus, "FAILED", TRACE_TAG + ";commit-exception");
+            audit(principal, session.tenantId(), "DATASET_UPLOAD_FAILED", "DatasetUploadSession", sessionId, "FAILURE", "CRITICAL", session.status(), "FAILED", TRACE_TAG + ";commit-exception");
         }
     }
 
-    @Transactional public DatasetDetailResponse createDataset(PlatformPrincipal principal, DatasetCreateRequest r) {
-        identityService.requirePermission(principal, "data:dataset:write"); String tenantId = blank(r.tenantId(), principal.user().tenantId()); ensureCanSeeTenant(principal, tenantId, true); String did="DATASET-"+randomHex(10).toUpperCase(Locale.ROOT), vid="DVER-"+randomHex(10).toUpperCase(Locale.ROOT); OffsetDateTime now=now();
-        jdbc.update("INSERT INTO dataset (dataset_id,name,dataset_type,data_type,tenant_id,project_id,status,access_level,tags,record_count,size_bytes,owner_id,description,created_at,updated_at) VALUES (?,?,?,?,?,?,'DRAFT',?,?,?,0,?,?,?,?)", did, require(r.name(), "数据集名称不能为空"), upper(r.datasetType(), "RAW"), upper(r.dataType(), "IMAGE"), tenantId, nullIfBlank(r.projectId()), upper(r.accessLevel(), "TEAM"), joinTags(r.tags()), r.recordCount()==null?0:Math.max(0,r.recordCount()), principal.user().id(), nullIfBlank(r.description()), now, now);
-        jdbc.update("INSERT INTO dataset_version (version_id,dataset_id,version_name,status,record_count,size_bytes,content_safety_status,diagnostic_code,diagnostic_message,created_by,created_at) VALUES (?,?,'v0.1.0','DRAFT',?,0,'UNCONFIGURED','DATASET_CONTENT_SAFETY_UNCONFIGURED','TODO_CONFIRM_CONTENT_SAFETY_SERVICE',?,?)", vid, did, r.recordCount()==null?0:Math.max(0,r.recordCount()), principal.user().id(), now);
-        jdbc.update("UPDATE dataset SET current_version_id=? WHERE dataset_id=?", vid, did);
-        if (!blank(r.sourceId())) { DataSourceRecord s=source(r.sourceId()); ensureCanSeeTenant(principal, s.tenantId(), true); ensureSourceReferenceable(principal, s, "DATASET_IMPORT_SOURCE_REJECTED"); jdbc.update("INSERT INTO data_lineage (lineage_id,source_type,source_id,target_type,target_id,transform_type,created_at) VALUES (?,'DATA_SOURCE',?,'DATASET_VERSION',?,'IMPORT',?)", "LIN-"+randomHex(10).toUpperCase(Locale.ROOT), s.sourceId(), vid, now); }
-        audit(principal, tenantId, "DATASET_CREATED", "Dataset", did, "SUCCESS", "INFO", null, r.name(), TRACE_TAG); return datasetDetail(principal, did);
+    @Transactional
+    public DatasetDetailResponse createDataset(PlatformPrincipal principal, DatasetCreateRequest r) {
+        identityService.requirePermission(principal, "data:dataset:write");
+        String tenantId = blank(r.tenantId(), principal.user().tenantId());
+        ensureCanSeeTenant(principal, tenantId, true);
+        String datasetId = "DATASET-" + randomHex(10).toUpperCase(Locale.ROOT);
+        String versionId = "DVER-" + randomHex(10).toUpperCase(Locale.ROOT);
+        OffsetDateTime now = now();
+        long recordCount = r.recordCount() == null ? 0 : Math.max(0, r.recordCount());
+        jdbc.update("INSERT INTO dataset (dataset_id,name,dataset_type,data_type,tenant_id,project_id,status,access_level,tags,record_count,size_bytes,owner_id,description,created_at,updated_at) VALUES (?,?,?,?,?,?,'DRAFT',?,?,?,0,?,?,?,?)",
+            datasetId, require(r.name(), "数据集名称不能为空"), upper(r.datasetType(), "RAW"), upper(r.dataType(), "IMAGE"), tenantId, nullIfBlank(r.projectId()), upper(r.accessLevel(), "TEAM"), joinTags(r.tags()), recordCount, principal.user().id(), nullIfBlank(r.description()), now, now);
+        jdbc.update("INSERT INTO dataset_version (version_id,dataset_id,version_name,status,record_count,size_bytes,content_safety_status,diagnostic_code,diagnostic_message,created_by,created_at,source_version_id) VALUES (?,?,'v1','DRAFT',?,0,'UNCONFIGURED','DATASET_CONTENT_SAFETY_UNCONFIGURED','TODO_CONFIRM_CONTENT_SAFETY_SERVICE',?,?,NULL)",
+            versionId, datasetId, recordCount, principal.user().id(), now);
+        jdbc.update("UPDATE dataset SET current_version_id=? WHERE dataset_id=?", versionId, datasetId);
+        if (!blank(r.sourceId())) {
+            DataSourceRecord source = source(r.sourceId());
+            ensureCanSeeTenant(principal, source.tenantId(), true);
+            ensureSourceReferenceable(principal, source, "DATASET_IMPORT_SOURCE_REJECTED");
+            jdbc.update("INSERT INTO data_lineage (lineage_id,source_type,source_id,target_type,target_id,transform_type,created_at) VALUES (?,'DATA_SOURCE',?,'DATASET_VERSION',?,'IMPORT',?)",
+                "LIN-" + randomHex(10).toUpperCase(Locale.ROOT), source.sourceId(), versionId, now);
+        }
+        audit(principal, tenantId, "DATASET_CREATED", "Dataset", datasetId, "SUCCESS", "INFO", null, r.name(), TRACE_TAG);
+        return datasetDetail(principal, datasetId, null);
     }
 
-    @Transactional(noRollbackFor = PlatformException.class) public DatasetDetailResponse updateDataset(PlatformPrincipal principal, String datasetId, DatasetUpdateRequest r) { identityService.requirePermission(principal, "data:dataset:write"); DatasetRecord d=datasetVisibleOrNotFound(principal,datasetId); if(hasPublishedVersion(datasetId)){ audit(principal,d.tenantId(),"DATASET_VERSION_IMMUTABLE_REJECTED","Dataset",datasetId,"FAILURE","WARNING",d.status(),"UPDATE",TRACE_TAG+";DAT-005"); throw new PlatformException(PlatformError.CONFLICT,"DATASET_VERSION_IMMUTABLE: 已发布版本核心元数据不可修改，请新建版本"); } jdbc.update("UPDATE dataset SET name=?,access_level=?,tags=?,description=?,updated_at=? WHERE dataset_id=?", blank(r.name(),d.name()), upper(r.accessLevel(),d.accessLevel()), joinTags(r.tags()==null?split(d.tags()):r.tags()), blank(r.description(),d.description()), now(), datasetId); audit(principal,d.tenantId(),"DATASET_UPDATED","Dataset",datasetId,"SUCCESS","INFO",d.name(),r.name(),TRACE_TAG); return datasetDetail(principal,datasetId); }
+    @Transactional(noRollbackFor = PlatformException.class)
+    public DatasetDetailResponse updateDataset(PlatformPrincipal principal, String datasetId, DatasetUpdateRequest r) {
+        DatasetRecord dataset = datasetVisibleOrNotFound(principal, datasetId);
+        identityService.requirePermission(principal, "data:dataset:write");
+        assertDatasetWritable(dataset, "DATASET_UPDATE_ARCHIVED");
+        jdbc.update("UPDATE dataset SET name=?,access_level=?,tags=?,description=?,updated_at=? WHERE dataset_id=?",
+            blank(r.name(), dataset.name()),
+            upper(r.accessLevel(), dataset.accessLevel()),
+            joinTags(r.tags() == null ? split(dataset.tags()) : r.tags()),
+            blank(r.description(), dataset.description()),
+            now(),
+            datasetId);
+        audit(principal, dataset.tenantId(), "DATASET_UPDATED", "Dataset", datasetId, "SUCCESS", "INFO", dataset.name(), blank(r.name(), dataset.name()), TRACE_TAG);
+        return datasetDetail(principal, datasetId, null);
+    }
 
-    public DatasetDetailResponse datasetDetail(PlatformPrincipal principal, String datasetId) { identityService.requirePermission(principal, "data:dataset:read"); DatasetRecord d=datasetVisibleOrNotFound(principal,datasetId); ensureDatasetReadable(principal,d,false); var files=files(datasetId); String preview=files.stream().anyMatch(f -> f.contentType()!=null && f.contentType().startsWith("image/"))?"PREVIEWABLE":"UNSUPPORTED"; return new DatasetDetailResponse(datasetSummary(d), versions(datasetId), files, grants(datasetId), lineage(d.currentVersionId()), preview, "PREVIEWABLE".equals(preview)?"样例可预览":"非图片/不可预览文件显示元数据退化状态"); }
-    @Transactional public DatasetVersionResponse createVersion(PlatformPrincipal principal, String datasetId, DatasetVersionCreateRequest r) { identityService.requirePermission(principal, "data:dataset:write"); DatasetRecord d=datasetVisibleOrNotFound(principal,datasetId); String vid="DVER-"+randomHex(10).toUpperCase(Locale.ROOT); OffsetDateTime now=now(); jdbc.update("INSERT INTO dataset_version (version_id,dataset_id,version_name,status,record_count,size_bytes,content_safety_status,diagnostic_code,diagnostic_message,created_by,created_at) VALUES (?,?,?,'DRAFT',?,0,'UNCONFIGURED','DATASET_CONTENT_SAFETY_UNCONFIGURED','TODO_CONFIRM_CONTENT_SAFETY_SERVICE',?,?)", vid, datasetId, blank(r.versionName(), nextVersionName(datasetId)), r.recordCount()==null?d.recordCount():r.recordCount(), principal.user().id(), now); jdbc.update("UPDATE dataset SET current_version_id=?,status='DRAFT',updated_at=? WHERE dataset_id=?", vid, now, datasetId); audit(principal,d.tenantId(),"DATASET_VERSION_CREATED","DatasetVersion",vid,"SUCCESS","INFO",null,datasetId,TRACE_TAG); return versions(datasetId).stream().filter(i -> i.versionId().equals(vid)).findFirst().orElseThrow(); }
-    @Transactional(noRollbackFor = PlatformException.class) public DatasetFileResponse attachFile(PlatformPrincipal principal, String datasetId, String versionId, DatasetFileAttachRequest r) { identityService.requirePermission(principal,"data:dataset:write"); DatasetRecord d=datasetVisibleOrNotFound(principal,datasetId); DatasetVersionRecord v=version(versionId); if(!v.datasetId().equals(datasetId)) throw new PlatformException(PlatformError.NOT_FOUND,"数据集版本不存在"); if(List.of("PUBLISHED","ARCHIVED").contains(v.status())) throw new PlatformException(PlatformError.CONFLICT,"DATASET_VERSION_IMMUTABLE: 已发布版本不可绑定新文件"); FileRecord f=file(require(r.fileId(),"文件不能为空")); if(!"AVAILABLE".equals(f.status()) || (f.expectedSha256()!=null && !f.expectedSha256().equals(f.sha256())) || (f.expectedSizeBytes()!=null && !f.expectedSizeBytes().equals(f.sizeBytes()))){ audit(principal,d.tenantId(),"DATASET_FILE_HASH_MISMATCH","DatasetFile",f.fileId(),"FAILURE","WARNING",f.expectedSha256(),f.sha256(),TRACE_TAG); throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED,"DATASET_FILE_HASH_MISMATCH: 文件 hash/size 校验未通过"); } String id="DF-"+randomHex(10).toUpperCase(Locale.ROOT); jdbc.update("INSERT INTO dataset_file (id,dataset_id,version_id,file_id,file_role,status,created_at) VALUES (?,?,?,?,?,'BOUND',?)", id,datasetId,versionId,f.fileId(),upper(r.fileRole(),"RAW"),now()); recalc(datasetId,versionId); audit(principal,d.tenantId(),"DATASET_FILE_ATTACHED","DatasetFile",id,"SUCCESS","INFO",null,f.fileId(),TRACE_TAG); return files(datasetId).stream().filter(i -> i.id().equals(id)).findFirst().orElseThrow(); }
-    @Transactional(noRollbackFor = PlatformException.class) public DatasetVersionResponse publishVersion(PlatformPrincipal principal, String datasetId, String versionId) { identityService.requirePermission(principal,"data:dataset:publish"); DatasetRecord d=datasetVisibleOrNotFound(principal,datasetId); DatasetVersionRecord v=version(versionId); if(fileCount(versionId)==0) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED,"DATASET_FILE_REQUIRED: 发布前必须绑定文件"); if(!"SANDBOX_CONTENT_SAFETY_PASSED".equals(v.diagnosticMessage()) && !"PASSED".equals(v.contentSafetyStatus())){ audit(principal,d.tenantId(),"DATASET_SECURITY_PENDING","DatasetVersion",versionId,"FAILURE","CRITICAL",v.contentSafetyStatus(),"PUBLISH",TRACE_TAG+";DAT-002"); throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED,"DATASET_SECURITY_PENDING: TODO_CONFIRM_CONTENT_SAFETY_SERVICE"); } OffsetDateTime now=now(); jdbc.update("UPDATE dataset_version SET status='PUBLISHED',published_at=?,content_safety_status='PASSED',diagnostic_code='OK' WHERE version_id=?",now,versionId); jdbc.update("UPDATE dataset SET current_version_id=?,status='ACTIVE',updated_at=? WHERE dataset_id=?",versionId,now,datasetId); audit(principal,d.tenantId(),"DATASET_VERSION_PUBLISHED","DatasetVersion",versionId,"SUCCESS","CRITICAL",v.status(),"PUBLISHED",TRACE_TAG); return versions(datasetId).stream().filter(i -> i.versionId().equals(versionId)).findFirst().orElseThrow(); }
-    @Transactional public DatasetSummaryResponse archiveDataset(PlatformPrincipal principal, String datasetId) { identityService.requirePermission(principal,"data:dataset:delete"); DatasetRecord d=datasetVisibleOrNotFound(principal,datasetId); jdbc.update("UPDATE dataset SET status='ARCHIVED',archived_at=?,updated_at=? WHERE dataset_id=?",now(),now(),datasetId); audit(principal,d.tenantId(),"DATASET_ARCHIVED","Dataset",datasetId,"SUCCESS","CRITICAL",d.status(),"ARCHIVED",TRACE_TAG); return datasetSummary(dataset(datasetId)); }
-    @Transactional(noRollbackFor = PlatformException.class) public void deleteDataset(PlatformPrincipal principal, String datasetId) { identityService.requirePermission(principal,"data:dataset:delete"); DatasetRecord d=datasetVisibleOrNotFound(principal,datasetId); if(count("SELECT COUNT(*) FROM dataset_reference_guard WHERE dataset_id=? AND status='ACTIVE'",datasetId)>0){ audit(principal,d.tenantId(),"DATASET_DELETE_BLOCKED","Dataset",datasetId,"FAILURE","CRITICAL",null,null,TRACE_TAG+";DAT-011"); throw new PlatformException(PlatformError.CONFLICT,"DATASET_REFERENCED: 数据集存在后续引用，无法删除"); } jdbc.update("UPDATE dataset SET status='DELETED',deleted_at=?,updated_at=? WHERE dataset_id=?",now(),now(),datasetId); audit(principal,d.tenantId(),"DATASET_DELETED","Dataset",datasetId,"SUCCESS","CRITICAL",d.status(),"DELETED",TRACE_TAG); }
+    public DatasetDetailResponse datasetDetail(PlatformPrincipal principal, String datasetId, String selectedVersionId) {
+        identityService.requirePermission(principal, "data:dataset:read");
+        DatasetRecord dataset = datasetVisibleOrNotFound(principal, datasetId);
+        ensureDatasetReadable(principal, dataset, false);
+        String effectiveVersionId = blank(selectedVersionId, dataset.currentVersionId());
+        DatasetVersionRecord selectedVersionRecord = version(effectiveVersionId);
+        if (!datasetId.equals(selectedVersionRecord.datasetId())) {
+            throw new PlatformException(PlatformError.NOT_FOUND, "RESOURCE_NOT_FOUND: 数据集版本不存在");
+        }
+        List<DatasetVersionResponse> versions = versions(datasetId, dataset.currentVersionId(), dataset.status());
+        DatasetVersionResponse selectedVersion = versions.stream().filter(i -> i.versionId().equals(effectiveVersionId)).findFirst().orElseThrow(() -> new PlatformException(PlatformError.NOT_FOUND, "RESOURCE_NOT_FOUND: 数据集版本不存在"));
+        List<DatasetFileResponse> selectedFiles = filesByVersion(effectiveVersionId);
+        String preview = selectedFiles.stream().anyMatch(f -> f.contentType() != null && f.contentType().startsWith("image/")) ? "PREVIEWABLE" : "UNSUPPORTED";
+        return new DatasetDetailResponse(
+            datasetSummary(principal, dataset),
+            effectiveVersionId,
+            selectedVersion,
+            versions,
+            selectedFiles,
+            grants(datasetId),
+            lineage(effectiveVersionId),
+            preview,
+            "PREVIEWABLE".equals(preview) ? "样例可预览" : "非图片/不可预览文件显示元数据退化状态"
+        );
+    }
+
+    @Transactional
+    public DatasetVersionResponse createVersion(PlatformPrincipal principal, String datasetId, DatasetVersionCreateRequest r) {
+        DatasetRecord dataset = datasetVisibleOrNotFound(principal, datasetId);
+        identityService.requirePermission(principal, "data:dataset:write");
+        assertDatasetWritable(dataset, "DATASET_ARCHIVED_READONLY");
+        String sourceVersionId = blank(r.sourceVersionId(), dataset.currentVersionId());
+        DatasetVersionRecord sourceVersion = version(sourceVersionId);
+        if (!datasetId.equals(sourceVersion.datasetId())) {
+            throw new PlatformException(PlatformError.NOT_FOUND, "RESOURCE_NOT_FOUND: 来源版本不存在");
+        }
+        String versionName = blank(r.versionName(), nextVersionName(datasetId));
+        if (count("SELECT COUNT(*) FROM dataset_version WHERE dataset_id=? AND version_name=?", datasetId, versionName) > 0) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "INVALID_PARAM: versionName 已存在");
+        }
+        boolean inheritPreviousFiles = r.inheritPreviousFiles() == null || r.inheritPreviousFiles();
+        String versionId = "DVER-" + randomHex(10).toUpperCase(Locale.ROOT);
+        OffsetDateTime now = now();
+        List<DatasetFileResponse> sourceFiles = filesByVersion(sourceVersionId);
+        long recordCount = r.recordCount() == null ? sourceVersion.recordCount() : r.recordCount();
+        long sizeBytes = inheritPreviousFiles ? sourceFiles.stream().mapToLong(i -> i.sizeBytes() == null ? 0 : i.sizeBytes()).sum() : 0;
+        String status = inheritPreviousFiles && !sourceFiles.isEmpty() ? "READY" : "DRAFT";
+        String contentSafetyStatus = inheritPreviousFiles && !sourceFiles.isEmpty() ? sourceVersion.contentSafetyStatus() : "UNCONFIGURED";
+        String diagnosticCode = inheritPreviousFiles && !sourceFiles.isEmpty() ? "OK" : "DATASET_CONTENT_SAFETY_UNCONFIGURED";
+        String diagnosticMessage = inheritPreviousFiles && !sourceFiles.isEmpty() ? "VERSION_READY" : "TODO_CONFIRM_CONTENT_SAFETY_SERVICE";
+        jdbc.update("INSERT INTO dataset_version (version_id,dataset_id,version_name,status,record_count,size_bytes,content_safety_status,diagnostic_code,diagnostic_message,created_by,created_at,source_version_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            versionId, datasetId, versionName, status, recordCount, sizeBytes, contentSafetyStatus, diagnosticCode, diagnosticMessage, principal.user().id(), now, sourceVersionId);
+        if (inheritPreviousFiles) {
+            for (DatasetFileResponse sourceFile : sourceFiles) {
+                jdbc.update("INSERT INTO dataset_file (id,dataset_id,version_id,file_id,file_role,status,created_at) VALUES (?,?,?,?,?,?,?)",
+                    "DF-" + randomHex(10).toUpperCase(Locale.ROOT), datasetId, versionId, sourceFile.fileId(), sourceFile.fileRole(), sourceFile.status(), now);
+            }
+        }
+        jdbc.update("UPDATE dataset SET current_version_id=?,record_count=?,size_bytes=?,status='DRAFT',updated_at=? WHERE dataset_id=?", versionId, recordCount, sizeBytes, now, datasetId);
+        audit(principal, dataset.tenantId(), "DATASET_VERSION_CREATED", "DatasetVersion", versionId, "SUCCESS", "INFO", sourceVersionId, versionName, TRACE_TAG);
+        return versions(datasetId, versionId, dataset.status()).stream().filter(i -> i.versionId().equals(versionId)).findFirst().orElseThrow();
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public DatasetVersionDeleteResponse deleteVersion(PlatformPrincipal principal, String datasetId, String versionId) {
+        DatasetRecord dataset = datasetVisibleOrNotFound(principal, datasetId);
+        identityService.requirePermission(principal, "data:dataset:write");
+        assertDatasetWritable(dataset, "DATASET_ARCHIVED_READONLY");
+        DatasetVersionRecord version = version(versionId);
+        if (!datasetId.equals(version.datasetId())) {
+            throw new PlatformException(PlatformError.NOT_FOUND, "RESOURCE_NOT_FOUND: 数据集版本不存在");
+        }
+        if (!isMutableVersionStatus(version.status())) {
+            audit(principal, dataset.tenantId(), "DATASET_VERSION_DELETE_REJECTED", "DatasetVersion", versionId, "FAILURE", "WARNING", version.status(), "IMMUTABLE", "DATASET_VERSION_IMMUTABLE");
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_VERSION_IMMUTABLE: 已发布/已归档版本不可删除");
+        }
+        if (versionCount(datasetId) <= 1) {
+            audit(principal, dataset.tenantId(), "DATASET_VERSION_DELETE_REJECTED", "DatasetVersion", versionId, "FAILURE", "WARNING", version.versionName(), "LAST_ONE", "DATASET_VERSION_LAST_ONE_FORBIDDEN");
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_VERSION_LAST_ONE_FORBIDDEN: 最后一个版本不可删除");
+        }
+        if (hasVersionReference(datasetId, versionId)) {
+            audit(principal, dataset.tenantId(), "DATASET_VERSION_DELETE_REJECTED", "DatasetVersion", versionId, "FAILURE", "WARNING", version.versionName(), "REFERENCED", "DATASET_VERSION_REFERENCED");
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_VERSION_REFERENCED: 版本存在引用，无法删除");
+        }
+        String nextCurrentVersionId = dataset.currentVersionId().equals(versionId) ? fallbackVersionId(version) : dataset.currentVersionId();
+        DatasetVersionRecord nextCurrent = version(nextCurrentVersionId);
+        jdbc.update("UPDATE dataset SET current_version_id=?,record_count=?,size_bytes=?,updated_at=? WHERE dataset_id=?", nextCurrentVersionId, nextCurrent.recordCount(), nextCurrent.sizeBytes(), now(), datasetId);
+        jdbc.update("DELETE FROM dataset_file WHERE version_id=?", versionId);
+        jdbc.update("DELETE FROM dataset_version WHERE version_id=?", versionId);
+        audit(principal, dataset.tenantId(), "DATASET_VERSION_DELETED", "DatasetVersion", versionId, "SUCCESS", "INFO", version.versionName(), nextCurrent.versionName(), TRACE_TAG);
+        return new DatasetVersionDeleteResponse(datasetId, versionId, nextCurrentVersionId, nextCurrent.versionName(), versionCount(datasetId));
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public DatasetFileResponse attachFile(PlatformPrincipal principal, String datasetId, String versionId, DatasetFileAttachRequest r) {
+        DatasetRecord dataset = datasetVisibleOrNotFound(principal, datasetId);
+        identityService.requirePermission(principal, "data:dataset:write");
+        assertDatasetWritable(dataset, "DATASET_ARCHIVED_READONLY");
+        DatasetVersionRecord version = version(versionId);
+        if (!datasetId.equals(version.datasetId())) {
+            throw new PlatformException(PlatformError.NOT_FOUND, "RESOURCE_NOT_FOUND: 数据集版本不存在");
+        }
+        if (!versionId.equals(dataset.currentVersionId())) {
+            audit(principal, dataset.tenantId(), "DATASET_FILE_ATTACH_REJECTED", "DatasetVersion", versionId, "FAILURE", "WARNING", version.status(), "NOT_CURRENT", "DATASET_TARGET_VERSION_NOT_CURRENT");
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_TARGET_VERSION_NOT_CURRENT: 仅当前版本允许追加文件");
+        }
+        if (!isMutableVersionStatus(version.status())) {
+            audit(principal, dataset.tenantId(), "DATASET_FILE_ATTACH_REJECTED", "DatasetVersion", versionId, "FAILURE", "WARNING", version.status(), "IMMUTABLE", "DATASET_VERSION_IMMUTABLE");
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_VERSION_IMMUTABLE: 已发布版本不可绑定新文件");
+        }
+        FileRecord file = file(require(r.fileId(), "文件不能为空"));
+        if (!"AVAILABLE".equals(file.status()) || (file.expectedSha256() != null && !file.expectedSha256().equals(file.sha256())) || (file.expectedSizeBytes() != null && !file.expectedSizeBytes().equals(file.sizeBytes()))) {
+            audit(principal, dataset.tenantId(), "DATASET_FILE_ATTACH_REJECTED", "DatasetFile", file.fileId(), "FAILURE", "WARNING", file.expectedSha256(), file.sha256(), "DATASET_FILE_HASH_MISMATCH");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_FILE_HASH_MISMATCH: 文件 hash/size 校验未通过");
+        }
+        String bindingId = "DF-" + randomHex(10).toUpperCase(Locale.ROOT);
+        jdbc.update("INSERT INTO dataset_file (id,dataset_id,version_id,file_id,file_role,status,created_at) VALUES (?,?,?,?,?,'BOUND',?)", bindingId, datasetId, versionId, file.fileId(), upper(r.fileRole(), "RAW"), now());
+        recalc(datasetId, versionId);
+        audit(principal, dataset.tenantId(), "DATASET_FILE_ATTACHED", "DatasetFile", bindingId, "SUCCESS", "INFO", null, file.fileId(), TRACE_TAG);
+        return filesByVersion(versionId).stream().filter(i -> i.bindingId().equals(bindingId)).findFirst().orElseThrow();
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public DatasetFileUnbindResponse unbindFile(PlatformPrincipal principal, String datasetId, String versionId, String bindingId) {
+        DatasetRecord dataset = datasetVisibleOrNotFound(principal, datasetId);
+        identityService.requirePermission(principal, "data:dataset:write");
+        assertDatasetWritable(dataset, "DATASET_ARCHIVED_READONLY");
+        DatasetVersionRecord version = version(versionId);
+        if (!datasetId.equals(version.datasetId())) {
+            throw new PlatformException(PlatformError.NOT_FOUND, "RESOURCE_NOT_FOUND: 数据集版本不存在");
+        }
+        if (!versionId.equals(dataset.currentVersionId())) {
+            audit(principal, dataset.tenantId(), "DATASET_FILE_UNBIND_REJECTED", "DatasetVersion", versionId, "FAILURE", "WARNING", version.status(), "NOT_CURRENT", "DATASET_TARGET_VERSION_NOT_CURRENT");
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_TARGET_VERSION_NOT_CURRENT: 仅当前版本允许解绑文件");
+        }
+        if (!isMutableVersionStatus(version.status())) {
+            audit(principal, dataset.tenantId(), "DATASET_FILE_UNBIND_REJECTED", "DatasetVersion", versionId, "FAILURE", "WARNING", version.status(), "IMMUTABLE", "DATASET_VERSION_IMMUTABLE");
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_VERSION_IMMUTABLE: 已发布版本不可解绑文件");
+        }
+        DatasetFileResponse binding = filesByVersion(versionId).stream().filter(i -> i.bindingId().equals(bindingId)).findFirst().orElseThrow(() -> new PlatformException(PlatformError.NOT_FOUND, "RESOURCE_NOT_FOUND: 文件绑定不存在"));
+        jdbc.update("DELETE FROM dataset_file WHERE id=?", bindingId);
+        recalc(datasetId, versionId);
+        audit(principal, dataset.tenantId(), "DATASET_FILE_UNBOUND", "DatasetFile", bindingId, "SUCCESS", "INFO", binding.fileId(), "UNBOUND", TRACE_TAG);
+        return new DatasetFileUnbindResponse(datasetId, versionId, bindingId, binding.fileId(), fileCount(versionId));
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public DatasetVersionResponse publishVersion(PlatformPrincipal principal, String datasetId, String versionId) {
+        identityService.requirePermission(principal, "data:dataset:publish");
+        DatasetRecord dataset = datasetVisibleOrNotFound(principal, datasetId);
+        DatasetVersionRecord version = version(versionId);
+        if (fileCount(versionId) == 0) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_FILE_REQUIRED: 发布前必须绑定文件");
+        }
+        if (!"SANDBOX_CONTENT_SAFETY_PASSED".equals(version.diagnosticMessage()) && !"PASSED".equals(version.contentSafetyStatus())) {
+            audit(principal, dataset.tenantId(), "DATASET_SECURITY_PENDING", "DatasetVersion", versionId, "FAILURE", "CRITICAL", version.contentSafetyStatus(), "PUBLISH", TRACE_TAG + ";DAT-002");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_SECURITY_PENDING: TODO_CONFIRM_CONTENT_SAFETY_SERVICE");
+        }
+        OffsetDateTime now = now();
+        jdbc.update("UPDATE dataset_version SET status='PUBLISHED',published_at=?,content_safety_status='PASSED',diagnostic_code='OK' WHERE version_id=?", now, versionId);
+        jdbc.update("UPDATE dataset SET current_version_id=?,status='ACTIVE',updated_at=? WHERE dataset_id=?", versionId, now, datasetId);
+        audit(principal, dataset.tenantId(), "DATASET_VERSION_PUBLISHED", "DatasetVersion", versionId, "SUCCESS", "CRITICAL", version.status(), "PUBLISHED", TRACE_TAG);
+        return versions(datasetId, versionId, dataset.status()).stream().filter(i -> i.versionId().equals(versionId)).findFirst().orElseThrow();
+    }
+
+    @Transactional
+    public DatasetSummaryResponse archiveDataset(PlatformPrincipal principal, String datasetId) {
+        DatasetRecord dataset = datasetVisibleOrNotFound(principal, datasetId);
+        identityService.requirePermission(principal, "data:dataset:delete");
+        jdbc.update("UPDATE dataset SET status='ARCHIVED',archived_at=?,updated_at=? WHERE dataset_id=?", now(), now(), datasetId);
+        audit(principal, dataset.tenantId(), "DATASET_ARCHIVED", "Dataset", datasetId, "SUCCESS", "CRITICAL", dataset.status(), "ARCHIVED", TRACE_TAG);
+        return datasetSummary(principal, dataset(datasetId));
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public void deleteDataset(PlatformPrincipal principal, String datasetId) {
+        DatasetRecord dataset = datasetVisibleOrNotFound(principal, datasetId);
+        identityService.requirePermission(principal, "data:dataset:delete");
+        if (!principal.isSuperAdmin()) {
+            audit(principal, dataset.tenantId(), "DATASET_HARD_DELETE_REJECTED", "Dataset", datasetId, "FAILURE", "CRITICAL", dataset.status(), "ADMIN_ONLY", "DATASET_HARD_DELETE_ADMIN_ONLY");
+            throw new PlatformException(PlatformError.FORBIDDEN, "DATASET_HARD_DELETE_ADMIN_ONLY: 仅超级管理员可执行硬删除");
+        }
+        if (!"ARCHIVED".equals(dataset.status())) {
+            audit(principal, dataset.tenantId(), "DATASET_HARD_DELETE_REJECTED", "Dataset", datasetId, "FAILURE", "CRITICAL", dataset.status(), "NOT_ARCHIVED", "DATASET_NOT_ARCHIVED_FOR_HARD_DELETE");
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_NOT_ARCHIVED_FOR_HARD_DELETE: 硬删除前必须先归档");
+        }
+        if (hasDatasetReference(datasetId)) {
+            audit(principal, dataset.tenantId(), "DATASET_HARD_DELETE_REJECTED", "Dataset", datasetId, "FAILURE", "CRITICAL", dataset.status(), "REFERENCED", "DATASET_REFERENCED");
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_REFERENCED: 数据集存在后续引用，无法删除");
+        }
+        jdbc.update("UPDATE dataset SET status='DELETED',deleted_at=?,updated_at=? WHERE dataset_id=?", now(), now(), datasetId);
+        audit(principal, dataset.tenantId(), "DATASET_HARD_DELETED", "Dataset", datasetId, "SUCCESS", "CRITICAL", dataset.status(), "DELETED", TRACE_TAG);
+    }
     public List<DataLineageResponse> datasetLineage(PlatformPrincipal principal, String datasetId) { DatasetRecord d=datasetVisibleOrNotFound(principal,datasetId); identityService.requirePermission(principal,"data:lineage:read"); return lineage(d.currentVersionId()); }
     @Transactional public DatasetAccessRequestResponse requestAccess(PlatformPrincipal principal, String datasetId, DatasetAccessRequestCreateRequest r) { DatasetRecord d=dataset(datasetId); String id="DAR-"+randomHex(10).toUpperCase(Locale.ROOT); OffsetDateTime now=now(); jdbc.update("INSERT INTO dataset_access_request (request_id,dataset_id,requester_id,purpose,status,created_at) VALUES (?,?,?,?,'PENDING',?)", id,datasetId,principal.user().id(),require(r.purpose(),"申请用途不能为空"),now); audit(principal,d.tenantId(),"DATASET_ACCESS_REQUESTED","DatasetAccessRequest",id,"SUCCESS","INFO",null,datasetId,TRACE_TAG); return accessRequest(id); }
     public List<DatasetAccessRequestResponse> accessRequests(PlatformPrincipal principal, String datasetId) { datasetVisibleOrNotFound(principal,datasetId); identityService.requirePermission(principal,"data:dataset:grant"); return jdbc.query("SELECT r.*,u.display_name AS requester_name FROM dataset_access_request r JOIN platform_user u ON u.id=r.requester_id WHERE r.dataset_id=? ORDER BY r.created_at DESC", (rs,n)->accessRequestResponse(rs), datasetId); }
@@ -559,9 +823,23 @@ public class DataManagementService {
         DatasetUploadSessionRecord session = uploadSession(sessionId);
         if (!canSeeTenant(principal, session.tenantId())) {
             audit(principal, principal.user().tenantId(), "DATASET_UPLOAD_CROSS_TENANT_DENIED", "DatasetUploadSession", sessionId, "FAILURE", "CRITICAL", principal.user().tenantId(), session.tenantId(), TRACE_TAG + ";DAT-012");
-            throw new PlatformException(write ? PlatformError.FORBIDDEN : PlatformError.NOT_FOUND, write ? "您无权访问其他 BU 的上传会话" : "资源不存在");
+            throw new PlatformException(PlatformError.NOT_FOUND, "资源不存在");
         }
         return session;
+    }
+    private void assertAppendTargetWritable(PlatformPrincipal principal, String targetDatasetId, String targetVersionId) {
+        DatasetRecord dataset = datasetVisibleOrNotFound(principal, targetDatasetId);
+        assertDatasetWritable(dataset, "DATASET_ARCHIVED_READONLY");
+        DatasetVersionRecord version = version(targetVersionId);
+        if (!targetDatasetId.equals(version.datasetId())) {
+            throw new PlatformException(PlatformError.NOT_FOUND, "RESOURCE_NOT_FOUND: 目标版本不存在");
+        }
+        if (!targetVersionId.equals(dataset.currentVersionId())) {
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_TARGET_VERSION_NOT_CURRENT: 仅当前版本允许上传追加");
+        }
+        if (!isMutableVersionStatus(version.status())) {
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_VERSION_IMMUTABLE: 目标版本不可追加");
+        }
     }
     private void ensureUploadSessionMutable(PlatformPrincipal principal, DatasetUploadSessionRecord session) {
         if (List.of("READY", "SECURITY_PENDING", "FAILED", "CANCELLED").contains(session.status())) {
@@ -582,6 +860,9 @@ public class DataManagementService {
             session.versionId(),
             session.status(),
             session.creationMode(),
+            session.targetAction(),
+            session.targetDatasetId(),
+            session.targetVersionId(),
             new DatasetUploadProgressResponse(uploadSessionPhase(session.status(), session.diagnosticMessage()), uploadSessionPercent(session.status(), session.diagnosticMessage())),
             new DatasetUploadSummaryResponse(total, accepted, rejected),
             datasetStatus,
@@ -626,10 +907,34 @@ public class DataManagementService {
             default -> 0;
         };
     }
-    private DatasetUploadSessionRecord uploadSession(String sessionId) { return jdbc.queryForObject("SELECT * FROM dataset_upload_session WHERE session_id=?", (rs,n)->new DatasetUploadSessionRecord(rs.getString("session_id"), rs.getString("dataset_id"), rs.getString("version_id"), rs.getString("tenant_id"), rs.getString("creation_mode"), rs.getString("status"), rs.getString("dataset_name"), rs.getString("dataset_type"), rs.getString("data_type"), rs.getString("access_level"), rs.getString("tags"), rs.getString("description"), rs.getInt("total_files"), rs.getInt("accepted_files"), rs.getInt("rejected_files"), rs.getString("diagnostic_code"), rs.getString("diagnostic_message"), rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class), rs.getObject("committed_at", OffsetDateTime.class)), sessionId); }
+    private DatasetUploadSessionRecord uploadSession(String sessionId) { return jdbc.queryForObject("SELECT * FROM dataset_upload_session WHERE session_id=?", (rs,n)->new DatasetUploadSessionRecord(rs.getString("session_id"), rs.getString("dataset_id"), rs.getString("version_id"), rs.getString("tenant_id"), rs.getString("creation_mode"), rs.getString("status"), rs.getString("dataset_name"), rs.getString("dataset_type"), rs.getString("data_type"), rs.getString("access_level"), rs.getString("tags"), rs.getString("description"), rs.getInt("total_files"), rs.getInt("accepted_files"), rs.getInt("rejected_files"), rs.getString("diagnostic_code"), rs.getString("diagnostic_message"), rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class), rs.getObject("committed_at", OffsetDateTime.class), rs.getString("target_action"), rs.getString("target_dataset_id"), rs.getString("target_version_id")), sessionId); }
     private List<DatasetUploadSessionFileRecord> uploadSessionFiles(String sessionId) { return jdbc.query("SELECT * FROM dataset_upload_session_file WHERE session_id=? ORDER BY created_at", (rs,n)->new DatasetUploadSessionFileRecord(rs.getString("id"), rs.getString("session_id"), rs.getString("file_name"), rs.getString("file_id"), rs.getString("status"), nullableLong(rs,"size_bytes"), rs.getString("content_type"), rs.getString("diagnostic_code"), rs.getString("diagnostic_message"), rs.getObject("created_at", OffsetDateTime.class)), sessionId); }
     private boolean hasDatasetFile(String versionId, String fileId) { Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM dataset_file WHERE version_id=? AND file_id=?", Integer.class, versionId, fileId); return count != null && count > 0; }
     private boolean hasRejectedUploadFile(String sessionId, String fileName) { Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM dataset_upload_session_file WHERE session_id=? AND file_name=? AND status='REJECTED'", Integer.class, sessionId, fileName); return count != null && count > 0; }
+    private void assertDatasetWritable(DatasetRecord dataset, String diagnosticCode) {
+        if ("ARCHIVED".equals(dataset.status())) {
+            throw new PlatformException(PlatformError.CONFLICT, "DATASET_ARCHIVED_READONLY: 已归档数据集不可执行写操作");
+        }
+    }
+    private boolean isMutableVersionStatus(String status) {
+        return List.of("DRAFT", "READY", "SECURITY_PENDING", "FAILED").contains(status);
+    }
+    private long versionCount(String datasetId) { return count("SELECT COUNT(*) FROM dataset_version WHERE dataset_id=?", datasetId); }
+    private boolean hasVersionReference(String datasetId, String versionId) { return count("SELECT COUNT(*) FROM dataset_reference_guard WHERE dataset_id=? AND version_id=? AND status='ACTIVE'", datasetId, versionId) > 0; }
+    private boolean hasDatasetReference(String datasetId) { return count("SELECT COUNT(*) FROM dataset_reference_guard WHERE dataset_id=? AND status='ACTIVE'", datasetId) > 0; }
+    private String fallbackVersionId(DatasetVersionRecord deletedVersion) {
+        if (!blank(deletedVersion.sourceVersionId()) && count("SELECT COUNT(*) FROM dataset_version WHERE version_id=?", deletedVersion.sourceVersionId()) > 0) {
+            return deletedVersion.sourceVersionId();
+        }
+        return jdbc.queryForObject("SELECT version_id FROM dataset_version WHERE dataset_id=? AND version_id<>? ORDER BY created_at DESC LIMIT 1", String.class, deletedVersion.datasetId(), deletedVersion.versionId());
+    }
+    private int existingFileCount(String versionId) {
+        return count("SELECT COUNT(*) FROM dataset_file WHERE version_id=? AND status='BOUND'", versionId);
+    }
+    private long existingFileSize(String versionId) {
+        Long total = jdbc.queryForObject("SELECT COALESCE(SUM(f.size_bytes),0) FROM dataset_file df JOIN platform_file_object f ON f.file_id=df.file_id WHERE df.version_id=?", Long.class, versionId);
+        return total == null ? 0 : total;
+    }
     private boolean isSupportedImageFile(String fileName, String contentType) {
         String name = blank(fileName, "").toLowerCase(Locale.ROOT);
         if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".bmp") || name.endsWith(".webp")) return true;
@@ -707,8 +1012,8 @@ public class DataManagementService {
     private DataStandardTaskResponse standardTaskResponse(java.sql.ResultSet rs) throws java.sql.SQLException { return new DataStandardTaskResponse(rs.getString("task_id"),rs.getString("source_dataset_id"),rs.getString("source_dataset_name"),rs.getString("source_version_id"),rs.getString("output_dataset_id"),rs.getString("output_dataset_name"),rs.getString("name"),rs.getString("standard_profile"),rs.getString("status"),nullableInt(rs,"quality_score_before"),nullableInt(rs,"quality_score_after"),rs.getString("diagnostic_code"),rs.getString("diagnostic_message"),rs.getObject("last_run_at",OffsetDateTime.class),rs.getObject("updated_at",OffsetDateTime.class)); }
     private void ensureDatasetReadable(PlatformPrincipal p, DatasetRecord d, boolean download) { if(!canSeeTenant(p,d.tenantId())){ audit(p,p.user().tenantId(),"DATASET_CROSS_BU_ACCESS_DENIED","Dataset",d.datasetId(),"FAILURE","CRITICAL",p.user().tenantId(),d.tenantId(),TRACE_TAG+";DAT-012"); throw new PlatformException(PlatformError.NOT_FOUND,"数据集不存在"); } if((download || "RESTRICTED".equals(d.accessLevel())) && !hasDatasetGrant(p,d)){ audit(p,d.tenantId(),"DATASET_ACCESS_REQUIRED","Dataset",d.datasetId(),"FAILURE","WARNING",null,p.user().id(),TRACE_TAG+";DAT-006"); throw new PlatformException(PlatformError.FORBIDDEN,"DATASET_ACCESS_REQUIRED: 受限数据集需要有效授权"); } }
     private boolean hasDatasetGrant(PlatformPrincipal p, DatasetRecord d) { if(p.isSuperAdmin() || d.ownerId().equals(p.user().id()) || "PUBLIC".equals(d.accessLevel())) return true; Integer c=jdbc.queryForObject("SELECT COUNT(*) FROM dataset_access_grant WHERE dataset_id=? AND user_id=? AND status='ACTIVE' AND expires_at > ?",Integer.class,d.datasetId(),p.user().id(),now()); return c!=null && c>0; }
-    private List<DatasetSummaryResponse> allDatasetSummaries(PlatformPrincipal p) { return jdbc.query("SELECT d.*,u.display_name AS owner_name,v.version_name AS current_version_name FROM dataset d JOIN platform_user u ON u.id=d.owner_id LEFT JOIN dataset_version v ON v.version_id=d.current_version_id WHERE d.status <> 'DELETED' ORDER BY d.updated_at DESC", (rs,n)->datasetRecord(rs)).stream().filter(d -> canSeeTenant(p,d.tenantId())).map(this::datasetSummary).toList(); }
-    private DatasetSummaryResponse datasetSummary(DatasetRecord d) { return new DatasetSummaryResponse(d.datasetId(),d.name(),d.datasetType(),d.dataType(),d.tenantId(),d.projectId(),d.currentVersionId(),d.currentVersionName(),d.status(),d.accessLevel(),split(d.tags()),d.recordCount(),d.sizeBytes(),d.ownerId(),d.ownerName(),d.description(),d.updatedAt()); }
+    private List<DatasetSummaryResponse> allDatasetSummaries(PlatformPrincipal p) { return jdbc.query("SELECT d.*,u.display_name AS owner_name,v.version_name AS current_version_name FROM dataset d JOIN platform_user u ON u.id=d.owner_id LEFT JOIN dataset_version v ON v.version_id=d.current_version_id WHERE d.status <> 'DELETED' ORDER BY d.updated_at DESC", (rs,n)->datasetRecord(rs)).stream().filter(d -> canSeeTenant(p,d.tenantId())).map(d -> datasetSummary(p, d)).toList(); }
+    private DatasetSummaryResponse datasetSummary(PlatformPrincipal principal, DatasetRecord d) { return new DatasetSummaryResponse(d.datasetId(),d.name(),d.datasetType(),d.dataType(),d.tenantId(),d.projectId(),d.currentVersionId(),d.currentVersionName(),d.status(),d.accessLevel(),split(d.tags()),versionCount(d.datasetId()),d.recordCount(),d.sizeBytes(),d.ownerId(),d.ownerName(),d.description(),d.archivedAt(),d.updatedAt(),!"ARCHIVED".equals(d.status()),principal.isSuperAdmin() && "ARCHIVED".equals(d.status()) && !hasDatasetReference(d.datasetId())); }
     private DatasetStatsResponse stats(List<DatasetSummaryResponse> ds) { return new DatasetStatsResponse(ds.size(), ds.stream().filter(i->"RAW".equals(i.datasetType())).count(), ds.stream().filter(i->"PREPROCESSED".equals(i.datasetType())).count(), ds.stream().filter(i->"ANNOTATED".equals(i.datasetType())).count(), ds.stream().filter(i->"RESTRICTED".equals(i.accessLevel())).count(), ds.stream().mapToLong(DatasetSummaryResponse::sizeBytes).sum()); }
     private DataSourceRecord source(String id) { return jdbc.queryForObject("SELECT * FROM data_source WHERE source_id=?", (rs,n)->sourceRecord(rs), id); }
     private DataSourceRecord sourceRecord(java.sql.ResultSet rs) throws java.sql.SQLException { return new DataSourceRecord(rs.getString("source_id"),rs.getString("name"),rs.getString("source_type"),rs.getString("tenant_id"),rs.getString("project_id"),rs.getString("endpoint"),nullableInt(rs,"port"),rs.getString("database_name"),rs.getString("credential_mode"),rs.getString("secret_ref"),rs.getString("shared_scope"),rs.getString("description"),rs.getString("status"),rs.getObject("last_test_at",OffsetDateTime.class),rs.getString("diagnostic_code"),rs.getString("diagnostic_message"),nullableInt(rs,"latency_ms"),rs.getString("created_by"),rs.getObject("created_at",OffsetDateTime.class),rs.getObject("updated_at",OffsetDateTime.class)); }
@@ -717,40 +1022,44 @@ public class DataManagementService {
     private SyncTaskRecord syncTaskRecord(java.sql.ResultSet rs) throws java.sql.SQLException { return new SyncTaskRecord(rs.getString("task_id"),rs.getString("source_id"),rs.getString("source_name"),rs.getString("target_dataset_id"),rs.getString("target_dataset_name"),rs.getString("name"),rs.getString("schedule_mode"),rs.getString("sync_scope"),rs.getString("status"),rs.getObject("last_run_at",OffsetDateTime.class),rs.getString("last_result"),rs.getString("diagnostic_code"),rs.getString("diagnostic_message"),rs.getString("tenant_id")); }
     private DataSourceSyncTaskResponse syncTaskResponse(SyncTaskRecord t) { return new DataSourceSyncTaskResponse(t.taskId(),t.sourceId(),t.sourceName(),t.targetDatasetId(),t.targetDatasetName(),t.name(),t.scheduleMode(),t.syncScope(),t.status(),t.lastRunAt(),t.lastResult(),t.diagnosticCode(),t.diagnosticMessage()); }
     private DatasetRecord dataset(String id) { return jdbc.queryForObject("SELECT d.*,u.display_name AS owner_name,v.version_name AS current_version_name FROM dataset d JOIN platform_user u ON u.id=d.owner_id LEFT JOIN dataset_version v ON v.version_id=d.current_version_id WHERE d.dataset_id=?", (rs,n)->datasetRecord(rs), id); }
-    private DatasetRecord datasetVisibleOrNotFound(PlatformPrincipal p,String id) { DatasetRecord d=dataset(id); if(!canSeeTenant(p,d.tenantId())){ audit(p,p.user().tenantId(),"DATASET_CROSS_BU_ACCESS_DENIED","Dataset",id,"FAILURE","CRITICAL",p.user().tenantId(),d.tenantId(),TRACE_TAG+";DAT-012"); throw new PlatformException(PlatformError.NOT_FOUND,"数据集不存在"); } return d; }
+    private DatasetRecord datasetVisibleOrNotFound(PlatformPrincipal p,String id) { DatasetRecord d=dataset(id); if(d.deletedAt()!=null || "DELETED".equals(d.status())) throw new PlatformException(PlatformError.NOT_FOUND,"数据集不存在"); if(!canSeeTenant(p,d.tenantId())){ audit(p,p.user().tenantId(),"DATASET_CROSS_BU_ACCESS_DENIED","Dataset",id,"FAILURE","CRITICAL",p.user().tenantId(),d.tenantId(),TRACE_TAG+";DAT-012"); throw new PlatformException(PlatformError.NOT_FOUND,"数据集不存在"); } return d; }
     private DatasetRecord datasetRecord(java.sql.ResultSet rs) throws java.sql.SQLException { return new DatasetRecord(rs.getString("dataset_id"),rs.getString("name"),rs.getString("dataset_type"),rs.getString("data_type"),rs.getString("tenant_id"),rs.getString("project_id"),rs.getString("current_version_id"),rs.getString("current_version_name"),rs.getString("status"),rs.getString("access_level"),rs.getString("tags"),rs.getLong("record_count"),rs.getLong("size_bytes"),rs.getString("owner_id"),rs.getString("owner_name"),rs.getString("description"),rs.getObject("archived_at",OffsetDateTime.class),rs.getObject("deleted_at",OffsetDateTime.class),rs.getObject("updated_at",OffsetDateTime.class)); }
-    private List<DatasetVersionResponse> versions(String id) { return jdbc.query("SELECT * FROM dataset_version WHERE dataset_id=? ORDER BY created_at DESC", (rs,n)->new DatasetVersionResponse(rs.getString("version_id"),rs.getString("dataset_id"),rs.getString("version_name"),rs.getString("status"),rs.getLong("record_count"),rs.getLong("size_bytes"),rs.getString("content_safety_status"),rs.getString("diagnostic_code"),rs.getString("diagnostic_message"),rs.getObject("created_at",OffsetDateTime.class),rs.getObject("published_at",OffsetDateTime.class)), id); }
-    private DatasetVersionRecord version(String id) { return jdbc.queryForObject("SELECT * FROM dataset_version WHERE version_id=?", (rs,n)->new DatasetVersionRecord(rs.getString("version_id"),rs.getString("dataset_id"),rs.getString("version_name"),rs.getString("status"),rs.getLong("record_count"),rs.getLong("size_bytes"),rs.getString("content_safety_status"),rs.getString("diagnostic_code"),rs.getString("diagnostic_message")), id); }
-    private List<DatasetFileResponse> files(String id) { return jdbc.query("SELECT df.*,f.object_key,f.content_type,f.size_bytes AS file_size_bytes,f.sha256 FROM dataset_file df JOIN platform_file_object f ON f.file_id=df.file_id WHERE df.dataset_id=? ORDER BY df.created_at DESC", (rs,n)->new DatasetFileResponse(rs.getString("id"),rs.getString("dataset_id"),rs.getString("version_id"),rs.getString("file_id"),rs.getString("file_role"),rs.getString("status"),rs.getString("object_key"),rs.getString("content_type"),nullableLong(rs,"file_size_bytes"),rs.getString("sha256")), id); }
+    private List<DatasetVersionResponse> versions(String datasetId, String currentVersionId, String datasetStatus) { return jdbc.query("SELECT * FROM dataset_version WHERE dataset_id=? ORDER BY created_at DESC", (rs,n)->versionResponse(rs, currentVersionId, datasetStatus), datasetId); }
+    private DatasetVersionRecord version(String id) { return jdbc.queryForObject("SELECT * FROM dataset_version WHERE version_id=?", (rs,n)->new DatasetVersionRecord(rs.getString("version_id"),rs.getString("dataset_id"),rs.getString("version_name"),rs.getString("status"),rs.getLong("record_count"),rs.getLong("size_bytes"),rs.getString("content_safety_status"),rs.getString("diagnostic_code"),rs.getString("diagnostic_message"),rs.getString("source_version_id"),rs.getObject("created_at",OffsetDateTime.class),rs.getObject("published_at",OffsetDateTime.class)), id); }
+    private List<DatasetFileResponse> filesByVersion(String versionId) { return jdbc.query("SELECT df.*,f.object_key,f.content_type,f.size_bytes AS file_size_bytes,f.sha256 FROM dataset_file df JOIN platform_file_object f ON f.file_id=df.file_id WHERE df.version_id=? ORDER BY df.created_at DESC", (rs,n)->new DatasetFileResponse(rs.getString("id"),rs.getString("dataset_id"),rs.getString("version_id"),rs.getString("file_id"),rs.getString("file_role"),rs.getString("status"),rs.getString("object_key"),rs.getString("content_type"),nullableLong(rs,"file_size_bytes"),rs.getString("sha256")), versionId); }
+    private DatasetVersionResponse versionResponse(java.sql.ResultSet rs, String currentVersionId, String datasetStatus) throws java.sql.SQLException { String versionId = rs.getString("version_id"); String status = rs.getString("status"); boolean isCurrent = versionId.equals(currentVersionId); boolean mutable = isCurrent && !"ARCHIVED".equals(datasetStatus) && isMutableVersionStatus(status); boolean deletable = mutable && versionCount(rs.getString("dataset_id")) > 1 && !hasVersionReference(rs.getString("dataset_id"), versionId); String blockedReason = deletable ? null : !mutable ? (isCurrent ? "DATASET_VERSION_IMMUTABLE" : "DATASET_TARGET_VERSION_NOT_CURRENT") : versionCount(rs.getString("dataset_id")) <= 1 ? "DATASET_VERSION_LAST_ONE_FORBIDDEN" : hasVersionReference(rs.getString("dataset_id"), versionId) ? "DATASET_VERSION_REFERENCED" : null; return new DatasetVersionResponse(versionId, rs.getString("dataset_id"), rs.getString("version_name"), status, isCurrent, rs.getString("source_version_id"), rs.getLong("record_count"), fileCount(versionId), rs.getLong("size_bytes"), rs.getString("content_safety_status"), rs.getString("diagnostic_code"), rs.getString("diagnostic_message"), rs.getObject("created_at",OffsetDateTime.class), rs.getObject("published_at",OffsetDateTime.class), mutable, deletable, blockedReason); }
     private FileRecord file(String id) { return jdbc.queryForObject("SELECT * FROM platform_file_object WHERE file_id=?", (rs,n)->new FileRecord(rs.getString("file_id"),rs.getString("tenant_id"),rs.getString("status"),rs.getString("expected_sha256"),rs.getString("sha256"),nullableLong(rs,"expected_size_bytes"),nullableLong(rs,"size_bytes")), id); }
     private List<DatasetAccessGrantResponse> grants(String id) { return jdbc.query("SELECT g.*,u.display_name AS user_name FROM dataset_access_grant g JOIN platform_user u ON u.id=g.user_id WHERE g.dataset_id=? ORDER BY g.created_at DESC", (rs,n)->new DatasetAccessGrantResponse(rs.getString("grant_id"),rs.getString("dataset_id"),rs.getString("version_id"),rs.getString("user_id"),rs.getString("user_name"),rs.getString("granted_by"),rs.getObject("expires_at",OffsetDateTime.class),rs.getString("status")), id); }
     private List<DataLineageResponse> lineage(String targetId) { if(blank(targetId)) return List.of(); return jdbc.query("SELECT * FROM data_lineage WHERE target_id=? ORDER BY created_at DESC", (rs,n)->new DataLineageResponse(rs.getString("lineage_id"),rs.getString("source_type"),rs.getString("source_id"),rs.getString("target_type"),rs.getString("target_id"),rs.getString("transform_type"),rs.getObject("created_at",OffsetDateTime.class)), targetId); }
     private DatasetAccessRequestResponse accessRequest(String id) { return jdbc.queryForObject("SELECT r.*,u.display_name AS requester_name FROM dataset_access_request r JOIN platform_user u ON u.id=r.requester_id WHERE r.request_id=?", (rs,n)->accessRequestResponse(rs), id); }
     private DatasetAccessRequestResponse accessRequestResponse(java.sql.ResultSet rs) throws java.sql.SQLException { return new DatasetAccessRequestResponse(rs.getString("request_id"),rs.getString("dataset_id"),rs.getString("requester_id"),rs.getString("requester_name"),rs.getString("purpose"),rs.getString("status"),rs.getObject("created_at",OffsetDateTime.class),rs.getString("reviewed_by"),rs.getObject("reviewed_at",OffsetDateTime.class)); }
     private AccessRequestRecord accessRequestRecord(String id) { return jdbc.queryForObject("SELECT * FROM dataset_access_request WHERE request_id=?", (rs,n)->new AccessRequestRecord(rs.getString("request_id"),rs.getString("dataset_id"),rs.getString("requester_id"),rs.getString("status")), id); }
-    private void recalc(String did,String vid){ Long total=jdbc.queryForObject("SELECT COALESCE(SUM(f.size_bytes),0) FROM dataset_file df JOIN platform_file_object f ON f.file_id=df.file_id WHERE df.version_id=?",Long.class,vid); long size=total==null?0:total; jdbc.update("UPDATE dataset_version SET size_bytes=? WHERE version_id=?",size,vid); jdbc.update("UPDATE dataset SET size_bytes=?,updated_at=? WHERE dataset_id=?",size,now(),did); }
+    private void recalc(String did,String vid){ Long total=jdbc.queryForObject("SELECT COALESCE(SUM(f.size_bytes),0) FROM dataset_file df JOIN platform_file_object f ON f.file_id=df.file_id WHERE df.version_id=?",Long.class,vid); long size=total==null?0:total; long records=fileCount(vid); jdbc.update("UPDATE dataset_version SET size_bytes=?,record_count=? WHERE version_id=?",size,records,vid); DatasetVersionRecord current=version(dataset(did).currentVersionId()); jdbc.update("UPDATE dataset SET size_bytes=?,record_count=?,updated_at=? WHERE dataset_id=?",current.sizeBytes(),current.recordCount(),now(),did); }
     private boolean hasPublishedVersion(String id){ return count("SELECT COUNT(*) FROM dataset_version WHERE dataset_id=? AND status='PUBLISHED'",id)>0; } private int fileCount(String id){ return count("SELECT COUNT(*) FROM dataset_file WHERE version_id=? AND status='BOUND'",id); } private int count(String sql,Object...args){ Integer c=jdbc.queryForObject(sql,Integer.class,args); return c==null?0:c; }
     private boolean canSeeTenant(PlatformPrincipal p,String tenantId){ if(p.isSuperAdmin()) return true; String own=orgPath(p.user().tenantId()), target=orgPath(tenantId); return !own.isBlank() && !target.isBlank() && target.startsWith(own); } private void ensureCanSeeTenant(PlatformPrincipal p,String tenantId,boolean write){ if(canSeeTenant(p,tenantId)) return; audit(p,p.user().tenantId(),"DATASET_CROSS_BU_ACCESS_DENIED","Tenant",tenantId,"FAILURE","CRITICAL",p.user().tenantId(),tenantId,TRACE_TAG+";DAT-012"); throw new PlatformException(write?PlatformError.FORBIDDEN:PlatformError.NOT_FOUND, write?"您无权操作其他 BU 的数据资源":"资源不存在"); } private String orgPath(String id){ List<String> p=jdbc.queryForList("SELECT path FROM platform_tenant WHERE id=?",String.class,id); return p.isEmpty()?"":p.getFirst(); }
     private void audit(PlatformPrincipal p,String tenantId,String action,String type,String rid,String result,String risk,String before,String after,String detail){ OffsetDateTime at=now(); String event="EVT-"+randomHex(8).toUpperCase(Locale.ROOT), trace=nullToEmpty(PlatformResponses.traceId()), roles=String.join(",",p.roleNames()), id=UUID.randomUUID().toString(); String sig=signature(id,event,tenantId,p.user().id(),p.user().displayName(),roles,action,type,rid,result,risk,before,after,detail,trace,at); jdbc.update("INSERT INTO platform_audit_log (id,event_id,tenant_id,operator_id,operator_name,operator_role,action,resource_type,resource_id,result,risk_level,before_json,after_json,detail_json,trace_id,signature,occurred_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",id,event,tenantId,p.user().id(),p.user().displayName(),roles,action,type,rid,result,risk,before,after,detail,trace,sig,at); }
     private void rejectPlainSecret(String v){ if(v!=null && (v.toLowerCase(Locale.ROOT).contains("credentialsecret") || v.toLowerCase(Locale.ROOT).contains("accesskeysecret") || v.toLowerCase(Locale.ROOT).contains("password="))) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED,"DATA_SOURCE_SECRET_NOT_ALLOWED: 不允许保存明文凭据"); }
     private String maskSecret(String v){ if(v==null || v.isBlank() || v.startsWith("TODO_CONFIRM") || v.startsWith("secret://TODO_CONFIRM") || v.startsWith("secret://")) return v; return v.length()<=8?"****":v.substring(0,4)+"****"+v.substring(v.length()-2); }
     private String signature(String id,String event,String tenant,String opId,String op,String roles,String action,String type,String rid,String result,String risk,String before,String after,String detail,String trace,OffsetDateTime at){ try{ MessageDigest d=MessageDigest.getInstance("SHA-256"); return HexFormat.of().formatHex(d.digest(String.join("|",nullToEmpty(id),nullToEmpty(event),nullToEmpty(tenant),nullToEmpty(opId),nullToEmpty(op),nullToEmpty(roles),nullToEmpty(action),nullToEmpty(type),nullToEmpty(rid),nullToEmpty(result),nullToEmpty(risk),nullToEmpty(before),nullToEmpty(after),nullToEmpty(detail),nullToEmpty(trace),canonical(at)).getBytes(StandardCharsets.UTF_8))); }catch(NoSuchAlgorithmException e){ throw new IllegalStateException(e); } }
-    private String canonical(OffsetDateTime v){ return v==null?"":v.toInstant().truncatedTo(ChronoUnit.MICROS).atOffset(ZoneOffset.UTC).toString(); } private String nextVersionName(String id){ return "v0."+(count("SELECT COUNT(*) FROM dataset_version WHERE dataset_id=?",id)+1)+".0"; } private String joinTags(List<String> tags){ return tags==null?"":String.join(",",tags.stream().map(String::trim).filter(t->!t.isBlank()).toList()); } private List<String> split(String v){ return blank(v)?List.of():Arrays.stream(v.split(",")).map(String::trim).filter(i->!i.isBlank()).toList(); }
+    private String canonical(OffsetDateTime v){ return v==null?"":v.toInstant().truncatedTo(ChronoUnit.MICROS).atOffset(ZoneOffset.UTC).toString(); } private String nextVersionName(String id){ return "v"+(count("SELECT COUNT(*) FROM dataset_version WHERE dataset_id=?",id)+1); } private String joinTags(List<String> tags){ return tags==null?"":String.join(",",tags.stream().map(String::trim).filter(t->!t.isBlank()).toList()); } private List<String> split(String v){ return blank(v)?List.of():Arrays.stream(v.split(",")).map(String::trim).filter(i->!i.isBlank()).toList(); }
     private String require(String v,String m){ if(blank(v)) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED,m); return v.trim(); } private String upper(String v,String d){ return blank(v,d).toUpperCase(Locale.ROOT); } private boolean blank(String v){ return v==null || v.isBlank(); } private String blank(String v,String d){ return blank(v)?d:v.trim(); } private String nullIfBlank(String v){ return blank(v)?null:v.trim(); } private String nullToEmpty(String v){ return v==null?"":v; } private Integer nullableInt(java.sql.ResultSet rs,String c)throws java.sql.SQLException{ int v=rs.getInt(c); return rs.wasNull()?null:v; } private Long nullableLong(java.sql.ResultSet rs,String c)throws java.sql.SQLException{ long v=rs.getLong(c); return rs.wasNull()?null:v; } private OffsetDateTime now(){ return OffsetDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS); } private String randomHex(int len){ return UUID.randomUUID().toString().replace("-","").substring(0,len); }
     private void ensureUploadArtifacts(DatasetUploadSessionRecord session, String datasetId, String versionId, PlatformPrincipal principal, OffsetDateTime now) {
+        if ("APPEND_VERSION".equals(session.targetAction())) {
+            return;
+        }
         if (blank(session.datasetId())) {
             jdbc.update("INSERT INTO dataset (dataset_id,name,dataset_type,data_type,tenant_id,project_id,status,access_level,tags,record_count,size_bytes,owner_id,description,created_at,updated_at) VALUES (?,?,?,?,?,?,'DRAFT',?,?,?,0,?,?,?,?)", datasetId, session.datasetName(), session.datasetType(), session.dataType(), session.tenantId(), null, session.accessLevel(), session.tags(), 0, principal.user().id(), session.description(), now, now);
-            jdbc.update("INSERT INTO dataset_version (version_id,dataset_id,version_name,status,record_count,size_bytes,content_safety_status,diagnostic_code,diagnostic_message,created_by,created_at) VALUES (?,?,'v0.1.0','DRAFT',0,0,'UNCONFIGURED','DATASET_UPLOAD_PENDING','PENDING_UPLOAD',?,?)", versionId, datasetId, principal.user().id(), now);
+            jdbc.update("INSERT INTO dataset_version (version_id,dataset_id,version_name,status,record_count,size_bytes,content_safety_status,diagnostic_code,diagnostic_message,created_by,created_at,source_version_id) VALUES (?,?,'v1','DRAFT',0,0,'UNCONFIGURED','DATASET_UPLOAD_PENDING','PENDING_UPLOAD',?,?,NULL)", versionId, datasetId, principal.user().id(), now);
             jdbc.update("UPDATE dataset SET current_version_id=? WHERE dataset_id=?", versionId, datasetId);
         }
     }
     private record SyncTaskRecord(String taskId,String sourceId,String sourceName,String targetDatasetId,String targetDatasetName,String name,String scheduleMode,String syncScope,String status,OffsetDateTime lastRunAt,String lastResult,String diagnosticCode,String diagnosticMessage,String tenantId) {}
-    private record DatasetUploadSessionRecord(String sessionId,String datasetId,String versionId,String tenantId,String creationMode,String status,String datasetName,String datasetType,String dataType,String accessLevel,String tags,String description,int totalFiles,int acceptedFiles,int rejectedFiles,String diagnosticCode,String diagnosticMessage,String createdBy,OffsetDateTime createdAt,OffsetDateTime committedAt) {}
+    private record DatasetUploadSessionRecord(String sessionId,String datasetId,String versionId,String tenantId,String creationMode,String status,String datasetName,String datasetType,String dataType,String accessLevel,String tags,String description,int totalFiles,int acceptedFiles,int rejectedFiles,String diagnosticCode,String diagnosticMessage,String createdBy,OffsetDateTime createdAt,OffsetDateTime committedAt,String targetAction,String targetDatasetId,String targetVersionId) {}
     private record DatasetUploadSessionFileRecord(String id,String sessionId,String fileName,String fileId,String status,Long sizeBytes,String contentType,String diagnosticCode,String diagnosticMessage,OffsetDateTime createdAt) {}
     private record DataSourceImportPlan(String datasetName,String dataType,String fileRole,String extension,String contentType,long recordCount,long sizeBytes,String description,String content) {}
     private record DataStandardTaskRecord(String taskId,String sourceDatasetId,String sourceVersionId,String outputDatasetId,String name,String standardProfile,String status,Integer qualityScoreBefore) {}
     private record DatasetRecord(String datasetId,String name,String datasetType,String dataType,String tenantId,String projectId,String currentVersionId,String currentVersionName,String status,String accessLevel,String tags,long recordCount,long sizeBytes,String ownerId,String ownerName,String description,OffsetDateTime archivedAt,OffsetDateTime deletedAt,OffsetDateTime updatedAt) {}
-    private record DatasetVersionRecord(String versionId,String datasetId,String versionName,String status,long recordCount,long sizeBytes,String contentSafetyStatus,String diagnosticCode,String diagnosticMessage) {}
+    private record DatasetVersionRecord(String versionId,String datasetId,String versionName,String status,long recordCount,long sizeBytes,String contentSafetyStatus,String diagnosticCode,String diagnosticMessage,String sourceVersionId,OffsetDateTime createdAt,OffsetDateTime publishedAt) {}
     private record FileRecord(String fileId,String tenantId,String status,String expectedSha256,String sha256,Long expectedSizeBytes,Long sizeBytes) {}
     private record AccessRequestRecord(String requestId,String datasetId,String requesterId,String status) {}
 }
