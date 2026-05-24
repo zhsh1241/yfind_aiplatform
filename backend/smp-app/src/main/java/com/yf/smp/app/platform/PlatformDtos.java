@@ -34,10 +34,19 @@ record LoginResponse(
 record CreateUserRequest(String username, String displayName, String email, String tenantId, String buCode, String password) {
 }
 
+record UpdateUserRequest(String displayName, String email, String status) {
+}
+
 record UpdateStatusRequest(String status) {
 }
 
-record UpdateRolesRequest(List<String> roleCodes) {
+record UpdateRolesRequest(List<String> roleCodes, OffsetDateTime expiresAt) {
+}
+
+record CreateRoleRequest(String code, String name, String description, String scope, String parentRoleCode, List<String> permissionCodes) {
+}
+
+record UpdateRolePermissionsRequest(List<String> permissionCodes) {
 }
 
 record PageResponse<T>(List<T> items, long total, int page, int pageSize) {
@@ -62,7 +71,7 @@ record UserSummary(
 ) {
 }
 
-record RoleSummary(String code, String name, String description, String scope, boolean preset, int userCount) {
+record RoleSummary(String code, String name, String description, String scope, boolean preset, String parentRoleCode, int userCount) {
 }
 
 record PermissionSummary(String code, String module, String resource, String action, int level, String description) {

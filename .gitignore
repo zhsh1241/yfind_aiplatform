@@ -48,3 +48,11 @@ __pycache__/
 
 frontend/test-results/
 frontend/playwright-report/
+.tmp/
+temp/
+test-results/
+docs/qa/
+backend/.tmp_cp.txt
+backend/smp-app/TmpMinioCompile.java
+backend/smp-app/hs_err_pid*.log
+backend/smp-app/replay_pid*.log

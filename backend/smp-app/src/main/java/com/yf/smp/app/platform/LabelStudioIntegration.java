@@ -106,7 +106,11 @@ class HttpLabelStudioAnnotationAdapter implements LabelStudioAnnotationAdapter {
         try {
             ObjectNode payload = objectMapper.createObjectNode();
             payload.set("data", taskData(task, item));
-            payload.put("meta", "SMP work item " + item.workItemId());
+            ObjectNode meta = objectMapper.createObjectNode();
+            meta.put("source", "SMP");
+            meta.put("taskId", task.taskId());
+            meta.put("workItemId", item.workItemId());
+            payload.set("meta", meta);
             HttpResult result = post("/api/projects/" + projectId + "/tasks", payload);
             if (result.status() == 401 || result.status() == 403) return failure(binding, "LABEL_STUDIO_AUTH_FAILED", "Label Studio token 无效或权限不足", false);
             if (result.status() >= 400) return failure(binding, "LABEL_STUDIO_SCHEMA_REJECTED", "Label Studio task payload 被拒绝: HTTP " + result.status(), false);

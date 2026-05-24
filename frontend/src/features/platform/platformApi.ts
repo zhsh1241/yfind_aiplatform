@@ -47,7 +47,51 @@ export type RoleSummary = {
   description: string;
   scope: string;
   preset: boolean;
+  parentRoleCode?: string | null;
   userCount: number;
+};
+
+const roleDisplayFallbacks: Record<string, { name: string; description: string }> = {
+  CABIN_ROLE_41194: { name: '座舱数据管理员', description: '智能座舱 BU 数据管理权限角色' },
+  CABIN_ROLE_5522: { name: '座舱标注协调员', description: '智能座舱 BU 标注任务协调与数据查看角色' },
+};
+
+const mojibakePattern = /[�ÃÂ]|(?:[åæçèéä][\u0080-\u00ff]?)/;
+
+export function normalizeRoleSummary(role: RoleSummary): RoleSummary {
+  const fallback = roleDisplayFallbacks[role.code];
+  if (!fallback) return role;
+  return {
+    ...role,
+    name: isUnreadableText(role.name) || role.name === role.code ? fallback.name : role.name,
+    description: isUnreadableText(role.description) || !role.description ? fallback.description : role.description,
+  };
+}
+
+export function displayRoleName(roleOrCode: RoleSummary | string, roles: RoleSummary[] = []) {
+  const code = typeof roleOrCode === 'string' ? roleOrCode : roleOrCode.code;
+  const matchedRole = typeof roleOrCode === 'string' ? roles.find((role) => role.code === code) : roleOrCode;
+  if (matchedRole) return normalizeRoleSummary(matchedRole).name;
+  return roleDisplayFallbacks[code]?.name ?? code;
+}
+
+function isUnreadableText(value?: string | null) {
+  return !value || mojibakePattern.test(value);
+}
+
+export type UserUpdateInput = {
+  displayName: string;
+  email: string;
+  status: string;
+};
+
+export type RoleCreateInput = {
+  code: string;
+  name: string;
+  description?: string;
+  scope: string;
+  parentRoleCode?: string;
+  permissionCodes: string[];
 };
 
 export type PermissionSummary = {
@@ -204,6 +248,22 @@ export type FileObjectSummary = {
   ownerId: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type FileObjectInitInput = {
+  assetType: string;
+  tenantId: string;
+  projectId?: string | null;
+  filename: string;
+  expectedSha256: string;
+  expectedSizeBytes: number;
+  contentType: string;
+  storageTier: string;
+};
+
+export type FileObjectCompleteInput = {
+  sha256: string;
+  sizeBytes: number;
 };
 
 export type FileDownloadResponse = {
@@ -445,6 +505,9 @@ export const platformApi = {
   async login(input: { username: string; password: string; tenantCode: string }) {
     return unwrap<LoginResponse>(apiClient.post('/api/v1/auth/login', input));
   },
+  async refresh() {
+    return unwrap<LoginResponse>(apiClient.post('/api/v1/auth/refresh'));
+  },
   async me() {
     return unwrap<CurrentUser>(apiClient.get('/api/v1/auth/me'));
   },
@@ -454,11 +517,27 @@ export const platformApi = {
   async createUser(input: { username: string; displayName: string; email: string; tenantId: string; buCode: string; password: string }) {
     return unwrap<UserSummary>(apiClient.post('/api/v1/platform/users', input));
   },
+  async updateUser(userId: string, input: UserUpdateInput) {
+    return unwrap<UserSummary>(apiClient.put(`/api/v1/platform/users/${userId}`, input));
+  },
+  async updateUserRoles(userId: string, roleCodes: string[], expiresAt?: string | null) {
+    return unwrap<void>(apiClient.put(`/api/v1/platform/users/${userId}/roles`, { roleCodes, expiresAt }));
+  },
+  async unlockUser(userId: string) {
+    return unwrap<void>(apiClient.post(`/api/v1/platform/users/${userId}/unlock`));
+  },
   async roles() {
-    return unwrap<RoleSummary[]>(apiClient.get('/api/v1/platform/roles'));
+    return (await unwrap<RoleSummary[]>(apiClient.get('/api/v1/platform/roles'))).map(normalizeRoleSummary);
+  },
+  async createRole(input: RoleCreateInput) {
+    return normalizeRoleSummary(await unwrap<RoleSummary>(apiClient.post('/api/v1/platform/roles', input)));
+  },
+  async updateRolePermissions(roleCode: string, permissionCodes: string[]) {
+    return normalizeRoleSummary(await unwrap<RoleSummary>(apiClient.put(`/api/v1/platform/roles/${roleCode}/permissions`, { permissionCodes })));
   },
   async permissionMatrix() {
-    return unwrap<PermissionMatrix>(apiClient.get('/api/v1/platform/permissions/matrix'));
+    const matrix = await unwrap<PermissionMatrix>(apiClient.get('/api/v1/platform/permissions/matrix'));
+    return { ...matrix, roles: matrix.roles.map(normalizeRoleSummary) };
   },
   async auditLogs(query: AuditLogQuery = {}) {
     return unwrap<PageResponse<AuditLogSummary>>(apiClient.get('/api/v1/platform/audit-logs', { params: query }));
@@ -504,8 +583,28 @@ export const platformApi = {
   async files() {
     return unwrap<PageResponse<FileObjectSummary>>(apiClient.get('/api/v1/platform/files'));
   },
+  async initFile(input: FileObjectInitInput) {
+    return unwrap<FileObjectSummary>(apiClient.post('/api/v1/platform/files/init', input));
+  },
+  async uploadFile(fileId: string, file: File, onProgress?: (percent: number) => void) {
+    const formData = new FormData();
+    formData.append('file', file, file.name);
+    return unwrap<FileObjectSummary>(apiClient.post(`/api/v1/platform/files/${fileId}/content`, formData, {
+      onUploadProgress: (event) => {
+        if (!event.total || !onProgress) return;
+        onProgress(Math.min(100, Math.max(0, Math.round((event.loaded / event.total) * 100))));
+      },
+    }));
+  },
+  async completeFile(fileId: string, input: FileObjectCompleteInput) {
+    return unwrap<FileObjectSummary>(apiClient.post(`/api/v1/platform/files/${fileId}/complete`, input));
+  },
   async fileDownloadUrl(fileId: string) {
     return unwrap<FileDownloadResponse>(apiClient.get(`/api/v1/platform/files/${fileId}/download-url`));
+  },
+  fileContentUrl(fileId: string) {
+    const base = apiClient.defaults.baseURL ?? '';
+    return `${base}/api/v1/platform/files/${fileId}/content`;
   },
   async notificationChannels() {
     return unwrap<NotificationChannel[]>(apiClient.get('/api/v1/platform/notification-channels'));
@@ -589,10 +688,6 @@ export type DataStandardOverview = { stats: { datasetCount: number; profiledCoun
 export type DataSourceSummary = { sourceId: string; name: string; sourceType: string; tenantId: string; projectId: string | null; endpoint: string; port: number | null; databaseName: string | null; credentialMode: string; secretRefMasked: string | null; sharedScope: string; description: string | null; status: string; lastTestAt: string | null; diagnosticCode: string | null; diagnosticMessage: string | null; latencyMs: number | null; updatedAt: string };
 export type DataSourceTestResult = { sourceId: string; result: string; status: string; diagnosticCode: string; diagnosticMessage: string; latencyMs: number | null; traceId: string; testedAt: string };
 export type DataSourceSyncTask = { taskId: string; sourceId: string; sourceName: string; targetDatasetId: string | null; targetDatasetName: string | null; name: string; scheduleMode: string; syncScope: string | null; status: string; lastRunAt: string | null; lastResult: string | null; diagnosticCode: string | null; diagnosticMessage: string | null };
-export type DatasetUploadProgress = { phase: string; percent: number };
-export type DatasetUploadSummary = { totalFiles: number; acceptedFiles: number; rejectedFiles: number };
-export type DatasetUploadFile = { fileName: string; fileId: string | null; status: string; sizeBytes: number | null; contentType: string | null; diagnosticCode: string; diagnosticMessage: string };
-export type DatasetUploadSession = { sessionId: string; datasetId: string | null; versionId: string | null; status: string; creationMode: string; progress: DatasetUploadProgress; summary: DatasetUploadSummary; datasetStatus: string | null; versionStatus: string | null; diagnosticCode: string; diagnosticMessage: string; files: DatasetUploadFile[] };
 export type DatasetSummary = { datasetId: string; name: string; datasetType: string; dataType: string; tenantId: string; projectId: string | null; currentVersionId: string | null; currentVersionName: string | null; status: string; accessLevel: string; tags: string[]; recordCount: number; sizeBytes: number; ownerId: string; ownerName: string; description: string | null; updatedAt: string };
 export type DatasetStats = { total: number; raw: number; preprocessed: number; annotated: number; restricted: number; totalSizeBytes: number };
 export type DatasetList = { items: DatasetSummary[]; total: number; page: number; pageSize: number; stats: DatasetStats };
@@ -601,7 +696,7 @@ export type DatasetFile = { id: string; datasetId: string; versionId: string; fi
 export type DataLineage = { lineageId: string; sourceType: string; sourceId: string; targetType: string; targetId: string; transformType: string; createdAt: string };
 export type DatasetAccessGrant = { grantId: string; datasetId: string; versionId: string | null; userId: string; userName: string; grantedBy: string; expiresAt: string; status: string };
 export type DatasetDetail = { dataset: DatasetSummary; versions: DatasetVersion[]; files: DatasetFile[]; grants: DatasetAccessGrant[]; lineage: DataLineage[]; previewStatus: string; previewDiagnostic: string };
-export type DatasetAccessRequest = { requestId: string; datasetId: string; requesterId: string; requesterName: string; purpose: string; status: string; createdAt: string; reviewedBy: string | null; reviewedAt: string | null };
+export type DatasetAccessRequest = { requestId: string; datasetId: string; datasetName?: string; tenantId?: string; requesterId: string; requesterName: string; purpose: string; status: string; createdAt: string; reviewedBy: string | null; reviewerName?: string | null; reviewedAt: string | null };
 export type DatasetReference = { datasetId: string; versionId: string; status: string; usable: boolean; diagnosticCode: string; diagnosticMessage: string };
 
 export type AnnotationUser = { userId: string; displayName: string; role: string };
@@ -609,13 +704,16 @@ export type AnnotationStats = { total: number; inProgress: number; pendingReview
 export type AnnotationTaskSummary = { taskId: string; name: string; scene: string; sceneLabel: string; sourceDatasetId: string; sourceDatasetName: string; templateId: string; templateName: string; tenantId: string; status: string; reviewEnabled: boolean; prelabelEnabled: boolean; labelStudioEnabled: boolean; totalCount: number; annotatedCount: number; reviewedCount: number; qualityScore: number | null; assignees: AnnotationUser[]; deadline: string | null; updatedAt: string };
 export type AnnotationAssignment = { assignmentId: string; taskId: string; assigneeId: string; assigneeName: string; role: string; status: string; assignedBy: string; assignedAt: string };
 export type AnnotationLabelTemplate = { templateId: string; name: string; scene: string; labelType: string; labelSchemaJson: string; labelStudioConfigXml: string; status: string; tenantId: string; createdBy: string; updatedAt: string };
-export type AnnotationWorkItem = { workItemId: string; taskId: string; sampleKey: string; sampleFileId: string | null; annotatorId: string | null; annotatorName: string | null; status: string; predictionJson: string | null; annotationJson: string | null; submittedAt: string | null; updatedAt: string };
+export type AnnotationWorkItem = { workItemId: string; taskId: string; sampleKey: string; sampleFileId: string | null; annotatorId: string | null; annotatorName: string | null; status: string; predictionJson: string | null; annotationJson: string | null; submittedAt: string | null; updatedAt: string; sampleImageUrl?: string | null };
 export type AnnotationReviewItem = { reviewItemId: string; workItemId: string; taskId: string; taskName: string; annotatorId: string; annotatorName: string; reviewerId: string | null; reviewerName: string | null; status: string; reviewComment: string | null; reviewedAt: string | null };
-export type AnnotationPublication = { publicationId: string; taskId: string; qualityStatus: string; coverageRate: number; formatStatus: string; diagnosticCode: string; diagnosticMessage: string; outputDatasetId: string | null; outputVersionId: string | null; publishedAt: string | null };
+export type AnnotationPublication = { publicationId: string; taskId: string; qualityStatus: string; coverageRate: number; formatStatus: string; diagnosticCode: string; diagnosticMessage: string; outputDatasetId: string | null; outputVersionId: string | null; annotationArtifactFileId: string | null; annotationArtifactRole: string | null; publishedAt: string | null };
+export type AnnotationTrainingExport = { exportId: string; taskId: string; format: string; formatVersion: string; status: string; diagnosticCode: string; diagnosticMessage: string; fileId: string | null; downloadUrl: string | null; sizeBytes: number | null; asyncRequired: boolean; packageIncludesImages: boolean; requestedAt: string; generatedAt: string | null; expiresAt: string | null };
 export type AnnotationExternalBinding = { bindingId: string; taskId: string; provider: string; externalProjectId: string | null; externalUrl: string | null; externalTaskId?: string | null; externalTaskUrl?: string | null; configStatus: string; lastSyncStatus: string; diagnosticCode: string; diagnosticMessage: string; launchUrl: string | null; retryable?: boolean | null; lastSyncAt: string | null };
 export type AnnotationOverview = { stats: AnnotationStats; tasks: AnnotationTaskSummary[]; templates: AnnotationLabelTemplate[] };
 export type AnnotationTaskList = { items: AnnotationTaskSummary[]; total: number; page: number; pageSize: number };
 export type AnnotationTaskDetail = { task: AnnotationTaskSummary; assignments: AnnotationAssignment[]; workItems: AnnotationWorkItem[]; reviewItems: AnnotationReviewItem[]; publications: AnnotationPublication[]; externalBinding: AnnotationExternalBinding };
+export type DatasetAnnotationCandidate = { datasetId: string; datasetName: string; currentVersionId: string | null; dataType: string; status: string; eligible: boolean; diagnosticCode: string; diagnosticMessage: string; templates: AnnotationLabelTemplate[]; supportedFormats: string[] };
+export type DatasetAnnotationTask = { task: AnnotationTaskSummary; exports: AnnotationTrainingExport[] };
 export type AnnotationTaskCreateInput = { name: string; sourceDatasetId: string; sourceVersionId?: string | null; templateId: string; scene: string; reviewEnabled?: boolean; prelabelEnabled?: boolean; labelStudioEnabled?: boolean; prelabelModelSource?: string; prelabelConfidence?: number; assigneeIds?: string[]; reviewerIds?: string[]; deadline?: string | null; note?: string };
 export type AnnotationLabelTemplateInput = { name: string; tenantId?: string; scene: string; labelType: string; labelSchemaJson: string; labelStudioConfigXml?: string };
 
@@ -629,21 +727,7 @@ export const dataApi = {
   async syncTasks() { return unwrap<DataSourceSyncTask[]>(apiClient.get('/api/v1/data-source-sync-tasks')); },
   async createSyncTask(input: { sourceId: string; targetDatasetId?: string; name: string; scheduleMode: string; syncScope?: string }) { return unwrap<DataSourceSyncTask>(apiClient.post('/api/v1/data-source-sync-tasks', input)); },
   async runSyncTask(taskId: string) { return unwrap<DataSourceSyncTask>(apiClient.post(`/api/v1/data-source-sync-tasks/${taskId}/run`)); },
-  async createDatasetUploadSession(input: { name: string; tenantId?: string; datasetType: string; dataType: string; accessLevel: string; tags: string[]; description?: string; creationMode: 'LOCAL_UPLOAD' }) {
-    return unwrap<DatasetUploadSession>(apiClient.post('/api/v1/dataset-upload-sessions', input));
-  },
-  async uploadDatasetSessionFiles(sessionId: string, files: File[]) {
-    const formData = new FormData();
-    files.forEach((file) => formData.append('files', file));
-    return unwrap<DatasetUploadSession>(apiClient.post(`/api/v1/dataset-upload-sessions/${sessionId}/files`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }));
-  },
-  async datasetUploadSession(sessionId: string) {
-    return unwrap<DatasetUploadSession>(apiClient.get(`/api/v1/dataset-upload-sessions/${sessionId}`));
-  },
-  async commitDatasetUploadSession(sessionId: string, input: { publishRequested?: boolean } = {}) {
-    return unwrap<DatasetUploadSession>(apiClient.post(`/api/v1/dataset-upload-sessions/${sessionId}/commit`, input));
-  },
-  async datasets(params: { keyword?: string; datasetType?: string; status?: string; accessLevel?: string } = {}) { return unwrap<DatasetList>(apiClient.get('/api/v1/datasets', { params })); },
+  async datasets(params: { keyword?: string; datasetType?: string; status?: string; accessLevel?: string; page?: number; pageSize?: number } = {}) { return unwrap<DatasetList>(apiClient.get('/api/v1/datasets', { params })); },
   async createDataset(input: { name: string; datasetType: string; dataType: string; tenantId: string; accessLevel: string; tags: string[]; description?: string; recordCount?: number; sourceId?: string }) { return unwrap<DatasetDetail>(apiClient.post('/api/v1/datasets', input)); },
   async updateDataset(datasetId: string, input: { name?: string; accessLevel?: string; tags?: string[]; description?: string }) { return unwrap<DatasetDetail>(apiClient.put(`/api/v1/datasets/${datasetId}`, input)); },
   async datasetDetail(datasetId: string) { return unwrap<DatasetDetail>(apiClient.get(`/api/v1/datasets/${datasetId}`)); },
@@ -653,10 +737,14 @@ export const dataApi = {
   async archiveDataset(datasetId: string) { return unwrap<DatasetSummary>(apiClient.post(`/api/v1/datasets/${datasetId}/archive`)); },
   async deleteDataset(datasetId: string) { return unwrap<void>(apiClient.delete(`/api/v1/datasets/${datasetId}`)); },
   async accessRequests(datasetId: string) { return unwrap<DatasetAccessRequest[]>(apiClient.get(`/api/v1/datasets/${datasetId}/access`)); },
+  async accessRequestInbox(params: { status?: string; datasetId?: string } = {}) { return unwrap<DatasetAccessRequest[]>(apiClient.get('/api/v1/dataset-access-requests', { params })); },
   async requestAccess(datasetId: string, purpose: string) { return unwrap<DatasetAccessRequest>(apiClient.post(`/api/v1/datasets/${datasetId}/access-requests`, { purpose })); },
   async approveAccess(requestId: string, input: { expiresAt?: string | null; reason?: string } = {}) { return unwrap<DatasetAccessGrant>(apiClient.put(`/api/v1/dataset-access-requests/${requestId}/approve`, input)); },
   async rejectAccess(requestId: string, input: { expiresAt?: string | null; reason?: string } = {}) { return unwrap<DatasetAccessRequest>(apiClient.put(`/api/v1/dataset-access-requests/${requestId}/reject`, input)); },
   async reference(datasetId: string, versionId?: string) { return unwrap<DatasetReference>(apiClient.get('/api/v1/dataset-references', { params: { datasetId, versionId } })); },
+  async datasetAnnotationCandidate(datasetId: string) { return unwrap<DatasetAnnotationCandidate>(apiClient.get(`/api/v1/datasets/${datasetId}/annotation-candidates`)); },
+  async datasetAnnotationTasks(datasetId: string) { return unwrap<DatasetAnnotationTask[]>(apiClient.get(`/api/v1/datasets/${datasetId}/annotation-tasks`)); },
+  async createDatasetAnnotationTask(datasetId: string, input: AnnotationTaskCreateInput) { return unwrap<AnnotationTaskDetail>(apiClient.post(`/api/v1/datasets/${datasetId}/annotation-tasks`, input)); },
 
   async pipelines(params: { keyword?: string; status?: string; page?: number; pageSize?: number } = {}) { return unwrap<PipelineList>(apiClient.get('/api/v1/pipelines', { params })); },
   async pipelineDetail(pipelineId: string) { return unwrap<PipelineDetail>(apiClient.get(`/api/v1/pipelines/${pipelineId}`)); },
@@ -703,4 +791,7 @@ export const dataApi = {
   async syncLabelStudioProject(taskId: string) { return unwrap<AnnotationExternalBinding>(apiClient.post(`/api/v1/annotation/tasks/${taskId}/label-studio/sync-project`)); },
   async syncLabelStudioTask(workItemId: string) { return unwrap<AnnotationExternalBinding>(apiClient.post(`/api/v1/annotation/work-items/${workItemId}/label-studio/sync-task`)); },
   async importLabelStudioResults(taskId: string) { return unwrap<AnnotationExternalBinding>(apiClient.post(`/api/v1/annotation/tasks/${taskId}/label-studio/import-results`)); },
+  async annotationExports(taskId: string) { return unwrap<AnnotationTrainingExport[]>(apiClient.get(`/api/v1/annotation/tasks/${taskId}/exports`)); },
+  async createAnnotationExport(taskId: string, input: { format: string; optionsJson?: string }) { return unwrap<AnnotationTrainingExport>(apiClient.post(`/api/v1/annotation/tasks/${taskId}/exports`, input)); },
+  async annotationExportDownloadUrl(exportId: string) { return unwrap<AnnotationTrainingExport>(apiClient.get(`/api/v1/annotation/exports/${exportId}/download-url`)); },
 };

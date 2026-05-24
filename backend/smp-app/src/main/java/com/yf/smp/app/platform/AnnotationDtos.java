@@ -96,6 +96,8 @@ record AnnotationPublicationResponse(
     String diagnosticMessage,
     String outputDatasetId,
     String outputVersionId,
+    String annotationArtifactFileId,
+    String annotationArtifactRole,
     OffsetDateTime publishedAt
 ) {}
 record AnnotationExternalBindingResponse(
@@ -114,3 +116,35 @@ record AnnotationExternalBindingResponse(
     Boolean retryable,
     OffsetDateTime lastSyncAt
 ) {}
+
+record AnnotationTrainingExportRequest(String format, String optionsJson) {}
+record AnnotationTrainingExportResponse(
+    String exportId,
+    String taskId,
+    String format,
+    String formatVersion,
+    String status,
+    String diagnosticCode,
+    String diagnosticMessage,
+    String fileId,
+    String downloadUrl,
+    Long sizeBytes,
+    Boolean asyncRequired,
+    Boolean packageIncludesImages,
+    OffsetDateTime requestedAt,
+    OffsetDateTime generatedAt,
+    OffsetDateTime expiresAt
+) {}
+record DatasetAnnotationCandidateResponse(
+    String datasetId,
+    String datasetName,
+    String currentVersionId,
+    String dataType,
+    String status,
+    boolean eligible,
+    String diagnosticCode,
+    String diagnosticMessage,
+    List<AnnotationLabelTemplateResponse> templates,
+    List<String> supportedFormats
+) {}
+record DatasetAnnotationTaskResponse(AnnotationTaskSummaryResponse task, List<AnnotationTrainingExportResponse> exports) {}

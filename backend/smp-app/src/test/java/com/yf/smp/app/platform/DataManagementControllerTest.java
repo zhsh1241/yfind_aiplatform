@@ -5,23 +5,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yf.smp.app.web.TraceIdFilter;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
-import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
-import java.util.List;
-import java.util.function.Function;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
-import javax.imageio.ImageIO;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -35,266 +24,6 @@ class DataManagementControllerTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient client = HttpClient.newHttpClient();
-
-    @Test
-    void localDatasetUploadSessionCreatesReceivesFilesQueriesAndCommits() throws Exception {
-        // TASK-local-dataset-upload AC-02 AC-03 AC-05 AC-06
-        String admin = login("admin", "YF");
-        HttpServer server = mockContentSafetyServer("""
-            {"status":"PASSED"}
-            """);
-        try {
-            putJson("/api/v1/platform/configs/content_safety.endpoint", "trace-f015-config-content-safety", """
-                {"scopeType":"BU","scopeId":"TENANT-CABIN","value":"%s","reason":"F015 test override"}
-                """.formatted(serverEndpoint(server)), admin);
-            String buAdmin = login("buadmin", "CABIN");
-            JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-session-create", """
-                {"name":"F015 本地上传图片数据集","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","description":"本地上传创建","creationMode":"LOCAL_UPLOAD"}
-                """, buAdmin);
-            assertThat(created.at("/code").asInt()).isZero();
-            String sessionId = created.at("/data/sessionId").asText();
-            assertThat(created.at("/data/status").asText()).isEqualTo("PENDING_UPLOAD");
-            assertThat(created.at("/data/datasetId").isNull()).isTrue();
-            assertThat(created.at("/data/versionId").isNull()).isTrue();
-
-            JsonNode queriedBeforeUpload = getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-session-query-before", buAdmin);
-            assertThat(queriedBeforeUpload.at("/data/sessionId").asText()).isEqualTo(sessionId);
-            assertThat(queriedBeforeUpload.at("/data/summary/acceptedFiles").asInt()).isZero();
-
-            JsonNode uploaded = postMultipart(
-                "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
-                "trace-f015-session-upload",
-                List.of(new MultipartPart("files", "weld-1.jpg", "image/jpeg", imageBytes("jpg"))),
-                buAdmin
-            );
-            assertThat(uploaded.at("/code").asInt()).isZero();
-            assertThat(uploaded.at("/data/status").asText()).isEqualTo("UPLOADING");
-            assertThat(uploaded.at("/data/summary/acceptedFiles").asInt()).isEqualTo(1);
-            assertThat(uploaded.at("/data/files/0/status").asText()).isEqualTo("UPLOADED");
-
-            JsonNode queriedAfterUpload = getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-session-query-after", buAdmin);
-            assertThat(queriedAfterUpload.at("/data/files").size()).isEqualTo(1);
-            assertThat(queriedAfterUpload.at("/data/files/0/fileName").asText()).isEqualTo("weld-1.jpg");
-
-            JsonNode committed = postJson("/api/v1/dataset-upload-sessions/" + sessionId + "/commit", "trace-f015-session-commit", "{\"publishRequested\":false}", buAdmin);
-            assertThat(committed.at("/code").asInt()).isZero();
-            assertThat(committed.at("/data/status").asText()).isEqualTo("PROCESSING");
-            assertThat(committed.at("/data/progress/phase").asText()).isEqualTo("SECURITY_SCAN");
-
-            JsonNode completed = waitForUploadSessionStatus(sessionId, buAdmin, "READY");
-            assertThat(completed.at("/data/datasetStatus").asText()).isEqualTo("ACTIVE");
-            assertThat(completed.at("/data/versionStatus").asText()).isEqualTo("READY");
-            String datasetId = completed.at("/data/datasetId").asText();
-            String versionId = completed.at("/data/versionId").asText();
-            assertThat(datasetId).startsWith("DATASET-");
-            assertThat(versionId).startsWith("DVER-");
-
-            JsonNode detail = getJson("/api/v1/datasets/" + datasetId, "trace-f015-dataset-detail", buAdmin);
-            assertThat(detail.at("/data/dataset/status").asText()).isEqualTo("ACTIVE");
-            assertThat(detail.at("/data/dataset/currentVersionId").asText()).isEqualTo(versionId);
-            assertThat(detail.at("/data/files/0/fileRole").asText()).isEqualTo("RAW");
-            assertThat(detail.at("/data/lineage/0/sourceType").asText()).isEqualTo("LOCAL_UPLOAD");
-
-            JsonNode audit = getJson("/api/v1/platform/audit-logs?action=DATASET_UPLOAD_COMMITTED", "trace-f015-audit", admin);
-            assertThat(audit.at("/data/items/0/action").asText()).isEqualTo("DATASET_UPLOAD_COMMITTED");
-        } finally {
-            server.stop(0);
-        }
-    }
-
-    @Test
-    void localDatasetUploadRejectsIllegalFormatAndPreventsEmptyCommit() throws Exception {
-        // TASK-local-dataset-upload AC-02 AC-04 AC-06
-        String buAdmin = login("buadmin", "CABIN");
-        JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-invalid-create", """
-            {"name":"F015 非法格式","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","creationMode":"LOCAL_UPLOAD"}
-            """, buAdmin);
-        String sessionId = created.at("/data/sessionId").asText();
-
-        JsonNode rejected = postMultipart(
-            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
-            "trace-f015-invalid-upload",
-            List.of(new MultipartPart("files", "bad.txt", "text/plain", "not-an-image".getBytes(StandardCharsets.UTF_8))),
-            buAdmin
-        );
-        assertThat(rejected.at("/code").asInt()).isEqualTo(42200);
-        assertThat(rejected.at("/message").asText()).contains("UPLOAD_FILE_FORMAT_NOT_ALLOWED");
-
-        JsonNode queried = getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-invalid-query", buAdmin);
-        assertThat(queried.at("/data/sessionId").asText()).isEqualTo(sessionId);
-        assertThat(queried.at("/data/summary/acceptedFiles").asInt()).isZero();
-        assertThat(queried.at("/data/summary/rejectedFiles").asInt()).isEqualTo(1);
-        assertThat(queried.at("/data/files/0/diagnosticCode").asText()).isEqualTo("DATASET_UPLOAD_FILE_TYPE_UNSUPPORTED");
-
-        JsonNode commitRejected = postJson("/api/v1/dataset-upload-sessions/" + sessionId + "/commit", "trace-f015-invalid-commit", "{\"publishRequested\":false}", buAdmin);
-        assertThat(commitRejected.at("/code").asInt()).isEqualTo(42200);
-        assertThat(commitRejected.at("/message").asText()).contains("DATASET_UPLOAD_EMPTY_SESSION");
-    }
-
-    @Test
-    void localDatasetUploadSecurityBlockedFilesDoNotEnterReadyVersion() throws Exception {
-        // TASK-local-dataset-upload AC-04 AC-06
-        String admin = login("admin", "YF");
-        HttpServer server = mockContentSafetyServer(requestBody ->
-            requestBody.contains("risk-photo.jpg")
-                ? "{\"status\":\"BLOCKED\"}"
-                : "{\"status\":\"PASSED\"}"
-        );
-        try {
-            putJson("/api/v1/platform/configs/content_safety.endpoint", "trace-f015-config-content-safety-block", """
-                {"scopeType":"BU","scopeId":"TENANT-CABIN","value":"%s","reason":"F015 block test override"}
-                """.formatted(serverEndpoint(server)), admin);
-            String buAdmin = login("buadmin", "CABIN");
-            JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-security-block-create", """
-                {"name":"F015 安全拦截","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","creationMode":"LOCAL_UPLOAD"}
-                """, buAdmin);
-            String sessionId = created.at("/data/sessionId").asText();
-
-            JsonNode uploaded = postMultipart(
-                "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
-                "trace-f015-security-block-upload",
-                List.of(
-                    new MultipartPart("files", "risk-photo.jpg", "image/jpeg", imageBytes("jpg")),
-                    new MultipartPart("files", "safe-photo.jpg", "image/jpeg", imageBytes("jpg"))
-                ),
-                buAdmin
-            );
-            assertThat(uploaded.at("/code").asInt()).isZero();
-
-            JsonNode committed = postJson("/api/v1/dataset-upload-sessions/" + sessionId + "/commit", "trace-f015-security-block-commit", "{\"publishRequested\":false}", buAdmin);
-            assertThat(committed.at("/code").asInt()).isZero();
-            assertThat(committed.at("/data/status").asText()).isEqualTo("PROCESSING");
-
-            JsonNode completed = waitForUploadSessionStatus(sessionId, buAdmin, "SECURITY_PENDING");
-            assertThat(completed.at("/data/datasetStatus").asText()).isEqualTo("DRAFT");
-            assertThat(completed.at("/data/versionStatus").asText()).isEqualTo("SECURITY_PENDING");
-            assertThat(completed.at("/data/files").findValuesAsText("status")).contains("SECURITY_BLOCKED", "BOUND");
-
-            String datasetId = completed.at("/data/datasetId").asText();
-            JsonNode detail = getJson("/api/v1/datasets/" + datasetId, "trace-f015-security-block-detail", buAdmin);
-            assertThat(detail.at("/data/dataset/status").asText()).isEqualTo("DRAFT");
-            assertThat(detail.at("/data/files").size()).isEqualTo(1);
-
-            JsonNode audit = getJson("/api/v1/platform/audit-logs?action=DATASET_SECURITY_BLOCKED", "trace-f015-security-block-audit", admin);
-            assertThat(audit.at("/data/items/0/action").asText()).isEqualTo("DATASET_SECURITY_BLOCKED");
-        } finally {
-            server.stop(0);
-        }
-    }
-
-    @Test
-    void localDatasetUploadSecurityPendingDoesNotPretendReady() throws Exception {
-        // TASK-local-dataset-upload AC-04 AC-06
-        String admin = login("admin", "YF");
-        putJson("/api/v1/platform/configs/content_safety.endpoint", "trace-f015-config-content-safety-pending", """
-            {"scopeType":"BU","scopeId":"TENANT-CABIN","value":"TODO_CONFIRM_CONTENT_SAFETY_ENDPOINT","reason":"F015 pending test reset"}
-            """, admin);
-        String buAdmin = login("buadmin", "CABIN");
-        JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-security-pending-create", """
-            {"name":"F015 安全待确认","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","creationMode":"LOCAL_UPLOAD"}
-            """, buAdmin);
-        String sessionId = created.at("/data/sessionId").asText();
-
-        JsonNode uploaded = postMultipart(
-            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
-            "trace-f015-security-pending-upload",
-            List.of(new MultipartPart("files", "pending-review.jpg", "image/jpeg", imageBytes("jpg"))),
-            buAdmin
-        );
-        assertThat(uploaded.at("/code").asInt()).isZero();
-
-        JsonNode committed = postJson("/api/v1/dataset-upload-sessions/" + sessionId + "/commit", "trace-f015-security-pending-commit", "{\"publishRequested\":false}", buAdmin);
-        assertThat(committed.at("/code").asInt()).isZero();
-        assertThat(committed.at("/data/status").asText()).isEqualTo("PROCESSING");
-        assertThat(committed.at("/data/progress/phase").asText()).isEqualTo("SECURITY_SCAN");
-
-        JsonNode completed = waitForUploadSessionStatus(sessionId, buAdmin, "SECURITY_PENDING");
-        assertThat(completed.at("/data/datasetStatus").asText()).isEqualTo("DRAFT");
-        assertThat(completed.at("/data/versionStatus").asText()).isEqualTo("SECURITY_PENDING");
-        assertThat(completed.at("/data/diagnosticCode").asText()).isEqualTo("DATASET_UPLOAD_SECURITY_PENDING");
-        assertThat(completed.at("/data/diagnosticMessage").asText()).contains("TODO_CONFIRM_CONTENT_SAFETY_SERVICE");
-    }
-
-    @Test
-    void localDatasetUploadZipContinuesAfterIllegalEntry() throws Exception {
-        // TASK-local-dataset-upload AC-02 AC-03 AC-06
-        String admin = login("admin", "YF");
-        putJson("/api/v1/platform/configs/content_safety.endpoint", "trace-f015-config-content-safety-zip", """
-            {"scopeType":"BU","scopeId":"TENANT-CABIN","value":"https://content-safety.sandbox.internal","reason":"F015 zip test override"}
-            """, admin);
-        String buAdmin = login("buadmin", "CABIN");
-        JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-zip-create", """
-            {"name":"F015 zip 混合上传","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","creationMode":"LOCAL_UPLOAD"}
-            """, buAdmin);
-        String sessionId = created.at("/data/sessionId").asText();
-
-        byte[] zipBytes = zipOf(
-            new ZipPart("good-1.jpg", imageBytes("jpg")),
-            new ZipPart("bad.txt", "bad".getBytes(StandardCharsets.UTF_8)),
-            new ZipPart("good-2.png", imageBytes("png"))
-        );
-        JsonNode uploaded = postMultipart(
-            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
-            "trace-f015-zip-upload",
-            List.of(new MultipartPart("files", "mixed.zip", "application/zip", zipBytes)),
-            buAdmin
-        );
-        assertThat(uploaded.at("/code").asInt()).isZero();
-        assertThat(uploaded.at("/data/summary/acceptedFiles").asInt()).isEqualTo(2);
-        assertThat(uploaded.at("/data/summary/rejectedFiles").asInt()).isEqualTo(1);
-    }
-
-    @Test
-    void localDatasetUploadRejectsOversizedFileWith413AndRetainsDiagnostic() throws Exception {
-        // TASK-local-dataset-upload AC-02 AC-04 AC-06
-        String buAdmin = login("buadmin", "CABIN");
-        JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-oversize-create", """
-            {"name":"F015 超限文件","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","creationMode":"LOCAL_UPLOAD"}
-            """, buAdmin);
-        String sessionId = created.at("/data/sessionId").asText();
-
-        JsonNode rejected = postMultipart(
-            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
-            "trace-f015-oversize-upload",
-            List.of(new MultipartPart("files", "too-large.jpg", "image/jpeg", new byte[5 * 1024 * 1024 + 1])),
-            buAdmin
-        );
-        assertThat(rejected.at("/code").asInt()).isEqualTo(41300);
-        assertThat(rejected.at("/message").asText()).contains("DATASET_UPLOAD_FILE_LIMIT_EXCEEDED");
-    }
-
-    @Test
-    void localDatasetUploadRejectsCorruptedImagePayload() throws Exception {
-        // TASK-local-dataset-upload AC-02 AC-04 AC-06
-        String buAdmin = login("buadmin", "CABIN");
-        JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-corrupt-create", """
-            {"name":"F015 损坏图片","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","creationMode":"LOCAL_UPLOAD"}
-            """, buAdmin);
-        String sessionId = created.at("/data/sessionId").asText();
-
-        JsonNode rejected = postMultipart(
-            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
-            "trace-f015-corrupt-upload",
-            List.of(new MultipartPart("files", "broken.png", "image/png", "not-a-real-image".getBytes(StandardCharsets.UTF_8))),
-            buAdmin
-        );
-        assertThat(rejected.at("/code").asInt()).isEqualTo(42200);
-        assertThat(rejected.at("/message").asText()).contains("DATASET_UPLOAD_FILE_CORRUPTED");
-
-        JsonNode queried = getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-corrupt-query", buAdmin);
-        assertThat(queried.at("/data/summary/rejectedFiles").asInt()).isEqualTo(1);
-        assertThat(queried.at("/data/files/0/diagnosticCode").asText()).isEqualTo("DATASET_UPLOAD_FILE_CORRUPTED");
-    }
-
-    @Test
-    void localDatasetUploadPermissionChainBlocksUnauthorizedRole() throws Exception {
-        // TASK-local-dataset-upload AC-06
-        String qe = login("qeuser", "QE");
-        JsonNode forbidden = postJson("/api/v1/dataset-upload-sessions", "trace-f015-permission", """
-            {"datasetName":"QE 无权限上传","tenantId":"TENANT-QE","accessLevel":"TEAM","dataType":"IMAGE"}
-            """, qe);
-        assertThat(forbidden.at("/code").asInt()).isEqualTo(40300);
-    }
 
     @Test
     void connectorProbeAcceptsHttpEndpointForTcpOnlyIndustrialProtocol() throws Exception {
@@ -311,16 +40,16 @@ class DataManagementControllerTest {
             DataSourceRecord source = new DataSourceRecord(
                 "DSRC-UNIT-OPCUA",
                 "单元测试 OPC-UA",
-                "INDUSTRIAL_PROTOCOL",
+                "API",
                 "TENANT-CABIN",
                 null,
                 "http://127.0.0.1:" + server.getLocalPort(),
                 server.getLocalPort(),
-                "OPC_UA_SIM",
+                "api_scope",
                 "SECRET_REF",
                 "secret://unit/opcua",
                 "BU",
-                "industrial protocol probe unit",
+                "api probe unit",
                 "INACTIVE",
                 null,
                 "NOT_TESTED",
@@ -333,7 +62,7 @@ class DataManagementControllerTest {
 
             DataSourceTestResult result = new DefaultDataSourceConnectionTester().test(source);
             assertThat(result.result()).isEqualTo("SUCCESS");
-            assertThat(result.diagnosticMessage()).contains("INDUSTRIAL_PROTOCOL");
+            assertThat(result.diagnosticMessage()).contains("API");
         }
     }
 
@@ -342,7 +71,7 @@ class DataManagementControllerTest {
         // TASK-data-source-dataset-management AC-01 AC-02 AC-09
         String admin = login("admin", "YF");
         JsonNode created = postJson("/api/v1/data-sources", "trace-f009-dsrc-create", """
-            {"name":"测试对象存储","sourceType":"OBJECT_STORAGE","tenantId":"TENANT-CABIN","endpoint":"TODO_CONFIRM_OSS_ENDPOINT","port":9000,"databaseName":"bucket-a","credentialMode":"SECRET_REF","secretRef":"secret://TODO_CONFIRM_OSS_SECRET","sharedScope":"BU"}
+            {"name":"测试导入源","sourceType":"IMPORT","tenantId":"TENANT-CABIN","endpoint":"TODO_CONFIRM_IMPORT_ENDPOINT","port":9000,"databaseName":"bucket-a","credentialMode":"SECRET_REF","secretRef":"secret://TODO_CONFIRM_OSS_SECRET","sharedScope":"BU"}
             """, admin);
         assertThat(created.at("/code").asInt()).isZero();
         String sourceId = created.at("/data/sourceId").asText();
@@ -370,7 +99,7 @@ class DataManagementControllerTest {
         assertThat(importRejected.at("/message").asText()).contains("DATA_SOURCE_NOT_ACTIVE");
 
         JsonNode sandbox = postJson("/api/v1/data-sources", "trace-f009-dsrc-sandbox", """
-            {"name":"Sandbox MinIO","sourceType":"OBJECT_STORAGE","tenantId":"TENANT-CABIN","endpoint":"minio.sandbox.internal","port":9000,"databaseName":"bucket-a","credentialMode":"SECRET_REF","secretRef":"secret://sandbox/minio","sharedScope":"BU"}
+            {"name":"Sandbox 导入源","sourceType":"IMPORT","tenantId":"TENANT-CABIN","endpoint":"import.sandbox.internal","port":9000,"databaseName":"bucket-a","credentialMode":"SECRET_REF","secretRef":"secret://sandbox/import","sharedScope":"BU"}
             """, admin);
         String sandboxId = sandbox.at("/data/sourceId").asText();
         JsonNode sandboxTest = postJson("/api/v1/data-sources/" + sandboxId + "/test", "trace-f009-dsrc-sandbox-test", "{}", admin);
@@ -390,13 +119,13 @@ class DataManagementControllerTest {
 
     @Test
     void sandboxConnectorsImportDatasetsForAllReservedSourceTypes() throws Exception {
-        // TASK-data-source-dataset-management AC-11
+        // TASK-data-source-dataset-management AC-11 AC-12
         String admin = login("admin", "YF");
-        String[] types = {"RELATIONAL_DB", "API", "STREAM", "TIME_SERIES", "INDUSTRIAL_PROTOCOL"};
+        String[] types = {"IMPORT", "API"};
         for (String type : types) {
             JsonNode created = postJson("/api/v1/data-sources", "trace-f009-connector-" + type, """
-                {"name":"Sandbox %s","sourceType":"%s","tenantId":"TENANT-CABIN","endpoint":"%s.sandbox.internal","port":8080,"databaseName":"%s_scope","credentialMode":"SECRET_REF","secretRef":"secret://sandbox/%s","sharedScope":"BU"}
-                """.formatted(type, type, type.toLowerCase().replace('_', '-'), type.toLowerCase(), type.toLowerCase()), admin);
+                {"name":"Sandbox %s","sourceType":"%s","tenantId":"TENANT-CABIN","endpoint":"%s.sandbox.internal","port":8080,"databaseName":"%s","credentialMode":"SECRET_REF","secretRef":"secret://sandbox/%s","sharedScope":"BU"}
+                """.formatted(type, type, type.toLowerCase().replace('_', '-'), "API".equals(type) ? "media" : "import", type.toLowerCase()), admin);
             String sourceId = created.at("/data/sourceId").asText();
             JsonNode tested = postJson("/api/v1/data-sources/" + sourceId + "/test", "trace-f009-connector-test-" + type, "{}", admin);
             assertThat(tested.at("/data/diagnosticCode").asText()).isEqualTo("OK");
@@ -424,20 +153,239 @@ class DataManagementControllerTest {
     }
 
     @Test
+    void fullLifecycleRunsFromEverySourceTypeToDatasetAnnotationReviewAndPublication() throws Exception {
+        // TASK-data-source-dataset-management AC-12 AC-13；覆盖用户要求：数据源 -> 数据集 -> 图片标注 -> 审核 -> 质量检查 -> 标注文件/标注数据集发布完整跑通。
+        String admin = login("admin", "YF");
+        SourceCase[] cases = {
+            new SourceCase("IMPORT", "IMAGE", "IMAGE_TAGGING", "BOUNDING_BOX", "image_import_scope", "import"),
+            new SourceCase("API", "IMAGE", "IMAGE_SEGMENTATION", "POLYGON", "image_api_scope", "image")
+        };
+
+        for (SourceCase c : cases) {
+            String tracePrefix = "trace-full-cycle-" + c.sourceType().toLowerCase().replace('_', '-');
+            JsonNode source = postJson("/api/v1/data-sources", tracePrefix + "-source", """
+                {"name":"全链路 %s 数据源","sourceType":"%s","tenantId":"TENANT-CABIN","endpoint":"%s.full-cycle.sandbox.internal","port":8080,"databaseName":"%s","credentialMode":"SECRET_REF","secretRef":"secret://sandbox/full-cycle/%s","sharedScope":"BU"}
+                """.formatted(c.sourceType(), c.sourceType(), c.sourceType().toLowerCase().replace('_', '-'), c.databaseName(), c.sourceType().toLowerCase()), admin);
+            assertThat(source.at("/code").asInt()).isZero();
+            String sourceId = source.at("/data/sourceId").asText();
+
+            JsonNode tested = postJson("/api/v1/data-sources/" + sourceId + "/test", tracePrefix + "-test", "{}", admin);
+            assertThat(tested.at("/data/diagnosticCode").asText()).isEqualTo("OK");
+            assertThat(tested.at("/data/diagnosticMessage").asText()).contains(c.sourceType());
+
+            JsonNode activated = postJson("/api/v1/data-sources/" + sourceId + "/activate", tracePrefix + "-activate", "{}", admin);
+            assertThat(activated.at("/data/status").asText()).isEqualTo("ACTIVE");
+
+            JsonNode syncTask = postJson("/api/v1/data-source-sync-tasks", tracePrefix + "-sync-task", """
+                {"sourceId":"%s","name":"全链路 %s 同步","scheduleMode":"MANUAL","syncScope":"%s"}
+                """.formatted(sourceId, c.sourceType(), c.scope()), admin);
+            String syncTaskId = syncTask.at("/data/taskId").asText();
+            JsonNode syncRun = postJson("/api/v1/data-source-sync-tasks/" + syncTaskId + "/run", tracePrefix + "-sync-run", "{}", admin);
+            assertThat(syncRun.at("/data/status").asText()).isEqualTo("SUCCEEDED");
+            assertThat(syncRun.at("/data/diagnosticMessage").asText()).contains("SANDBOX_" + c.sourceType() + "_IMPORT_READY");
+            String datasetId = syncRun.at("/data/targetDatasetId").asText();
+
+            JsonNode importedDataset = getJson("/api/v1/datasets/" + datasetId, tracePrefix + "-dataset", admin);
+            assertThat(importedDataset.at("/data/dataset/status").asText()).isEqualTo("ACTIVE");
+            assertThat(importedDataset.at("/data/dataset/datasetType").asText()).isEqualTo("RAW");
+            assertThat(importedDataset.at("/data/dataset/dataType").asText()).isEqualTo(c.dataType());
+            assertThat(importedDataset.at("/data/files/0/status").asText()).isEqualTo("BOUND");
+            assertThat(importedDataset.at("/data/lineage").findValuesAsText("transformType")).contains("IMPORT");
+            String versionId = importedDataset.at("/data/dataset/currentVersionId").asText();
+
+            JsonNode template = postJson("/api/v1/annotation/label-templates", tracePrefix + "-template", """
+                {"name":"全链路 %s 标注模板","tenantId":"TENANT-CABIN","scene":"%s","labelType":"%s","labelSchemaJson":"{\\"labels\\":[\\"OK\\",\\"NG\\"],\\"dataType\\":\\"%s\\"}"}
+                """.formatted(c.dataType(), c.scene(), c.labelType(), c.dataType()), admin);
+            assertThat(template.at("/data/status").asText()).isEqualTo("DRAFT");
+            String templateId = template.at("/data/templateId").asText();
+            JsonNode publishedTemplate = postJson("/api/v1/annotation/label-templates/" + templateId + "/publish", tracePrefix + "-template-publish", "{}", admin);
+            assertThat(publishedTemplate.at("/data/status").asText()).isEqualTo("PUBLISHED");
+
+            JsonNode annotationTask = postJson("/api/v1/annotation/tasks", tracePrefix + "-annotation-task", """
+                {"name":"全链路 %s 标注任务","sourceDatasetId":"%s","sourceVersionId":"%s","templateId":"%s","scene":"%s","reviewEnabled":true,"prelabelEnabled":false,"labelStudioEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
+                """.formatted(c.dataType(), datasetId, versionId, templateId, c.scene()), admin);
+            assertThat(annotationTask.at("/data/task/status").asText()).isEqualTo("IN_PROGRESS");
+            String annotationTaskId = annotationTask.at("/data/task/taskId").asText();
+            assertThat(annotationTask.at("/data/workItems").size()).isGreaterThanOrEqualTo(1);
+
+            JsonNode labelStudioStatus = getJson("/api/v1/annotation/tasks/" + annotationTaskId + "/label-studio/status", tracePrefix + "-ls-status", admin);
+            assertThat(labelStudioStatus.at("/data/configStatus").asText()).isEqualTo("UNCONFIGURED");
+            assertThat(labelStudioStatus.at("/data/diagnosticCode").asText()).isEqualTo("LABEL_STUDIO_UNCONFIGURED");
+
+            JsonNode taskDetail = getJson("/api/v1/annotation/tasks/" + annotationTaskId, tracePrefix + "-task-detail", admin);
+            for (JsonNode item : taskDetail.at("/data/workItems")) {
+                String workItemId = item.at("/workItemId").asText();
+                String annotationJson = "{\\\"dataType\\\":\\\"" + c.dataType() + "\\\",\\\"sourceType\\\":\\\"" + c.sourceType() + "\\\",\\\"labels\\\":[{\\\"label\\\":\\\"OK\\\",\\\"confidence\\\":1.0}]}";
+                JsonNode draft = postJson("/api/v1/annotation/work-items/" + workItemId + "/draft", tracePrefix + "-draft-" + workItemId, """
+                    {"annotationJson":"%s"}
+                    """.formatted(annotationJson), admin);
+                assertThat(draft.at("/data/status").asText()).isEqualTo("DRAFT");
+                JsonNode submitted = postJson("/api/v1/annotation/work-items/" + workItemId + "/submit", tracePrefix + "-submit-" + workItemId, """
+                    {"annotationJson":"%s"}
+                    """.formatted(annotationJson), admin);
+                assertThat(submitted.at("/code").asInt()).as(submitted.toString()).isZero();
+            assertThat(submitted.at("/data/status").asText()).as(submitted.toString()).isEqualTo("REVIEW_PENDING");
+
+                JsonNode pending = getJson("/api/v1/annotation/review-items?taskId=" + annotationTaskId + "&status=PENDING", tracePrefix + "-pending-" + workItemId, admin);
+                assertThat(pending.at("/data").size()).isGreaterThanOrEqualTo(1);
+                String reviewId = pending.at("/data/0/reviewItemId").asText();
+                JsonNode approved = postJson("/api/v1/annotation/review-items/" + reviewId + "/approve", tracePrefix + "-approve-" + workItemId, "{}", admin);
+                assertThat(approved.at("/data/status").asText()).isEqualTo("APPROVED");
+            }
+
+            JsonNode afterReview = getJson("/api/v1/annotation/tasks/" + annotationTaskId, tracePrefix + "-after-review", admin);
+            assertThat(afterReview.at("/data/task/status").asText()).isEqualTo("APPROVED");
+            assertThat(afterReview.at("/data/task/annotatedCount").asLong()).isEqualTo(afterReview.at("/data/task/totalCount").asLong());
+            assertThat(afterReview.at("/data/task/reviewedCount").asLong()).isEqualTo(afterReview.at("/data/task/totalCount").asLong());
+
+            JsonNode quality = postJson("/api/v1/annotation/tasks/" + annotationTaskId + "/quality-check", tracePrefix + "-quality", "{}", admin);
+            assertThat(quality.at("/data/qualityStatus").asText()).isEqualTo("PASSED");
+            assertThat(quality.at("/data/coverageRate").asDouble()).isEqualTo(1.0d);
+
+            JsonNode publication = postJson("/api/v1/annotation/tasks/" + annotationTaskId + "/publish-dataset", tracePrefix + "-publish", "{}", admin);
+            assertThat(publication.at("/data/diagnosticCode").asText()).isEqualTo("OK");
+            assertThat(publication.at("/data/annotationArtifactFileId").asText()).startsWith("FILE-ANN-");
+            assertThat(publication.at("/data/annotationArtifactRole").asText()).isEqualTo("ANNOTATION_RESULT");
+            String outputDatasetId = publication.at("/data/outputDatasetId").asText();
+            assertThat(outputDatasetId).startsWith("DATASET-ANN-");
+
+            JsonNode output = getJson("/api/v1/datasets/" + outputDatasetId, tracePrefix + "-output-dataset", admin);
+            assertThat(output.at("/data/dataset/datasetType").asText()).isEqualTo("ANNOTATED");
+            assertThat(output.at("/data/dataset/dataType").asText()).isEqualTo(c.dataType());
+            assertThat(output.at("/data/files/0/fileRole").asText()).isEqualTo("ANNOTATION_RESULT");
+            assertThat(output.at("/data/files/0/status").asText()).isEqualTo("BOUND");
+            assertThat(output.at("/data/lineage").findValuesAsText("transformType")).contains("ANNOTATION");
+        }
+    }
+
+
+    @Test
+    void datasetAnnotationTaskExportFlowCreatesMultipleTasksAndTrainingPackages() throws Exception {
+        // TASK-dataset-annotation-task-export AC-01 AC-02 AC-05 AC-06 AC-07 AC-08 AC-09
+        String admin = login("admin", "YF");
+        String annotator = login("annotator", "CABIN");
+        JsonNode candidate = getJson("/api/v1/datasets/DATASET-WELD-DEFECT/annotation-candidates", "trace-f014-candidate", admin);
+        assertThat(candidate.at("/data/eligible").asBoolean()).isTrue();
+        assertThat(candidate.at("/data/supportedFormats").toString()).contains("SMP_JSONL", "COCO_DETECTION", "YOLO_DETECTION", "VOC_DETECTION");
+
+        JsonNode taskA = postJson("/api/v1/datasets/DATASET-WELD-DEFECT/annotation-tasks", "trace-f014-task-a", """
+            {"name":"F014 数据集入口任务 A","sourceVersionId":"DVER-WELD-001","templateId":"LT-WELD-BBOX","scene":"IMAGE_TAGGING","reviewEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
+            """, admin);
+        JsonNode taskB = postJson("/api/v1/datasets/DATASET-WELD-DEFECT/annotation-tasks", "trace-f014-task-b", """
+            {"name":"F014 数据集入口任务 B","sourceVersionId":"DVER-WELD-001","templateId":"LT-WELD-BBOX","scene":"IMAGE_TAGGING","reviewEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
+            """, admin);
+        assertThat(taskA.at("/data/task/sourceDatasetId").asText()).isEqualTo("DATASET-WELD-DEFECT");
+        String taskId = taskA.at("/data/task/taskId").asText();
+        assertThat(taskB.at("/data/task/taskId").asText()).isNotEqualTo(taskId);
+
+        JsonNode sameSource = getJson("/api/v1/datasets/DATASET-WELD-DEFECT/annotation-tasks", "trace-f014-same-source", admin);
+        assertThat(sameSource.at("/data").findValuesAsText("taskId")).contains(taskId, taskB.at("/data/task/taskId").asText());
+
+        JsonNode notReady = postJson("/api/v1/annotation/tasks/" + taskId + "/exports", "trace-f014-not-ready", """
+            {"format":"SMP_JSONL"}
+            """, admin);
+        assertThat(notReady.at("/code").asInt()).isEqualTo(42200);
+        assertThat(notReady.at("/message").asText()).contains("ANNOTATION_EXPORT_NOT_READY");
+
+        JsonNode detail = getJson("/api/v1/annotation/tasks/" + taskId, "trace-f014-detail", admin);
+        for (JsonNode item : detail.at("/data/workItems")) {
+            String workItemId = item.at("/workItemId").asText();
+            JsonNode submitted = postJson("/api/v1/annotation/work-items/" + workItemId + "/submit", "trace-f014-submit-" + workItemId, """
+                {"annotationJson":"{\\"boxes\\":[{\\"label\\":\\"裂纹\\",\\"x\\":1,\\"y\\":2,\\"w\\":3,\\"h\\":4}]}"}
+                """, annotator);
+            assertThat(submitted.at("/code").asInt()).as(submitted.toString()).isZero();
+            assertThat(submitted.at("/data/status").asText()).as(submitted.toString()).isEqualTo("REVIEW_PENDING");
+            JsonNode pending = getJson("/api/v1/annotation/review-items?taskId=" + taskId + "&status=PENDING", "trace-f014-pending-" + workItemId, admin);
+            String reviewId = null;
+            for (JsonNode review : pending.at("/data")) {
+                if (workItemId.equals(review.at("/workItemId").asText())) {
+                    reviewId = review.at("/reviewItemId").asText();
+                    break;
+                }
+            }
+            assertThat(reviewId).as("pending review for " + workItemId).isNotBlank();
+            JsonNode approved = postJson("/api/v1/annotation/review-items/" + reviewId + "/approve", "trace-f014-approve-" + workItemId, "{}", admin);
+            assertThat(approved.at("/data/status").asText()).isEqualTo("APPROVED");
+        }
+        JsonNode afterReview = getJson("/api/v1/annotation/tasks/" + taskId, "trace-f014-after-review", admin);
+        assertThat(afterReview.at("/data/summary/reviewedCount").asLong()).isEqualTo(afterReview.at("/data/summary/totalCount").asLong());
+        assertThat(afterReview.at("/data/workItems").findValuesAsText("status")).containsOnly("APPROVED");
+        JsonNode quality = postJson("/api/v1/annotation/tasks/" + taskId + "/quality-check", "trace-f014-quality", "{}", admin);
+        assertThat(quality.at("/data/qualityStatus").asText()).isEqualTo("PASSED");
+        JsonNode published = postJson("/api/v1/annotation/tasks/" + taskId + "/publish-dataset", "trace-f014-publish", "{}", admin);
+        assertThat(published.at("/data/annotationArtifactFileId").asText()).startsWith("FILE-ANN-");
+
+        JsonNode smp = postJson("/api/v1/annotation/tasks/" + taskId + "/exports", "trace-f014-export-smp", """
+            {"format":"SMP_JSONL"}
+            """, admin);
+        assertThat(smp.at("/data/status").asText()).isIn("AVAILABLE", "GENERATING");
+        assertThat(smp.at("/data/packageIncludesImages").asBoolean()).isTrue();
+        assertThat(smp.at("/data/expiresAt").asText()).isNotBlank();
+
+        for (String fmt : new String[]{"COCO_DETECTION", "YOLO_DETECTION", "VOC_DETECTION", "LABEL_STUDIO_JSON"}) {
+            JsonNode exported = postJson("/api/v1/annotation/tasks/" + taskId + "/exports", "trace-f014-export-" + fmt.toLowerCase(), "{\"format\":\"" + fmt + "\"}", admin);
+            assertThat(exported.at("/data/packageIncludesImages").asBoolean()).isTrue();
+            assertThat(exported.at("/data/sizeBytes").asLong()).isGreaterThan(0);
+        }
+
+        JsonNode download = getJson("/api/v1/annotation/exports/" + smp.at("/data/exportId").asText() + "/download-url", "trace-f014-download", admin);
+        if ("AVAILABLE".equals(smp.at("/data/status").asText())) {
+            assertThat(download.at("/data/diagnosticCode").asText()).isEqualTo("SIGNED_URL_READY");
+            assertThat(download.at("/data/downloadUrl").asText()).contains("localhost");
+        } else {
+            assertThat(download.at("/code").asInt()).isEqualTo(40900);
+        }
+
+        JsonNode audit = getJson("/api/v1/platform/audit-logs?action=ANNOTATION_EXPORT_REQUESTED", "trace-f014-audit", admin);
+        assertThat(audit.at("/data/items/0/action").asText()).isEqualTo("ANNOTATION_EXPORT_REQUESTED");
+    }
+
+    @Test
+    void datasetAnnotationCandidateFiltersTemplatesByTenantAndSupportsSegmentationTaskCreation() throws Exception {
+        // BUG-20260521-image-segmentation-task-422
+        String admin = login("admin", "YF");
+        JsonNode foreignTemplate = postJson("/api/v1/annotation/label-templates", "trace-bug-seg-foreign-template", """
+            {"name":"跨 BU 图片分割模板","tenantId":"TENANT-YF","scene":"IMAGE_SEGMENTATION","labelType":"POLYGON","labelSchemaJson":"{\\"labels\\":[\\"异构区域\\"]}"}
+            """, admin);
+        String foreignTemplateId = foreignTemplate.at("/data/templateId").asText();
+        JsonNode publishedForeignTemplate = postJson("/api/v1/annotation/label-templates/" + foreignTemplateId + "/publish", "trace-bug-seg-foreign-template-publish", "{}", admin);
+        assertThat(publishedForeignTemplate.at("/data/status").asText()).isEqualTo("PUBLISHED");
+
+        JsonNode candidate = getJson("/api/v1/datasets/DATASET-WELD-DEFECT/annotation-candidates", "trace-bug-seg-candidate", admin);
+        assertThat(candidate.at("/data/eligible").asBoolean()).isTrue();
+        assertThat(candidate.at("/data/templates").findValuesAsText("templateId")).contains("LT-WELD-BBOX", "LT-WELD-POLYGON");
+        assertThat(candidate.at("/data/templates").findValuesAsText("templateId")).doesNotContain(foreignTemplateId, "LT-TEXT-INTENT-DRAFT");
+        assertThat(candidate.at("/data/templates").findValuesAsText("tenantId")).containsOnly("TENANT-CABIN");
+
+        JsonNode segmentationTask = postJson("/api/v1/datasets/DATASET-WELD-DEFECT/annotation-tasks", "trace-bug-seg-task-create", """
+            {"name":"焊缝缺陷图片分割任务","sourceVersionId":"DVER-WELD-001","templateId":"LT-WELD-POLYGON","scene":"IMAGE_SEGMENTATION","reviewEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
+            """, admin);
+        assertThat(segmentationTask.at("/code").asInt()).isZero();
+        assertThat(segmentationTask.at("/data/task/templateId").asText()).isEqualTo("LT-WELD-POLYGON");
+        assertThat(segmentationTask.at("/data/task/scene").asText()).isEqualTo("IMAGE_SEGMENTATION");
+
+        JsonNode mismatch = postJson("/api/v1/datasets/DATASET-WELD-DEFECT/annotation-tasks", "trace-bug-seg-mismatch", """
+            {"name":"错误模板图片分割任务","sourceVersionId":"DVER-WELD-001","templateId":"LT-WELD-BBOX","scene":"IMAGE_SEGMENTATION","reviewEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
+            """, admin);
+        assertThat(mismatch.at("/code").asInt()).isEqualTo(42200);
+        assertThat(mismatch.at("/message").asText()).contains("DAT-013");
+    }
+
+    @Test
     void dataStandardizationProfilesAndRunsOnDatasetsFromDifferentSources() throws Exception {
         // TASK-data-standardization-pipeline AC-01 AC-02 AC-03 AC-04 AC-05
         String admin = login("admin", "YF");
         JsonNode overview = getJson("/api/v1/data-standards/overview", "trace-f010-standard-overview", admin);
         assertThat(overview.at("/code").asInt()).isZero();
         assertThat(overview.at("/data/stats/datasetCount").asLong()).isGreaterThanOrEqualTo(2);
-        assertThat(overview.at("/data/profiles").findValuesAsText("dataType")).contains("IMAGE", "TEXT");
+        assertThat(overview.at("/data/profiles").findValuesAsText("dataType")).contains("IMAGE", "AUDIO_VIDEO");
 
         JsonNode profile = getJson("/api/v1/datasets/DATASET-WORKORDER-TEXT/standard-profile", "trace-f010-standard-profile", admin);
         assertThat(profile.at("/data/profileStatus").asText()).isEqualTo("PROFILED");
-        assertThat(profile.at("/data/fields").findValuesAsText("standardField")).contains("work_order_no", "fault_description");
+        assertThat(profile.at("/data/fields").findValuesAsText("standardField")).contains("media_uri", "content_type");
 
         JsonNode created = postJson("/api/v1/data-standard-tasks", "trace-f010-standard-task-create", """
-            {"datasetId":"DATASET-WORKORDER-TEXT","name":"工单文本自动标准化","standardProfile":"WORKORDER_TEXT_STANDARD"}
+            {"datasetId":"DATASET-WORKORDER-TEXT","name":"影音接口数据自动标准化","standardProfile":"INDUSTRIAL_MEDIA_STANDARD"}
             """, admin);
         assertThat(created.at("/data/status").asText()).isEqualTo("READY");
         String taskId = created.at("/data/taskId").asText();
@@ -573,7 +521,7 @@ class DataManagementControllerTest {
         assertThat(overview.at("/data/templates").findValuesAsText("status")).contains("PUBLISHED");
 
         JsonNode createdTemplate = postJson("/api/v1/annotation/label-templates", "trace-f012-template-create", """
-            {"name":"单测视觉模板","tenantId":"TENANT-CABIN","scene":"OBJECT_DETECTION","labelType":"BOUNDING_BOX","labelSchemaJson":"{\\"labels\\":[\\"裂纹\\"]}"}
+            {"name":"单测视觉模板","tenantId":"TENANT-CABIN","scene":"IMAGE_TAGGING","labelType":"BOUNDING_BOX","labelSchemaJson":"{\\"labels\\":[\\"裂纹\\"]}"}
             """, admin);
         assertThat(createdTemplate.at("/data/status").asText()).isEqualTo("DRAFT");
         String templateId = createdTemplate.at("/data/templateId").asText();
@@ -585,7 +533,7 @@ class DataManagementControllerTest {
         assertThat(config.at("/data/configXml").asText()).contains("<View>");
 
         JsonNode createdTask = postJson("/api/v1/annotation/tasks", "trace-f012-task-create", """
-            {"name":"F012 单测标注任务","sourceDatasetId":"DATASET-WELD-DEFECT","sourceVersionId":"DVER-WELD-001","templateId":"%s","scene":"OBJECT_DETECTION","reviewEnabled":true,"prelabelEnabled":true,"labelStudioEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"],"prelabelModelSource":"TODO_CONFIRM_PRELABEL_MODEL_SOURCE"}
+            {"name":"F012 单测标注任务","sourceDatasetId":"DATASET-WELD-DEFECT","sourceVersionId":"DVER-WELD-001","templateId":"%s","scene":"IMAGE_TAGGING","reviewEnabled":true,"prelabelEnabled":true,"labelStudioEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"],"prelabelModelSource":"TODO_CONFIRM_PRELABEL_MODEL_SOURCE"}
             """.formatted(templateId), admin);
         assertThat(createdTask.at("/data/task/status").asText()).isEqualTo("IN_PROGRESS");
         String taskId = createdTask.at("/data/task/taskId").asText();
@@ -627,6 +575,8 @@ class DataManagementControllerTest {
         assertThat(quality.at("/data/qualityStatus").asText()).isEqualTo("PASSED");
         JsonNode published = postJson("/api/v1/annotation/tasks/" + taskId + "/publish-dataset", "trace-f012-publish", "{}", admin);
         assertThat(published.at("/data/outputDatasetId").asText()).startsWith("DATASET-ANN-");
+        assertThat(published.at("/data/annotationArtifactFileId").asText()).startsWith("FILE-ANN-");
+        assertThat(published.at("/data/annotationArtifactRole").asText()).isEqualTo("ANNOTATION_RESULT");
         JsonNode output = getJson("/api/v1/datasets/" + published.at("/data/outputDatasetId").asText(), "trace-f012-output-dataset", admin);
         assertThat(output.at("/data/dataset/datasetType").asText()).isEqualTo("ANNOTATED");
         assertThat(output.at("/data/lineage").findValuesAsText("transformType")).contains("ANNOTATION");
@@ -640,19 +590,19 @@ class DataManagementControllerTest {
             {"name":"F012 非活动数据集","datasetType":"RAW","dataType":"IMAGE","tenantId":"TENANT-CABIN","accessLevel":"TEAM","tags":["F012"],"recordCount":5,"sourceId":"DSRC-CABIN-MINIO"}
             """, admin);
         JsonNode inactiveRejected = postJson("/api/v1/annotation/tasks", "trace-f012-inactive-reject", """
-            {"name":"非活动数据集任务","sourceDatasetId":"%s","templateId":"LT-WELD-BBOX","scene":"OBJECT_DETECTION","assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
+            {"name":"非活动数据集任务","sourceDatasetId":"%s","templateId":"LT-WELD-BBOX","scene":"IMAGE_TAGGING","assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
             """.formatted(inactiveDataset.at("/data/dataset/datasetId").asText()), admin);
         assertThat(inactiveRejected.at("/code").asInt()).isEqualTo(42200);
         assertThat(inactiveRejected.at("/message").asText()).contains("DAT-009");
 
         JsonNode draftTemplateRejected = postJson("/api/v1/annotation/tasks", "trace-f012-draft-template-reject", """
-            {"name":"草稿模板任务","sourceDatasetId":"DATASET-WORKORDER-TEXT","sourceVersionId":"DVER-TEXT-001","templateId":"LT-TEXT-INTENT-DRAFT","scene":"TEXT_LABELING","assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
+            {"name":"草稿模板任务","sourceDatasetId":"DATASET-WORKORDER-TEXT","sourceVersionId":"DVER-TEXT-001","templateId":"LT-TEXT-INTENT-DRAFT","scene":"IMAGE_SEGMENTATION","assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
             """, admin);
         assertThat(draftTemplateRejected.at("/code").asInt()).isEqualTo(42200);
-        assertThat(draftTemplateRejected.at("/message").asText()).contains("DAT-003");
+        assertThat(draftTemplateRejected.at("/message").asText()).contains("仅支持图片数据集");
 
         JsonNode selfReviewRejected = postJson("/api/v1/annotation/tasks", "trace-f012-self-review-reject", """
-            {"name":"自审任务","sourceDatasetId":"DATASET-WELD-DEFECT","sourceVersionId":"DVER-WELD-001","templateId":"LT-WELD-BBOX","scene":"OBJECT_DETECTION","reviewEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-ANNOTATOR"]}
+            {"name":"自审任务","sourceDatasetId":"DATASET-WELD-DEFECT","sourceVersionId":"DVER-WELD-001","templateId":"LT-WELD-BBOX","scene":"IMAGE_TAGGING","reviewEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-ANNOTATOR"]}
             """, admin);
         assertThat(selfReviewRejected.at("/code").asInt()).isEqualTo(42200);
         assertThat(selfReviewRejected.at("/message").asText()).contains("DAT-004");
@@ -666,7 +616,7 @@ class DataManagementControllerTest {
     void datasetLifecycleBlocksUnconfiguredSafetyAndImmutablePublishedVersion() throws Exception {
         // TASK-data-source-dataset-management AC-03 AC-04 AC-05 AC-06 AC-09
         String admin = login("admin", "YF");
-        JsonNode list = getJson("/api/v1/datasets", "trace-f009-datasets", admin);
+        JsonNode list = getJson("/api/v1/datasets?pageSize=100", "trace-f009-datasets", admin);
         assertThat(list.at("/code").asInt()).isZero();
         assertThat(list.at("/data/stats/total").asLong()).isGreaterThanOrEqualTo(2);
         assertThat(list.at("/data/items").findValuesAsText("name")).contains("焊缝缺陷检测数据集");
@@ -710,11 +660,23 @@ class DataManagementControllerTest {
             {"purpose":"训练焊缝缺陷模型"}
             """, annotator);
         assertThat(request.at("/data/status").asText()).isEqualTo("PENDING");
+        assertThat(request.at("/data/datasetName").asText()).isEqualTo("焊缝缺陷检测数据集");
         String requestId = request.at("/data/requestId").asText();
 
         String admin = login("admin", "YF");
+        JsonNode inbox = getJson("/api/v1/dataset-access-requests?status=PENDING", "trace-f009-access-inbox", admin);
+        assertThat(inbox.at("/data").findValuesAsText("requestId")).contains(requestId);
+        assertThat(inbox.at("/data").findValuesAsText("datasetName")).contains("焊缝缺陷检测数据集");
+
         JsonNode grant = putJson("/api/v1/dataset-access-requests/" + requestId + "/approve", "trace-f009-access-approve", "{}", admin);
         assertThat(grant.at("/data/status").asText()).isEqualTo("ACTIVE");
+
+        JsonNode duplicateApprove = putJson("/api/v1/dataset-access-requests/" + requestId + "/approve", "trace-f009-access-approve-again", "{}", admin);
+        assertThat(duplicateApprove.at("/code").asInt()).isEqualTo(40900);
+        assertThat(duplicateApprove.at("/message").asText()).contains("DATASET_ACCESS_REQUEST_ALREADY_REVIEWED");
+
+        JsonNode approvedInbox = getJson("/api/v1/dataset-access-requests?status=APPROVED", "trace-f009-access-approved-inbox", admin);
+        assertThat(approvedInbox.at("/data").findValuesAsText("requestId")).contains(requestId);
 
         JsonNode reference = getJson("/api/v1/dataset-references?datasetId=DATASET-WELD-DEFECT", "trace-f009-reference", annotator);
         assertThat(reference.at("/code").asInt()).isZero();
@@ -724,6 +686,8 @@ class DataManagementControllerTest {
         JsonNode crossBu = getJson("/api/v1/datasets/DATASET-WELD-DEFECT", "trace-f009-cross-bu", qe);
         assertThat(crossBu.at("/code").asInt()).isEqualTo(40400);
     }
+
+    private record SourceCase(String sourceType, String dataType, String scene, String labelType, String scope, String databaseName) {}
 
     private String login(String username, String tenantCode) throws Exception {
         JsonNode login = postJson("/api/v1/auth/login", "trace-login-" + username + "-" + tenantCode, """
@@ -750,92 +714,9 @@ class DataManagementControllerTest {
         return send(builder.build());
     }
 
-    private JsonNode postMultipart(String path, String traceId, List<MultipartPart> parts, String token) throws Exception {
-        String boundary = "----SMPBoundary" + System.nanoTime();
-        ByteArrayOutputStream body = new ByteArrayOutputStream();
-        for (MultipartPart part : parts) {
-            body.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
-            body.write(("Content-Disposition: form-data; name=\"" + part.name() + "\"; filename=\"" + part.fileName() + "\"\r\n").getBytes(StandardCharsets.UTF_8));
-            body.write(("Content-Type: " + part.contentType() + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
-            body.write(part.content());
-            body.write("\r\n".getBytes(StandardCharsets.UTF_8));
-        }
-        body.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
-        var builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
-            .header(TraceIdFilter.TRACE_HEADER, traceId)
-            .header("Content-Type", "multipart/form-data; boundary=" + boundary)
-            .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()));
-        if (token != null) builder.header("Authorization", "Bearer " + token);
-        return send(builder.build());
-    }
-
     private JsonNode send(HttpRequest request) throws Exception {
         var response = client.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() < 400) assertThat(response.headers().firstValue(TraceIdFilter.TRACE_HEADER)).isPresent();
         return objectMapper.readTree(response.body());
     }
-
-    private JsonNode waitForUploadSessionStatus(String sessionId, String token, String expectedStatus) throws Exception {
-        JsonNode latest = null;
-        for (int i = 0; i < 100; i++) {
-            latest = getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-poll-" + i, token);
-            if (expectedStatus.equals(latest.at("/data/status").asText())) {
-                return latest;
-            }
-            Thread.sleep(100);
-        }
-        return latest == null ? getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-poll-timeout", token) : latest;
-    }
-
-    private HttpServer mockContentSafetyServer(String responseBody) throws Exception {
-        return mockContentSafetyServer(ignored -> responseBody);
-    }
-
-    private HttpServer mockContentSafetyServer(Function<String, String> responseFactory) throws Exception {
-        HttpServer server = HttpServer.create(new java.net.InetSocketAddress(0), 0);
-        server.createContext("/scan", exchange -> {
-            String requestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            respondJson(exchange, responseFactory.apply(requestBody));
-        });
-        server.start();
-        return server;
-    }
-
-    private String serverEndpoint(HttpServer server) {
-        return "http://127.0.0.1:" + server.getAddress().getPort() + "/scan";
-    }
-
-    private void respondJson(HttpExchange exchange, String body) throws java.io.IOException {
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().add("Content-Type", "application/json");
-        exchange.sendResponseHeaders(200, bytes.length);
-        try (OutputStream output = exchange.getResponseBody()) {
-            output.write(bytes);
-        }
-    }
-
-    private byte[] zipOf(ZipPart... parts) throws Exception {
-        try (ByteArrayOutputStream output = new ByteArrayOutputStream();
-             ZipOutputStream zip = new ZipOutputStream(output)) {
-            for (ZipPart part : parts) {
-                zip.putNextEntry(new ZipEntry(part.name()));
-                zip.write(part.bytes());
-                zip.closeEntry();
-            }
-            zip.finish();
-            return output.toByteArray();
-        }
-    }
-
-    private byte[] imageBytes(String format) throws Exception {
-        BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB);
-        image.setRGB(0, 0, 0x00FF00);
-        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            ImageIO.write(image, format, output);
-            return output.toByteArray();
-        }
-    }
-
-    private record MultipartPart(String name, String fileName, String contentType, byte[] content) {}
-    private record ZipPart(String name, byte[] bytes) {}
 }

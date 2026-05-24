@@ -8,7 +8,9 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -23,6 +25,10 @@ public class PlatformIdentityService {
     private static final int MAX_FAILED_LOGIN = 5;
     private static final int LOCK_MINUTES = 30;
     private static final int TOKEN_SECONDS = 3600;
+    private static final String CABIN_ROLE_41194_NAME = "座舱数据管理员";
+    private static final String CABIN_ROLE_41194_DESCRIPTION = "智能座舱 BU 数据管理权限角色";
+    private static final String CABIN_ROLE_5522_NAME = "座舱标注协调员";
+    private static final String CABIN_ROLE_5522_DESCRIPTION = "智能座舱 BU 标注任务协调与数据查看角色";
 
     private final JdbcTemplate jdbc;
     private final PasswordEncoder passwordEncoder;
@@ -106,7 +112,7 @@ public class PlatformIdentityService {
     }
 
     public boolean canManageUser(PlatformPrincipal principal, PlatformUser target) {
-        return principal.isSuperAdmin() || (principal.isBuAdmin() && Objects.equals(principal.user().tenantId(), target.tenantId()));
+        return principal.isSuperAdmin() || (principal.isBuAdmin() && canManageTenant(principal.user().tenantId(), target.tenantId()));
     }
 
     public PlatformUser findUserById(String userId) {
@@ -168,6 +174,37 @@ public class PlatformIdentityService {
     }
 
     @Transactional(noRollbackFor = PlatformException.class)
+    public PlatformUser updateUser(PlatformPrincipal principal, String userId, UpdateUserRequest request) {
+        requirePermission(principal, "platform:user:update");
+        PlatformUser target = findUserById(userId);
+        if (!canManageUser(principal, target)) {
+            recordCrossBu(principal, target.tenantId());
+            throw new PlatformException(PlatformError.FORBIDDEN, "您无权操作其他 BU 的资源");
+        }
+        String nextDisplayName = blankToDefault(request.displayName(), target.displayName());
+        String nextEmail = blankToDefault(request.email(), target.email());
+        String nextStatus = blankToDefault(request.status(), target.status()).toUpperCase(Locale.ROOT);
+        if (!List.of("ACTIVE", "DISABLED").contains(nextStatus)) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "用户状态仅支持 ACTIVE / DISABLED");
+        }
+        if ("DISABLED".equals(nextStatus) && isLastSuperAdmin(target.id())) {
+            recordAudit(target.tenantId(), principal.user().id(), principal.user().displayName(), principal.roleNames(), "USER_DISABLED", "User", target.id(), "FAILURE", "CRITICAL", target.status(), nextStatus, "last-super-admin");
+            throw new PlatformException(PlatformError.CONFLICT, "系统中仅剩一位超级管理员，无法停用");
+        }
+        OffsetDateTime at = now();
+        jdbc.update("""
+            UPDATE platform_user
+            SET display_name=?, email=?, status=?, session_version=session_version + 1, updated_at=?
+            WHERE id=?
+            """, nextDisplayName, nextEmail, nextStatus, at, userId);
+        if (!Objects.equals(target.status(), nextStatus)) {
+            revokeSessions(userId);
+        }
+        recordAudit(target.tenantId(), principal.user().id(), principal.user().displayName(), principal.roleNames(), "USER_UPDATED", "User", userId, "SUCCESS", "ACTIVE".equals(nextStatus) ? "INFO" : "WARNING", target.displayName() + "|" + target.email() + "|" + target.status(), nextDisplayName + "|" + nextEmail + "|" + nextStatus, "profile-change");
+        return findUserById(userId);
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
     public void updateStatus(PlatformPrincipal principal, String userId, String status) {
         requirePermission(principal, "platform:user:update");
         PlatformUser target = findUserById(userId);
@@ -198,7 +235,7 @@ public class PlatformIdentityService {
     }
 
     @Transactional(noRollbackFor = PlatformException.class)
-    public void setRoles(PlatformPrincipal principal, String userId, List<String> roleCodes) {
+    public void setRoles(PlatformPrincipal principal, String userId, List<String> roleCodes, OffsetDateTime expiresAt) {
         requirePermission(principal, "platform:role:assign");
         PlatformUser target = findUserById(userId);
         if (!canManageUser(principal, target)) {
@@ -206,7 +243,11 @@ public class PlatformIdentityService {
             throw new PlatformException(PlatformError.FORBIDDEN, "您无权操作其他 BU 的资源");
         }
         List<String> oldRoles = roles(target.id());
-        List<String> newRoles = roleCodes == null ? List.of() : roleCodes.stream().distinct().toList();
+        List<String> newRoles = roleCodes == null ? List.of() : roleCodes.stream().filter(Objects::nonNull).map(this::roleCode).filter(code -> !code.isBlank()).distinct().toList();
+        ensureRolesAssignable(principal, newRoles);
+        if (expiresAt != null && !expiresAt.isAfter(now())) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "临时授权过期时间必须晚于当前时间");
+        }
         if (oldRoles.contains("SUPER_ADMIN") && !newRoles.contains("SUPER_ADMIN") && isLastSuperAdmin(target.id())) {
             recordAudit(target.tenantId(), principal.user().id(), principal.user().displayName(), principal.roleNames(), "ROLE_REVOKED", "User", userId, "FAILURE", "CRITICAL", oldRoles.toString(), newRoles.toString(), "last-super-admin");
             throw new PlatformException(PlatformError.CONFLICT, "系统中仅剩一位超级管理员，无法撤销其角色");
@@ -218,21 +259,93 @@ public class PlatformIdentityService {
         jdbc.update("DELETE FROM platform_user_role WHERE user_id=?", userId);
         OffsetDateTime now = now();
         for (String roleCode : newRoles) {
-            jdbc.update("INSERT INTO platform_user_role (id, user_id, role_code, tenant_id, active, expires_at, created_at) VALUES (?, ?, ?, ?, TRUE, NULL, ?)", userId + "::" + roleCode + "::" + target.tenantId(), userId, roleCode, target.tenantId(), now);
+            jdbc.update("INSERT INTO platform_user_role (id, user_id, role_code, tenant_id, active, expires_at, created_at) VALUES (?, ?, ?, ?, TRUE, ?, ?)", userId + "::" + roleCode + "::" + target.tenantId(), userId, roleCode, target.tenantId(), expiresAt, now);
         }
         jdbc.update("UPDATE platform_user SET session_version=session_version + 1, updated_at=? WHERE id=?", now, userId);
         revokeSessions(userId);
-        recordAudit(target.tenantId(), principal.user().id(), principal.user().displayName(), principal.roleNames(), "ROLE_ASSIGNED", "User", userId, "SUCCESS", "CRITICAL", oldRoles.toString(), newRoles.toString(), "role-change");
+        recordAudit(target.tenantId(), principal.user().id(), principal.user().displayName(), principal.roleNames(), "ROLE_ASSIGNED", "User", userId, "SUCCESS", "CRITICAL", oldRoles.toString(), newRoles.toString(), expiresAt == null ? "role-change" : "role-change;expiresAt=" + expiresAt);
         recordAudit(target.tenantId(), principal.user().id(), principal.user().displayName(), principal.roleNames(), "SESSION_INVALIDATED", "User", userId, "SUCCESS", "WARNING", null, null, "role-change");
     }
 
     public List<RoleSummary> rolesSummary() {
         return jdbc.query("""
-            SELECT r.code, r.name, r.description, r.scope, r.preset, COUNT(ur.user_id) AS user_count
+            SELECT r.code, r.name, r.description, r.scope, r.preset, r.parent_role_code, COUNT(ur.user_id) AS user_count
             FROM platform_role r LEFT JOIN platform_user_role ur ON ur.role_code = r.code AND ur.active = TRUE
-            GROUP BY r.code, r.name, r.description, r.scope, r.preset
-            ORDER BY CASE r.code WHEN 'SUPER_ADMIN' THEN 1 WHEN 'BU_ADMIN' THEN 2 WHEN 'DATA_ANNOTATOR' THEN 3 WHEN 'DATA_REVIEWER' THEN 4 WHEN 'MODEL_TRAINER' THEN 5 WHEN 'MODEL_OPS' THEN 6 ELSE 99 END
-            """, (rs, rowNum) -> new RoleSummary(rs.getString("code"), rs.getString("name"), rs.getString("description"), rs.getString("scope"), rs.getBoolean("preset"), rs.getInt("user_count")));
+            WHERE r.preset = TRUE OR r.tenant_id IS NULL OR r.tenant_id = ?
+            GROUP BY r.code, r.name, r.description, r.scope, r.preset, r.parent_role_code
+            ORDER BY CASE r.code WHEN 'SUPER_ADMIN' THEN 1 WHEN 'BU_ADMIN' THEN 2 WHEN 'DATA_ANNOTATOR' THEN 3 WHEN 'DATA_REVIEWER' THEN 4 WHEN 'MODEL_TRAINER' THEN 5 WHEN 'MODEL_OPS' THEN 6 ELSE 99 END, r.code
+            """, roleMapper(), "TENANT-YF");
+    }
+
+    public List<RoleSummary> rolesSummary(PlatformPrincipal principal) {
+        if (principal.isSuperAdmin()) {
+            return jdbc.query("""
+                SELECT r.code, r.name, r.description, r.scope, r.preset, r.parent_role_code, COUNT(ur.user_id) AS user_count
+                FROM platform_role r LEFT JOIN platform_user_role ur ON ur.role_code = r.code AND ur.active = TRUE
+                GROUP BY r.code, r.name, r.description, r.scope, r.preset, r.parent_role_code
+                ORDER BY CASE r.code WHEN 'SUPER_ADMIN' THEN 1 WHEN 'BU_ADMIN' THEN 2 WHEN 'DATA_ANNOTATOR' THEN 3 WHEN 'DATA_REVIEWER' THEN 4 WHEN 'MODEL_TRAINER' THEN 5 WHEN 'MODEL_OPS' THEN 6 ELSE 99 END, r.code
+                """, roleMapper());
+        }
+        return jdbc.query("""
+            SELECT r.code, r.name, r.description, r.scope, r.preset, r.parent_role_code, COUNT(ur.user_id) AS user_count
+            FROM platform_role r LEFT JOIN platform_user_role ur ON ur.role_code = r.code AND ur.active = TRUE
+            WHERE r.preset = TRUE OR r.tenant_id = ?
+            GROUP BY r.code, r.name, r.description, r.scope, r.preset, r.parent_role_code
+            ORDER BY CASE r.code WHEN 'SUPER_ADMIN' THEN 1 WHEN 'BU_ADMIN' THEN 2 WHEN 'DATA_ANNOTATOR' THEN 3 WHEN 'DATA_REVIEWER' THEN 4 WHEN 'MODEL_TRAINER' THEN 5 WHEN 'MODEL_OPS' THEN 6 ELSE 99 END, r.code
+            """, roleMapper(), principal.user().tenantId());
+    }
+
+    @Transactional
+    public RoleSummary createRole(PlatformPrincipal principal, CreateRoleRequest request) {
+        requirePermission(principal, "platform:role:create");
+        String code = roleCode(request.code());
+        if (code.isBlank()) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "角色编码不能为空");
+        }
+        if (List.of("SUPER_ADMIN", "BU_ADMIN", "DATA_ANNOTATOR", "DATA_REVIEWER", "MODEL_TRAINER", "MODEL_OPS").contains(code)) {
+            throw new PlatformException(PlatformError.CONFLICT, "预设角色不可重复创建");
+        }
+        String scope = blankToDefault(request.scope(), "TENANT").toUpperCase(Locale.ROOT);
+        if (!List.of("GLOBAL", "TENANT", "PROJECT").contains(scope)) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "角色作用域仅支持 GLOBAL / TENANT / PROJECT");
+        }
+        if ("GLOBAL".equals(scope) && !principal.isSuperAdmin()) {
+            throw new PlatformException(PlatformError.FORBIDDEN, "只有超级管理员可以创建全局角色");
+        }
+        List<String> requestedPermissions = normalizePermissionCodes(request.permissionCodes());
+        if (!principal.isSuperAdmin()) {
+            ensureWithinCurrentAuthority(principal, requestedPermissions);
+        }
+        List<String> boundedPermissions = boundPermissionsByParent(request.parentRoleCode(), requestedPermissions);
+        OffsetDateTime at = now();
+        jdbc.update("""
+            INSERT INTO platform_role (code, name, description, scope, preset, parent_role_code, tenant_id, status)
+            VALUES (?, ?, ?, ?, FALSE, ?, ?, 'ACTIVE')
+            """, code, requireText(request.name(), "角色名称不能为空"), blankToDefault(request.description(), "自定义角色"), scope, blankToNull(request.parentRoleCode()), "GLOBAL".equals(scope) ? null : principal.user().tenantId());
+        replaceRolePermissions(code, boundedPermissions);
+        recordAudit(principal.user().tenantId(), principal.user().id(), principal.user().displayName(), principal.roleNames(), "ROLE_CREATED", "Role", code, "SUCCESS", "CRITICAL", null, boundedPermissions.toString(), "custom-role;parentRole=" + blankToDefault(request.parentRoleCode(), "NONE") + ";createdAt=" + at);
+        return roleSummary(code);
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public RoleSummary updateRolePermissions(PlatformPrincipal principal, String roleCode, List<String> permissionCodes) {
+        requirePermission(principal, "platform:permission:update");
+        RoleSummary role = roleSummary(roleCode);
+        if (role.preset()) {
+            recordAudit(principal.user().tenantId(), principal.user().id(), principal.user().displayName(), principal.roleNames(), "PERMISSION_CHANGED", "Role", roleCode, "FAILURE", "WARNING", null, null, "preset-role-readonly");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "预设角色权限只读，请通过自定义角色维护 BU 权限");
+        }
+        List<String> oldPermissions = jdbc.queryForList("SELECT permission_code FROM platform_role_permission WHERE role_code=? ORDER BY permission_code", String.class, roleCode);
+        List<String> newPermissions = normalizePermissionCodes(permissionCodes);
+        if (!principal.isSuperAdmin()) {
+            ensureRoleOwnedByCurrentTenant(principal, role);
+            ensureWithinCurrentAuthority(principal, newPermissions);
+        }
+        replaceRolePermissions(roleCode, newPermissions);
+        revokeSessionsByRole(roleCode);
+        recordAudit(principal.user().tenantId(), principal.user().id(), principal.user().displayName(), principal.roleNames(), "PERMISSION_CHANGED", "Role", roleCode, "SUCCESS", "CRITICAL", oldPermissions.toString(), newPermissions.toString(), "role-permissions");
+        recordAudit(principal.user().tenantId(), principal.user().id(), principal.user().displayName(), principal.roleNames(), "SESSION_INVALIDATED", "Role", roleCode, "SUCCESS", "WARNING", null, null, "role-permissions");
+        return roleSummary(roleCode);
     }
 
     public List<PermissionSummary> permissions() {
@@ -241,13 +354,24 @@ public class PlatformIdentityService {
 
     public PermissionMatrix permissionMatrix() {
         List<RoleSummary> roles = rolesSummary();
+        return permissionMatrix(roles);
+    }
+
+    public PermissionMatrix permissionMatrix(PlatformPrincipal principal) {
+        return permissionMatrix(rolesSummary(principal));
+    }
+
+    private PermissionMatrix permissionMatrix(List<RoleSummary> roles) {
         List<PermissionSummary> permissions = permissions();
         List<PermissionModule> modules = permissions.stream()
             .collect(java.util.stream.Collectors.groupingBy(PermissionSummary::module, java.util.LinkedHashMap::new, java.util.stream.Collectors.toList()))
             .entrySet().stream().map(entry -> new PermissionModule(entry.getKey(), entry.getValue())).toList();
         List<RolePermissionRow> rows = new ArrayList<>();
         for (PermissionSummary permission : permissions) {
-            List<String> allowedRoles = jdbc.queryForList("SELECT role_code FROM platform_role_permission WHERE permission_code=? ORDER BY role_code", String.class, permission.code());
+            List<String> visibleRoleCodes = roles.stream().map(RoleSummary::code).toList();
+            List<String> allowedRoles = visibleRoleCodes.isEmpty()
+                ? List.of()
+                : jdbc.queryForList("SELECT role_code FROM platform_role_permission WHERE permission_code=? AND role_code IN (" + placeholders(visibleRoleCodes.size()) + ") ORDER BY role_code", String.class, queryArgs(permission.code(), visibleRoleCodes));
             rows.add(new RolePermissionRow(permission.module(), permission.code(), permission.description(), allowedRoles));
         }
         return new PermissionMatrix(roles, modules, rows);
@@ -337,17 +461,203 @@ public class PlatformIdentityService {
     }
 
     private List<String> roles(String userId) {
-        return jdbc.queryForList("SELECT role_code FROM platform_user_role WHERE user_id=? AND active=TRUE ORDER BY role_code", String.class, userId);
+        return jdbc.queryForList("SELECT role_code FROM platform_user_role WHERE user_id=? AND active=TRUE AND (expires_at IS NULL OR expires_at > ?) ORDER BY role_code", String.class, userId, now());
     }
 
     private List<String> roleNames(String userId) {
-        return jdbc.queryForList("SELECT r.name FROM platform_user_role ur JOIN platform_role r ON r.code=ur.role_code WHERE ur.user_id=? AND ur.active=TRUE ORDER BY r.code", String.class, userId);
+        return jdbc.query("""
+            SELECT r.code, r.name FROM platform_user_role ur JOIN platform_role r ON r.code=ur.role_code
+            WHERE ur.user_id=? AND ur.active=TRUE AND (ur.expires_at IS NULL OR ur.expires_at > ?) ORDER BY r.code
+            """, (rs, rowNum) -> normalizeRoleName(rs.getString("code"), rs.getString("name")), userId, now());
     }
 
     private List<String> permissions(String userId) {
         return jdbc.queryForList("""
-            SELECT DISTINCT rp.permission_code FROM platform_user_role ur JOIN platform_role_permission rp ON rp.role_code = ur.role_code WHERE ur.user_id=? AND ur.active=TRUE ORDER BY rp.permission_code
-            """, String.class, userId);
+            SELECT DISTINCT rp.permission_code FROM platform_user_role ur JOIN platform_role_permission rp ON rp.role_code = ur.role_code WHERE ur.user_id=? AND ur.active=TRUE AND (ur.expires_at IS NULL OR ur.expires_at > ?) ORDER BY rp.permission_code
+            """, String.class, userId, now());
+    }
+
+    private RoleSummary roleSummary(String roleCode) {
+        return jdbc.queryForObject("""
+            SELECT r.code, r.name, r.description, r.scope, r.preset, r.parent_role_code, COUNT(ur.user_id) AS user_count
+            FROM platform_role r LEFT JOIN platform_user_role ur ON ur.role_code = r.code AND ur.active = TRUE
+            WHERE r.code=?
+            GROUP BY r.code, r.name, r.description, r.scope, r.preset, r.parent_role_code
+            """, roleMapper(), roleCode);
+    }
+
+    private void replaceRolePermissions(String roleCode, List<String> permissionCodes) {
+        jdbc.update("DELETE FROM platform_role_permission WHERE role_code=?", roleCode);
+        for (String permissionCode : permissionCodes) {
+            jdbc.update("INSERT INTO platform_role_permission (id, role_code, permission_code) VALUES (?, ?, ?)", roleCode + "::" + permissionCode, roleCode, permissionCode);
+        }
+    }
+
+    private void ensureRolesAssignable(PlatformPrincipal principal, List<String> roleCodes) {
+        for (String roleCode : roleCodes) {
+            RoleSummary role = roleSummary(roleCode);
+            if ("GLOBAL".equals(role.scope()) && !principal.isSuperAdmin()) {
+                throw new PlatformException(PlatformError.FORBIDDEN, "BU 管理员不可分配全局角色");
+            }
+            if (!principal.isSuperAdmin()) {
+                ensureRoleOwnedByCurrentTenant(principal, role);
+                ensureWithinCurrentAuthority(principal, permissionsForRole(role.code()));
+            }
+        }
+    }
+
+    private List<String> boundPermissionsByParent(String parentRoleCode, List<String> requestedPermissions) {
+        if (parentRoleCode == null || parentRoleCode.isBlank()) {
+            return requestedPermissions;
+        }
+        String parentCode = roleCode(parentRoleCode);
+        roleSummary(parentCode);
+        List<String> parentPermissions = permissionsForRole(parentCode);
+        List<String> exceeded = requestedPermissions.stream().filter(permission -> !parentPermissions.contains(permission)).toList();
+        if (!exceeded.isEmpty()) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "自定义角色权限不可超越父角色权限上限: " + exceeded);
+        }
+        return requestedPermissions;
+    }
+
+    private List<String> boundPermissionsByCurrentRole(String roleCode, List<String> requestedPermissions) {
+        return requestedPermissions;
+    }
+
+    private List<String> permissionsForRole(String roleCode) {
+        return jdbc.queryForList("SELECT permission_code FROM platform_role_permission WHERE role_code=? ORDER BY permission_code", String.class, roleCode);
+    }
+
+    private List<String> normalizePermissionCodes(List<String> permissionCodes) {
+        if (permissionCodes == null) {
+            return List.of();
+        }
+        List<String> available = jdbc.queryForList("SELECT code FROM platform_permission", String.class);
+        HashSet<String> availableSet = new HashSet<>(available);
+        List<String> normalized = permissionCodes.stream()
+            .filter(Objects::nonNull)
+            .map(String::trim)
+            .filter(code -> !code.isBlank())
+            .distinct()
+            .toList();
+        List<String> unknown = normalized.stream().filter(code -> !availableSet.contains(code)).toList();
+        if (!unknown.isEmpty()) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "权限码不存在: " + unknown);
+        }
+        return normalized;
+    }
+
+    private String placeholders(int count) {
+        return java.util.stream.IntStream.range(0, count)
+            .mapToObj(index -> "?")
+            .collect(java.util.stream.Collectors.joining(","));
+    }
+
+    private Object[] queryArgs(String first, List<String> rest) {
+        List<Object> args = new ArrayList<>();
+        args.add(first);
+        args.addAll(rest);
+        return args.toArray();
+    }
+
+    private void ensureWithinCurrentAuthority(PlatformPrincipal principal, List<String> requestedPermissions) {
+        List<String> exceeded = requestedPermissions.stream()
+            .filter(permission -> !principal.permissions().contains(permission))
+            .toList();
+        if (!exceeded.isEmpty()) {
+            recordAudit(principal.user().tenantId(), principal.user().id(), principal.user().displayName(), principal.roleNames(), "ROLE_ASSIGN_DENIED", "Permission", exceeded.toString(), "FAILURE", "CRITICAL", principal.permissions().toString(), requestedPermissions.toString(), "permission-upper-bound");
+            throw new PlatformException(PlatformError.FORBIDDEN, "不可分配超过自身权限上限的角色");
+        }
+    }
+
+    private void ensureRoleOwnedByCurrentTenant(PlatformPrincipal principal, RoleSummary role) {
+        Integer count = jdbc.queryForObject("""
+            SELECT COUNT(*) FROM platform_role
+            WHERE code=? AND (preset=TRUE OR tenant_id=?)
+            """, Integer.class, role.code(), principal.user().tenantId());
+        if (count == null || count == 0) {
+            throw new PlatformException(PlatformError.FORBIDDEN, "BU 管理员不可操作其他 BU 的自定义角色");
+        }
+    }
+
+    private boolean canManageTenant(String managerTenantId, String targetTenantId) {
+        if (Objects.equals(managerTenantId, targetTenantId)) {
+            return true;
+        }
+        try {
+            String managerPath = tenantPath(managerTenantId);
+            String targetPath = tenantPath(targetTenantId);
+            return !managerPath.isBlank() && !targetPath.isBlank() && targetPath.startsWith(managerPath + "/");
+        } catch (RuntimeException exception) {
+            return false;
+        }
+    }
+
+    private String tenantPath(String tenantId) {
+        List<String> paths = jdbc.queryForList("SELECT path FROM platform_tenant WHERE id=?", String.class, tenantId);
+        if (paths.isEmpty() || paths.getFirst() == null) {
+            return tenantId;
+        }
+        return paths.getFirst();
+    }
+
+    private RowMapper<RoleSummary> roleMapper() {
+        return (rs, rowNum) -> {
+            String code = rs.getString("code");
+            return new RoleSummary(
+                code,
+                normalizeRoleName(code, rs.getString("name")),
+                normalizeRoleDescription(code, rs.getString("description")),
+                rs.getString("scope"),
+                rs.getBoolean("preset"),
+                rs.getString("parent_role_code"),
+                rs.getInt("user_count")
+            );
+        };
+    }
+
+    private String normalizeRoleName(String code, String name) {
+        if ("CABIN_ROLE_41194".equals(code) && isUnreadableRoleText(name)) {
+            return CABIN_ROLE_41194_NAME;
+        }
+        if ("CABIN_ROLE_5522".equals(code) && isUnreadableRoleText(name)) {
+            return CABIN_ROLE_5522_NAME;
+        }
+        return name;
+    }
+
+    private String normalizeRoleDescription(String code, String description) {
+        if ("CABIN_ROLE_41194".equals(code) && isUnreadableRoleText(description)) {
+            return CABIN_ROLE_41194_DESCRIPTION;
+        }
+        if ("CABIN_ROLE_5522".equals(code) && isUnreadableRoleText(description)) {
+            return CABIN_ROLE_5522_DESCRIPTION;
+        }
+        return description;
+    }
+
+    private boolean isUnreadableRoleText(String value) {
+        return value == null || value.isBlank() || value.indexOf('�') >= 0 || value.indexOf('Ã') >= 0 || value.indexOf('Â') >= 0 || value.startsWith("乱码");
+    }
+
+    private String roleCode(String value) {
+        return blankToDefault(value, "")
+            .trim()
+            .toUpperCase(Locale.ROOT)
+            .replaceAll("[^A-Z0-9_]", "_")
+            .replaceAll("_+", "_")
+            .replaceAll("^_|_$", "");
+    }
+
+    private String requireText(String value, String message) {
+        if (value == null || value.isBlank()) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, message);
+        }
+        return value.trim();
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : roleCode(value);
     }
 
     private boolean isLastSuperAdmin(String targetUserId) {
@@ -360,6 +670,18 @@ public class PlatformIdentityService {
 
     private void revokeSessions(String userId) {
         jdbc.update("UPDATE platform_session SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", now(), userId);
+    }
+
+    private void revokeSessionsByRole(String roleCode) {
+        jdbc.update("""
+            UPDATE platform_session SET revoked_at=?
+            WHERE user_id IN (SELECT user_id FROM platform_user_role WHERE role_code=? AND active=TRUE)
+            AND revoked_at IS NULL
+            """, now(), roleCode);
+        jdbc.update("""
+            UPDATE platform_user SET session_version=session_version + 1, updated_at=?
+            WHERE id IN (SELECT user_id FROM platform_user_role WHERE role_code=? AND active=TRUE)
+            """, now(), roleCode);
     }
 
     private void recordCrossBu(PlatformPrincipal principal, String targetTenantId) {

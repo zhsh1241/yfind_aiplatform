@@ -5,14 +5,14 @@ plan_status: approved
 approved_at: 2026-05-19
 owner: codex
 created_at: 2026-05-19
-updated_at: 2026-05-19
+updated_at: 2026-05-20
 ---
 
 # Plan: 标注任务、标注审核与 Label Studio 适配
 
 ## 1. 背景与目标
 
-F009/F010/F011 已完成 DATA 域数据源、数据集、文件、血缘、标准化任务、Pipeline 编辑器和算子市场的核心闭环；但业务文档与原型中的“数据标注”链路仍未作为正式功能落地。F012 目标是在现有 DATA/PLATFORM 底座上补齐标注任务、标签模板、标注工作台、标注审核、AI 预标注 seam、Label Studio adapter seam，以及标注完成后生成 `ANNOTATED` 数据集和 `ANNOTATION` 血缘。
+F009/F010/F011 已完成 DATA 域数据源、数据集、文件、血缘、标准化任务、Pipeline 编辑器和算子市场的核心闭环；但业务文档与原型中的“数据标注”链路仍未作为正式功能落地。F012 目标是在现有 DATA/PLATFORM 底座上补齐标注任务、标签模板、标注工作台、标注审核、AI 预标注 seam、Label Studio adapter seam，以及标注完成后生成标注文件、`ANNOTATED` 数据集和 `ANNOTATION` 血缘。2026-05-20 需求调整后，本阶段标注范围收敛为图片打标和图片分割。
 
 规划证据：
 
@@ -38,7 +38,7 @@ F009/F010/F011 已完成 DATA 域数据源、数据集、文件、血缘、标�
 - BU 管理员/数据标注管理员可在 `/ann` 管理标注任务、标签模板和分配。
 - 数据标注工程师可在 `/annwork` 处理被分配工作项并提交结果。
 - 审核工程师可在 `/annreview` 审核通过/驳回，且不能审核自己提交的结果。
-- 平台可在质量检查通过后生成 `ANNOTATED` 数据集、版本、结果文件和 `ANNOTATION` 血缘。
+- 平台可在质量检查通过后生成并保存标注文件，再生成 `ANNOTATED` 数据集、版本、结果文件绑定和 `ANNOTATION` 血缘。
 - Label Studio 与 AI 预标注仅落 adapter seam；未知生产参数保留 `TODO_CONFIRM_*`，不得假装完成外部生产对接。
 
 ## 2. Intent / Desired Outcome
@@ -48,10 +48,10 @@ F009/F010/F011 已完成 DATA 域数据源、数据集、文件、血缘、标�
 完成后，典型业务闭环应为：
 
 1. 管理员进入 `/ann` 查看任务总览、统计、Tab 和任务列表。
-2. 管理员创建标注任务：选择 ACTIVE 数据集、标注场景、PUBLISHED 标签模板、审核策略、AI 预标注配置、Label Studio 配置策略、标注员和截止时间。
-3. 标注员进入 `/annwork` 查看样本队列、标签模板、预标注摘要和 Label Studio 配置状态，提交标注结果。
+2. 管理员创建标注任务：选择 ACTIVE 图片数据集、标注场景（图片打标或图片分割）、PUBLISHED 标签模板、审核策略、AI 预标注配置、Label Studio 配置策略、标注员和截止时间。
+3. 标注员进入 `/annwork` 查看图片样本队列、标签模板、预标注摘要和 Label Studio 配置状态，提交图片打标或图片分割结果。
 4. 若任务启用审核，审核工程师在 `/annreview` 通过/驳回；若不启用审核，则提交结果直接进入完成检查。
-5. 任务达到完成条件后运行质量检查；通过后发布 `ANNOTATED` 数据集并写入血缘。
+5. 任务达到完成条件后运行质量检查；通过后生成并保存标注文件，随后发布 `ANNOTATED` 数据集并写入血缘。
 6. `/dsdetail` 与 `/lineage` 能看到标注数据集、标注任务节点和标注事件。
 
 ## 3. 范围
@@ -60,7 +60,8 @@ F009/F010/F011 已完成 DATA 域数据源、数据集、文件、血缘、标�
 
 - **标注任务管理 `/ann`**
   - 标题、统计卡、任务 Tab、任务列表、状态筛选与操作入口。
-  - 新建标注任务向导：选择数据集、标注配置、分配团队。
+  - 新建标注任务向导：选择图片数据集、标注配置、分配团队。
+  - 标注场景仅支持图片打标（`IMAGE_TAGGING`）和图片分割（`IMAGE_SEGMENTATION`）。
   - 任务状态机：`DRAFT`、`ASSIGNED`、`IN_PROGRESS`、`PENDING_REVIEW`、`REJECTED`、`APPROVED`、`COMPLETED`、`PAUSED`、`CANCELLED`。
 
 - **标签模板管理**
@@ -69,7 +70,7 @@ F009/F010/F011 已完成 DATA 域数据源、数据集、文件、血缘、标�
   - 支持按场景生成 Label Studio label config seam。
 
 - **标注工作台 `/annwork`**
-  - 任务详情、样本队列、标签模板、预标注摘要、Label Studio 状态、草稿保存、提交标注结果。
+  - 任务详情、图片样本队列、标签模板、预标注摘要、Label Studio 状态、草稿保存、提交图片打标/图片分割结果。
   - AI 预标注 seam：保存模型来源、置信度、状态、预测摘要，不实现真实模型服务。
 
 - **标注审核 `/annreview`**
@@ -83,7 +84,8 @@ F009/F010/F011 已完成 DATA 域数据源、数据集、文件、血缘、标�
 
 - **标注数据集生成**
   - 完整性、格式、覆盖率质量检查。
-  - 生成 `ANNOTATED` 数据集、版本、结果文件和 `ANNOTATION` 血缘。
+  - 生成并保存标注文件；标注文件作为 `ANNOTATION_RESULT` 文件角色绑定到 `ANNOTATED` 数据集版本。
+  - 生成 `ANNOTATED` 数据集、版本、结果文件绑定和 `ANNOTATION` 血缘。
   - 在数据集详情和血缘页呈现标注结果关系。
 
 - **权限、BU 隔离与审计**
@@ -99,7 +101,7 @@ F009/F010/F011 已完成 DATA 域数据源、数据集、文件、血缘、标�
 - 不实现模型训练、模型市场、推理消费标注数据集。
 - 不重写 F009 数据集/文件/血缘、F006 权限审计、F011 Pipeline/算子市场。
 - 不复制原型 JSX，不恢复旧已删除 backend/frontend 实现。
-- 不覆盖所有 CAD/音频/视频复杂标注工具细节；本期以控制面、样本队列和外部适配边界为主。
+- 不覆盖 CAD、音频、视频逐帧、文本或多模态标注工具细节；本期仅覆盖图片打标和图片分割。
 
 ## 4. Decision Boundaries
 
@@ -129,6 +131,8 @@ Codex 可自主决定：
 - **质量检查失败**：覆盖率不足、格式不符、存在未标注样本时阻断发布并展示失败项。
 - **Label Studio 未配置/同步失败**：返回 `UNCONFIGURED`/`SYNC_FAILED`，前端展示诊断，不显示“同步成功”。
 - **AI 预标注来源未配置**：预标注状态为 `UNCONFIGURED`，允许转人工标注但不生成预测。
+- **非图片数据集创建标注任务**：影音或其他非图片数据集可纳管为数据集，但本阶段不得创建图片打标/图片分割任务。
+- **标注文件生成失败**：质量检查或发布阶段阻断 `ANNOTATED` 数据集生成，并提示标注文件未生成或保存失败。
 - **跨 BU 访问**：不可见或 403，并写审计。
 - **非法状态流转**：已完成任务再次提交/审核、已取消任务发布等均拒绝。
 - **已被训练/模型引用的标注数据集删除**：沿用 DAT-011 引用检查。
@@ -185,7 +189,7 @@ API 草案：
 - `annotation_assignment`：任务与标注员/审核员分配关系。
 - `annotation_work_item`：样本、预测、标注草稿/提交结果、标注员和状态。
 - `annotation_review_item`：审核项、审核人、状态、意见和时间。
-- `annotation_dataset_publication`：标注数据集发布记录、质量检查、覆盖率、输出数据集/版本。
+- `annotation_dataset_publication`：标注数据集发布记录、质量检查、覆盖率、标注文件、输出数据集/版本。
 - `annotation_external_binding`：Label Studio/外部标注工具绑定、同步状态和诊断。
 
 ### 6.3 前端方案
@@ -222,7 +226,7 @@ API 草案：
 ### Must Reuse
 
 - **F006 平台权限、BU 隔离和审计**：`PlatformIdentityService`、`platform_permission`、`platform_role_permission`、`platform_audit_log`、统一 `ApiResponse` 和会话/租户上下文。
-- **F009 数据集底座**：`dataset`、`dataset_version`、`dataset_file`、`data_lineage`、`platform_file_object`、数据集访问/授权/引用规则。
+- **F009 数据集底座**：`dataset`、`dataset_version`、`dataset_file`、`data_lineage`、`platform_file_object`、数据集访问/授权/引用规则，以及 `ANNOTATION_RESULT` 标注文件角色 seam。
 - **F010 标准化输出**：`PREPROCESSED` 数据集可作为标注源数据集，不新增平行预处理模型。
 - **F011 Pipeline/Operator seam**：复用输出数据集和血缘写法；未来如将标注作为 Pipeline 算子，应复用 operator catalog seam。
 - **前端基础**：React 19、Ant Design 6、TanStack Query、Zustand session、`AppNavigation`、`platformApi.ts`、既有 data feature 布局和 E2E helper/mock。
@@ -284,7 +288,7 @@ API 草案：
 | --- | --- | --- |
 | Label Studio 生产参数未知 | 无法真实同步项目/任务 | 保留 `TODO_CONFIRM_*`，adapter 返回可测 `UNCONFIGURED`，不假装成功。 |
 | AI 预标注模型来源未知 | 无法真实生成预测 | 保存 seam 与状态，允许人工标注闭环继续。 |
-| 标注工作台完整画布复杂 | 若实现过重会偏离控制面目标 | 本期重在平台任务/样本/结果状态和外部工具 seam；复杂画布后续再评估。 |
+| 标注工作台完整画布复杂 | 若实现过重会偏离控制面目标 | 本期重在图片打标/图片分割任务、样本、结果、标注文件和外部工具 seam；复杂视频/音频/多模态画布后续再评估。 |
 | DAT-004/DAT-010 校验不足 | 质量和合规风险 | 后端强制自审阻断、覆盖率/格式/完整性检查，E2E 覆盖失败路径。 |
 | 与 F009 数据集生成耦合 | 可能引入平行模型 | 必须复用 `dataset`/`dataset_version`/`dataset_file`/`data_lineage`。 |
 | `DataManagementService` 已较大 | 可维护性下降 | 新增 Annotation 独立 service/controller，复用窄接口。 |
@@ -301,13 +305,14 @@ API 草案：
 ## 11. 验收草案（AC）
 
 - **AC-01**：`/ann` 按原型展示标注任务管理、统计、任务 Tab、任务列表、标签模板和新建标注任务入口。
-- **AC-02**：创建标注任务时只能选择 ACTIVE 数据集和 PUBLISHED 标签模板；违反 DAT-009/DAT-003 时后端拒绝并前端提示。
+- **AC-02**：创建标注任务时只能选择 ACTIVE 图片数据集和 PUBLISHED 标签模板；违反 DAT-009/DAT-003 或选择非图片数据集时后端拒绝并前端提示。
 - **AC-03**：标签模板可维护、发布并生成 Label Studio label config seam。
-- **AC-04**：`/annwork` 可查看分配任务、样本队列、预标注摘要、Label Studio 配置状态，并提交标注结果。
+- **AC-04**：`/annwork` 可查看分配任务、图片样本队列、预标注摘要、Label Studio 配置状态，并提交图片打标或图片分割结果。
 - **AC-05**：`/annreview` 可审核通过/驳回标注结果；审核自己提交的结果被 DAT-004 阻断。
 - **AC-06**：Label Studio adapter 在未配置外部参数时返回 `UNCONFIGURED`/`TODO_CONFIRM_*`，配置失败和同步失败可见且审计。
-- **AC-07**：任务完成并质量检查通过后生成 `ANNOTATED` 数据集、版本、结果文件和 `ANNOTATION` 血缘；质量检查失败时阻断发布。
+- **AC-07**：任务完成并质量检查通过后必须生成并保存标注文件，再生成 `ANNOTATED` 数据集、版本、结果文件绑定和 `ANNOTATION` 血缘；质量检查或标注文件生成失败时阻断发布。
 - **AC-08**：权限不足、跨 BU 访问、非法状态流转、被停用用户任务处理均有可测失败路径与审计证据。
+- **AC-09**：标注场景仅支持图片打标与图片分割；影音、文本、音频、视频逐帧或多模态标注不进入本阶段验收范围。
 
 ## 12. 验证路径
 
@@ -352,3 +357,9 @@ node tools/ai-scaffold/dist/cli.js check-plan-approved docs/features/F012-annota
 ```
 
 退出码 0 后，才能对同一功能目录执行 `/build-feature`。在批准前不得编写 F012 业务代码、契约或测试计划。
+
+## 14. 2026-05-20 需求调整待确认
+
+- 用户确认标注主要是图片打标或图片分割。
+- 用户确认使用数据集做标注任务后应产生对应标注文件保存。
+- 本文档已按“先改文档、确认后再改代码”原则更新；代码和已冻结契约待用户确认后再进入 v2 调整。

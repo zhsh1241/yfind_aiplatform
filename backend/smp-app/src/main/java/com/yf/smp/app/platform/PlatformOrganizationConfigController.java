@@ -2,7 +2,11 @@ package com.yf.smp.app.platform;
 
 import com.yf.smp.common.api.ApiResponse;
 import java.util.List;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -14,6 +18,8 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/v1/platform")
@@ -102,6 +108,15 @@ public class PlatformOrganizationConfigController {
         return PlatformResponses.ok(service.initFile(principal(authorization), request));
     }
 
+    @PostMapping(value = "/files/{fileId}/content", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    ResponseEntity<ApiResponse<FileObjectResponse>> uploadFileContent(
+        @RequestHeader(name = "Authorization", required = false) String authorization,
+        @PathVariable String fileId,
+        @RequestPart("file") MultipartFile file
+    ) {
+        return PlatformResponses.ok(service.uploadFileContent(principal(authorization), fileId, file));
+    }
+
     @PostMapping("/files/{fileId}/complete")
     ResponseEntity<ApiResponse<FileObjectResponse>> completeFile(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String fileId, @RequestBody FileCompleteRequest request) {
         return PlatformResponses.ok(service.completeFile(principal(authorization), fileId, request));
@@ -121,6 +136,15 @@ public class PlatformOrganizationConfigController {
     @GetMapping("/files/{fileId}/download-url")
     ResponseEntity<ApiResponse<FileDownloadResponse>> downloadUrl(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String fileId) {
         return PlatformResponses.ok(service.downloadUrl(principal(authorization), fileId));
+    }
+
+    @GetMapping("/files/{fileId}/content")
+    ResponseEntity<Resource> fileContent(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String fileId) {
+        FileContentResponse content = service.fileContent(principal(authorization), fileId);
+        return ResponseEntity.ok()
+            .contentType(MediaType.parseMediaType(content.contentType()))
+            .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + content.filename() + "\"")
+            .body(new ByteArrayResource(content.content()));
     }
 
     @GetMapping("/notification-channels")

@@ -62,7 +62,7 @@ class LabelStudioProductionIntegrationControllerTest {
         String admin = login("admin", "YF");
 
         JsonNode createdTask = postJson("/api/v1/annotation/tasks", "trace-f013-create", """
-            {"name":"F013 Label Studio 生产化联通","sourceDatasetId":"DATASET-WELD-DEFECT","sourceVersionId":"DVER-WELD-001","templateId":"LT-WELD-BBOX","scene":"OBJECT_DETECTION","reviewEnabled":true,"prelabelEnabled":false,"labelStudioEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
+            {"name":"F013 Label Studio 生产化联通","sourceDatasetId":"DATASET-WELD-DEFECT","sourceVersionId":"DVER-WELD-001","templateId":"LT-WELD-BBOX","scene":"IMAGE_TAGGING","reviewEnabled":true,"prelabelEnabled":false,"labelStudioEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
             """, admin);
         String taskId = createdTask.at("/data/task/taskId").asText();
         String workItemId = createdTask.at("/data/workItems/0/workItemId").asText();
@@ -107,6 +107,9 @@ class LabelStudioProductionIntegrationControllerTest {
         requests.add(exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath());
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         assertThat(body).contains("smpWorkItemId").contains("image");
+        JsonNode payload = mapper.readTree(body);
+        assertThat(payload.path("meta").isObject()).isTrue();
+        assertThat(payload.at("/meta/workItemId").asText()).isNotBlank();
         respond(exchange, 201, "{\"id\":456}");
     }
 

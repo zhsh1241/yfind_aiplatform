@@ -5,10 +5,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yf.smp.app.web.TraceIdFilter;
+import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -93,16 +99,21 @@ class PlatformOrganizationConfigControllerTest {
     void fileMetadataNotificationAndApiKeyUseProductionSeams() throws Exception {
         // TASK-platform-organization-config AC-05 AC-06 AC-07 AC-09 AC-10
         String admin = login("admin", "YF");
+        byte[] payload = "welding-sample-file".getBytes(StandardCharsets.UTF_8);
+        String sha256 = sha256Hex(payload);
         JsonNode initiated = postJson("/api/v1/platform/files/init", "trace-f007-file-init", """
-            {"assetType":"DATASET","tenantId":"TENANT-CABIN","filename":"sample.csv","expectedSha256":"abc123","expectedSizeBytes":42,"contentType":"text/csv"}
-            """, admin);
+            {"assetType":"DATASET","tenantId":"TENANT-CABIN","filename":"sample.csv","expectedSha256":"%s","expectedSizeBytes":%d,"contentType":"text/csv"}
+            """.formatted(sha256, payload.length), admin);
         assertThat(initiated.at("/code").asInt()).isZero();
         String fileId = initiated.at("/data/fileId").asText();
         assertThat(initiated.at("/data/objectKey").asText()).contains("TENANT-CABIN/dataset");
 
+        JsonNode uploaded = postMultipart("/api/v1/platform/files/" + fileId + "/content", "trace-f007-file-upload", "file", "sample.csv", "text/csv", payload, admin);
+        assertThat(uploaded.at("/data/status").asText()).isEqualTo("UPLOADED");
+
         JsonNode completed = postJson("/api/v1/platform/files/" + fileId + "/complete", "trace-f007-file-complete", """
-            {"sha256":"abc123","sizeBytes":42}
-            """, admin);
+            {"sha256":"%s","sizeBytes":%d}
+            """.formatted(sha256, payload.length), admin);
         assertThat(completed.at("/data/status").asText()).isEqualTo("AVAILABLE");
 
         JsonNode failedFile = postJson("/api/v1/platform/files/init", "trace-f007-file-init-fail", """
@@ -117,8 +128,9 @@ class PlatformOrganizationConfigControllerTest {
         JsonNode restored = postJson("/api/v1/platform/files/" + fileId + "/restore", "trace-f007-file-restore", "{}", admin);
         assertThat(restored.at("/data/status").asText()).isEqualTo("AVAILABLE");
         JsonNode download = getJson("/api/v1/platform/files/" + fileId + "/download-url", "trace-f007-file-download", admin);
-        assertThat(download.at("/data/status").asText()).isEqualTo("UNCONFIGURED");
-        assertThat(download.at("/data/diagnostic").asText()).contains("TODO_CONFIRM_MINIO_ENDPOINT");
+        assertThat(download.at("/data/status").asText()).isEqualTo("READY");
+        assertThat(download.at("/data/diagnostic").asText()).isEqualTo("SIGNED_URL_READY");
+        assertThat(download.at("/data/downloadUrl").asText()).contains("localhost");
 
         JsonNode notification = postJson("/api/v1/platform/notification-channels/NC-GLOBAL-EMAIL/test", "trace-f007-notification-test", "{}", admin);
         assertThat(notification.at("/data/result").asText()).isEqualTo("UNCONFIGURED");
@@ -137,6 +149,26 @@ class PlatformOrganizationConfigControllerTest {
         assertThat(revoked.at("/data/status").asText()).isEqualTo("REVOKED");
     }
 
+    @Test
+    void uploadFallbackRecognizesAdditionalImageExtensions() throws Exception {
+        String admin = login("admin", "YF");
+        byte[] payload = "fake-heic-image".getBytes(StandardCharsets.UTF_8);
+        String sha256 = sha256Hex(payload);
+        JsonNode initiated = postJson("/api/v1/platform/files/init", "trace-f007-heic-init", """
+            {"assetType":"DATASET","tenantId":"TENANT-CABIN","filename":"camera.heic","expectedSha256":"%s","expectedSizeBytes":%d,"contentType":"application/octet-stream"}
+            """.formatted(sha256, payload.length), admin);
+        String fileId = initiated.at("/data/fileId").asText();
+
+        JsonNode uploaded = postMultipart("/api/v1/platform/files/" + fileId + "/content", "trace-f007-heic-upload", "file", "camera.heic", "application/octet-stream", payload, admin);
+        assertThat(uploaded.at("/data/contentType").asText()).isEqualTo("image/heic");
+
+        JsonNode completed = postJson("/api/v1/platform/files/" + fileId + "/complete", "trace-f007-heic-complete", """
+            {"sha256":"%s","sizeBytes":%d}
+            """.formatted(sha256, payload.length), admin);
+        assertThat(completed.at("/data/status").asText()).isEqualTo("AVAILABLE");
+        assertThat(completed.at("/data/contentType").asText()).isEqualTo("image/heic");
+    }
+
     private String login(String username, String tenantCode) throws Exception {
         JsonNode login = postJson("/api/v1/auth/login", "trace-login-" + username, """
             {"username":"%s","password":"Smp@123456","tenantCode":"%s"}
@@ -152,6 +184,22 @@ class PlatformOrganizationConfigControllerTest {
 
     private JsonNode postJson(String path, String traceId, String body, String token) throws Exception {
         var builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).header(TraceIdFilter.TRACE_HEADER, traceId).header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body));
+        if (token != null) builder.header("Authorization", "Bearer " + token);
+        return send(builder.build());
+    }
+
+    private JsonNode postMultipart(String path, String traceId, String fieldName, String fileName, String contentType, byte[] content, String token) throws Exception {
+        String boundary = "----WebKitFormBoundary" + UUID.randomUUID().toString().replace("-", "");
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+        body.write(("Content-Disposition: form-data; name=\"" + fieldName + "\"; filename=\"" + fileName + "\"\r\n").getBytes(StandardCharsets.UTF_8));
+        body.write(("Content-Type: " + contentType + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        body.write(content);
+        body.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+        var builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+            .header(TraceIdFilter.TRACE_HEADER, traceId)
+            .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+            .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()));
         if (token != null) builder.header("Authorization", "Bearer " + token);
         return send(builder.build());
     }
@@ -174,5 +222,13 @@ class PlatformOrganizationConfigControllerTest {
             assertThat(response.headers().firstValue(TraceIdFilter.TRACE_HEADER)).isPresent();
         }
         return objectMapper.readTree(response.body());
+    }
+
+    private String sha256Hex(byte[] payload) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 }

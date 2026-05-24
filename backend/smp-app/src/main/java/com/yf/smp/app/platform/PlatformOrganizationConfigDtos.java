@@ -119,6 +119,9 @@ record FileCompleteRequest(String sha256, Long sizeBytes) {
 record FileDownloadResponse(String fileId, String status, String downloadUrl, String diagnostic) {
 }
 
+record FileContentResponse(String fileId, String filename, String contentType, byte[] content) {
+}
+
 record NotificationChannelResponse(
     String channelId,
     String channelType,

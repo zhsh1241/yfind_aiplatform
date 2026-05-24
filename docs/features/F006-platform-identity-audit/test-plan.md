@@ -20,6 +20,8 @@
 | T-P0-07 | AC-07 | 审计追加写入与签名校验 | 执行登录、用户创建、角色变更后查询审计并校验签名 | 审计记录包含 before/after/riskLevel/signature；verify 返回 valid=true |
 | T-P0-08 | AC-08 | 前端三页面接入 API | Vitest mock API 渲染 `login/usermgmt/perm` | 主文案、Tab、表格、矩阵、弹窗入口存在；数据来自 API mock |
 | T-P0-09 | AC-08 | 浏览器 E2E 主路径 | Playwright 登录后访问 `/usermgmt`、`/perm` | 登录成功；页面可见；用户管理 3 Tab 与权限管理矩阵可见 |
+| T-P0-10 | AC-05, AC-07, AC-08 | 数据集访问申请审批闭环 | 标注员提交 `/datasets/{id}/access-requests`；管理员查 `/dataset-access-requests?status=PENDING` 并批准；标注员调用 `/dataset-references` | 申请为 `PENDING`；审批后写入 ACTIVE grant；再次审批返回 409；审计包含 `DATASET_ACCESS_REQUESTED/APPROVED` |
+| T-P0-11 | AC-05, AC-08 | 权限管理页真实申请/审批 UI | Vitest 渲染 `/perm`，切换“权限申请”“审批工作台”，打开提交申请与审批弹窗并点击批准 | 页面数据来自 `/datasets` 与 `/dataset-access-requests`；不再以审计概览伪造授权 |
 
 ## 3. P1 - Important
 
@@ -29,6 +31,14 @@
 | T-P1-02 | AC-05 | 权限码矩阵完整 | 查询 `/api/v1/platform/permissions/matrix` | 6 个预设角色、菜单/平台权限模块完整 |
 | T-P1-03 | AC-08 | 菜单权限驱动可见性 | 使用零权限用户登录 | 显示空权限控制台提示，管理菜单不可访问或显示未授权 |
 | T-P1-04 | AC-09 | Out-of-scope 未越界 | 检查变更和页面 | `org/sys` 未新增业务实现；`TODO_CONFIRM_*` 保留 |
+
+
+| T-P1-05 | AC-05, AC-06 | 用户编辑不承载 BU 权限 | 调用 `PUT /api/v1/platform/users/{userId}` 修改姓名/邮箱/状态，再调用角色接口分配角色 | 用户资料修改成功；BU 权限仅随角色矩阵变化；状态/角色变化后旧 session 失效 |
+| T-P1-06 | AC-05 | 自定义角色父角色权限上限 | 使用 `parentRoleCode=DATA_ANNOTATOR` 创建包含 `platform:user:read` 的角色 | 返回 422；提示不可超越父角色权限上限；写失败审计 |
+| T-P1-07 | AC-05 | 预设角色只读 | 调用 `PUT /api/v1/platform/roles/BU_ADMIN/permissions` | 返回 422；提示预设角色不可修改；自定义角色可通过同接口更新 |
+| T-P1-08 | AC-05 | 数据集访问申请重复提交 | 同一用户对同一数据集连续提交两个 `PENDING` 申请 | 第二次返回 `40900 DATASET_ACCESS_REQUEST_DUPLICATED` |
+| T-P1-09 | AC-05 | 数据集访问申请跨 BU 隔离 | QE 用户查询/申请 CABIN 受限数据集 | 返回 404，不泄漏数据集存在性；写跨 BU 拒绝审计 |
+| T-P1-10 | AC-05, AC-07 | 数据集访问申请驳回 | 管理员对 `PENDING` 申请执行 reject | 状态变为 `REJECTED`；不会写 grant；再次处理返回 409；写 `DATASET_ACCESS_REJECTED` |
 
 ## 4. P2 - Nice to Have
 
@@ -49,11 +59,12 @@
 
 - Backend JUnit / Spring Boot:
   - `PlatformIdentityAuthControllerTest` -> T-P0-01, T-P0-02, T-P0-06
-  - `PlatformUserManagementControllerTest` -> T-P0-03, T-P0-04, T-P0-05
+  - `PlatformUserManagementControllerTest` -> T-P0-03, T-P0-04, T-P0-05, T-P1-05, T-P1-06, T-P1-07
   - `PlatformPermissionAuditControllerTest` -> T-P0-07, T-P1-02, T-P2-01
   - `PlatformIdentityPolicyTest` -> PLT-001/002/003/004/009/010/011/012/014 unit coverage
+  - `DataManagementControllerTest#restrictedDatasetRequiresGrantAndReferenceUsesBuIsolation` -> T-P0-10, T-P1-08/T-P1-09 的主干行为
 - Frontend Vitest:
-  - `App.test.tsx` / feature tests -> T-P0-08, T-P1-03
+  - `App.test.tsx` / feature tests -> T-P0-08, T-P0-11, T-P1-03
 - Playwright:
   - `frontend/e2e/platform-identity-audit.spec.ts` -> T-P0-09
 - Scaffold:
@@ -67,8 +78,8 @@
 - AC-02 -> T-P0-02
 - AC-03 -> T-P0-03
 - AC-04 -> T-P0-04
-- AC-05 -> T-P0-05, T-P1-02
-- AC-06 -> T-P0-06
+- AC-05 -> T-P0-05, T-P1-02, T-P1-05, T-P1-06, T-P1-07
+- AC-06 -> T-P0-06, T-P1-05
 - AC-07 -> T-P0-07, T-P2-01
-- AC-08 -> T-P0-08, T-P0-09, T-P1-03, T-P2-02
+- AC-08 -> T-P0-08, T-P0-09, T-P0-11（权限申请/审批工作台真实 UI）, T-P1-03, T-P2-02
 - AC-09 -> T-P1-04

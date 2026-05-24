@@ -8,6 +8,8 @@ frozen_at: 2026-05-18
 
 # Feature Contract: 数据源与数据集管理基础能力
 
+> **2026-05-20 变更说明**：本契约已按最新口径追加待确认调整：数据集内容类型仅保留图片/影音，接入方式仅保留导入/API；代码已按用户确认口径同步改造，本契约重新冻结。
+
 ## 1. API Contract
 
 所有 API 使用 `ApiResponse<T>`，鉴权为 `Authorization: Bearer <token>`，trace 使用 `X-Trace-Id`。
@@ -28,7 +30,8 @@ frozen_at: 2026-05-18
 
 ### Sandbox / Docker Connector
 
-- `sourceType` 支持 `RELATIONAL_DB`、`FILE`、`OBJECT_STORAGE`、`STREAM`、`TIME_SERIES`、`INDUSTRIAL_PROTOCOL`、`API`。
+- `sourceType` / `ingestionMode` 目标口径调整为仅支持 `IMPORT`、`API`。
+- `dataType` 目标口径调整为仅支持 `IMAGE`、`AUDIO_VIDEO`。
 - 当 `endpoint` 包含 `sandbox` / `internal`，或本地 Docker endpoint 可探测连通时，`POST /api/v1/data-source-sync-tasks/{taskId}/run` 可通过 sandbox connector 生成导入结果：
   - `targetDatasetId` 为空时自动创建 `RAW` 数据集、`PUBLISHED` 版本、`platform_file_object`、`dataset_file` 与 `data_lineage`。
   - `targetDatasetId` 非空时必须与数据源同租户，否则返回 `DATA_SYNC_TARGET_TENANT_MISMATCH`。
@@ -78,12 +81,14 @@ F009 新增 DATA 域表与 API，不修改 F006/F007/F008 既有 API 响应结�
 
 为验收和联调提供 Docker sandbox connector：
 
-- `RELATIONAL_DB`：PostgreSQL / MySQL 源库，表级快照导入。
-- `FILE`：HTTP 文件目录，CSV/JSONL 文件快照导入。
-- `OBJECT_STORAGE`：MinIO S3 兼容 bucket，对象清单导入。
-- `API`：REST API，JSON 工单/质量事件导入。
-- `STREAM`：RabbitMQ / Kafka，事件批次导入。
-- `TIME_SERIES`：InfluxDB，时序测点快照导入。
-- `INDUSTRIAL_PROTOCOL`：OPC-UA-like TCP 仿真网关，设备点位遥测导入。
+- `IMPORT`：图片/影音文件或批量清单导入，生成数据集版本、文件绑定与血缘。
+- `API`：REST API 接口接入，生成图片/影音数据集版本、文件绑定与血缘。
+- `RELATIONAL_DB`、`OBJECT_STORAGE`、`STREAM`、`TIME_SERIES`、`INDUSTRIAL_PROTOCOL` 等专用连接器暂不纳入本阶段契约；如保留历史枚举，只能作为后续扩展或返回未支持诊断，不得作为当前需求验收口径。
 
 本地数据源 ID 使用 `DSRC-LAB-*`，同步任务 ID 使用 `DSYNC-LAB-*`。该实验室只证明平台导入链路与数据治理对象创建能力；正式生产 connector 的网络、认证、ACL、加密、限流和审计参数仍由环境配置以 `TODO_CONFIRM_*` 确认。
+
+## 6. 标注文件预留契约
+
+- `dataset_file.fileRole` 需保留 `ANNOTATION_RESULT`，用于绑定标注任务产出的标注文件。
+- `ANNOTATED` 数据集版本发布时必须能够关联一个或多个标注文件；F009 不实现标注生成，但文件/血缘模型不得阻断 F012 绑定。
+- 标注文件格式由 `TODO_CONFIRM_ANNOTATION_EXPORT_FORMATS` 后续确认；当前文档口径要求至少能表达图片打标和图片分割结果。

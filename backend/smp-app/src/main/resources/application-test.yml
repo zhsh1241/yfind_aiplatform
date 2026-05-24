@@ -9,11 +9,10 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
-  servlet:
-    multipart:
-      max-file-size: 32MB
-      max-request-size: 64MB
-server:
-  tomcat:
-    max-swallow-size: 64MB
-    max-http-form-post-size: 64MB
+smp:
+  storage:
+    endpoint: "${SMP_STORAGE_ENDPOINT:http://localhost:9000}"
+    public-endpoint: "${SMP_STORAGE_PUBLIC_ENDPOINT:http://localhost:9000}"
+    bucket: "${SMP_STORAGE_BUCKET:smp-datasets}"
+    access-key: "${SMP_STORAGE_ACCESS_KEY:smpminio}"
+    secret-key: "${SMP_STORAGE_SECRET_KEY:smpminio_local_password}"

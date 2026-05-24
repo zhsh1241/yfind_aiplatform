@@ -10,8 +10,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -19,6 +21,9 @@ import org.springframework.test.context.ActiveProfiles;
 class PlatformUserManagementControllerTest {
     @LocalServerPort
     private int port;
+
+    @Autowired
+    private JdbcTemplate jdbc;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient client = HttpClient.newHttpClient();
@@ -85,6 +90,110 @@ class PlatformUserManagementControllerTest {
         String annotator = login("annotator", "CABIN");
         JsonNode denied = getJson("/api/v1/platform/users", "trace-f006-default-deny", annotator);
         assertThat(denied.at("/code").asInt()).isEqualTo(40300);
+    }
+
+    @Test
+    void userEditAndCustomRoleCreationKeepBuPermissionsOnRoles() throws Exception {
+        // TASK-platform-identity-audit AC-04 AC-05 AC-08
+        String admin = login("admin", "YF");
+
+        JsonNode role = postJson("/api/v1/platform/roles", "trace-f006-create-role", """
+            {"code":"CABIN_DATA_MANAGER","name":"座舱数据管理员","description":"BU 数据管理权限","scope":"TENANT","permissionCodes":["menu:dash","menu:usermgmt","platform:user:read"]}
+            """, admin);
+        assertThat(role.at("/code").asInt()).isZero();
+        assertThat(role.at("/data/code").asText()).isEqualTo("CABIN_DATA_MANAGER");
+        assertThat(role.at("/data/preset").asBoolean()).isFalse();
+
+        JsonNode edited = putJson("/api/v1/platform/users/USR-ANNOTATOR", "trace-f006-edit-user", """
+            {"displayName":"数据标注员-已编辑","email":"annotator-edited@yf.local","status":"ACTIVE"}
+            """, admin);
+        assertThat(edited.at("/code").asInt()).isZero();
+        assertThat(edited.at("/data/displayName").asText()).isEqualTo("数据标注员-已编辑");
+        assertThat(edited.at("/data/email").asText()).isEqualTo("annotator-edited@yf.local");
+        assertThat(edited.at("/data/buCode").asText()).isEqualTo("CABIN");
+
+        JsonNode assigned = putJson("/api/v1/platform/users/USR-ANNOTATOR/roles", "trace-f006-assign-custom-role", """
+            {"roleCodes":["DATA_ANNOTATOR","CABIN_DATA_MANAGER"]}
+            """, admin);
+        assertThat(assigned.at("/code").asInt()).isZero();
+
+        JsonNode matrix = getJson("/api/v1/platform/permissions/matrix", "trace-f006-custom-role-matrix", admin);
+        assertThat(matrix.at("/code").asInt()).isZero();
+        assertThat(matrix.at("/data/roles").findValuesAsText("code")).contains("CABIN_DATA_MANAGER");
+        assertThat(matrix.at("/data/rows").findValuesAsText("permissionCode")).contains("platform:user:read");
+
+        JsonNode presetUpdate = putJson("/api/v1/platform/roles/BU_ADMIN/permissions", "trace-f006-preset-role-readonly", """
+            {"permissionCodes":["menu:dash"]}
+            """, admin);
+        assertThat(presetUpdate.at("/code").asInt()).isEqualTo(42200);
+        assertThat(presetUpdate.at("/message").asText()).contains("预设角色");
+
+        JsonNode exceeded = postJson("/api/v1/platform/roles", "trace-f006-parent-limit", """
+            {"code":"ANNOTATOR_PLUS_ADMIN","name":"越权角色","description":"应被父角色上限拒绝","scope":"TENANT","parentRoleCode":"DATA_ANNOTATOR","permissionCodes":["menu:dash","platform:user:read"]}
+            """, admin);
+        assertThat(exceeded.at("/code").asInt()).isEqualTo(42200);
+        assertThat(exceeded.at("/message").asText()).contains("父角色权限上限");
+
+        JsonNode tempRole = putJson("/api/v1/platform/users/USR-ANNOTATOR/roles", "trace-f006-temp-role", """
+            {"roleCodes":["DATA_ANNOTATOR"],"expiresAt":"2099-12-31T00:00:00Z"}
+            """, admin);
+        assertThat(tempRole.at("/code").asInt()).isZero();
+    }
+
+    @Test
+    void cabinMojibakeRoleNamesAreRepairedInRoleApis() throws Exception {
+        // BUG-20260520 cabin custom role mojibake repair
+        jdbc.update("""
+            INSERT INTO platform_role (code, name, description, scope, preset, parent_role_code, tenant_id, status)
+            VALUES ('CABIN_ROLE_41194', '乱码角色A', '乱码描述A', 'TENANT', FALSE, 'BU_ADMIN', 'TENANT-CABIN', 'ACTIVE')
+            """);
+        jdbc.update("""
+            INSERT INTO platform_role (code, name, description, scope, preset, parent_role_code, tenant_id, status)
+            VALUES ('CABIN_ROLE_5522', '乱码角色B', '乱码描述B', 'TENANT', FALSE, 'DATA_ANNOTATOR', 'TENANT-CABIN', 'ACTIVE')
+            """);
+
+        int updated41194 = jdbc.update("""
+            UPDATE platform_role
+            SET name='座舱数据管理员', description='智能座舱 BU 数据管理权限角色'
+            WHERE code='CABIN_ROLE_41194'
+            """);
+        int updated5522 = jdbc.update("""
+            UPDATE platform_role
+            SET name='座舱标注协调员', description='智能座舱 BU 标注任务协调与数据查看角色'
+            WHERE code='CABIN_ROLE_5522'
+            """);
+
+        assertThat(updated41194).isEqualTo(1);
+        assertThat(updated5522).isEqualTo(1);
+
+        String admin = login("admin", "YF");
+        JsonNode roles = getJson("/api/v1/platform/roles", "trace-bug-cabin-role-labels", admin);
+        assertThat(roles.at("/data").findValuesAsText("name"))
+            .contains("座舱数据管理员", "座舱标注协调员")
+            .doesNotContain("乱码角色A", "乱码角色B");
+    }
+
+    @Test
+    void buAdminCannotCreateOrAssignRolesBeyondOwnAuthority() throws Exception {
+        // TASK-platform-identity-audit AC-05 AC-06 AC-07
+        String buAdmin = login("buadmin", "CABIN");
+
+        JsonNode globalRole = postJson("/api/v1/platform/roles", "trace-f006-bu-global-role-denied", """
+            {"code":"CABIN_GLOBAL_ADMIN","name":"越权全局角色","description":"BU 管理员不应创建全局角色","scope":"GLOBAL","permissionCodes":["menu:dash"]}
+            """, buAdmin);
+        assertThat(globalRole.at("/code").asInt()).isEqualTo(40300);
+
+        JsonNode overPermission = postJson("/api/v1/platform/roles", "trace-f006-bu-permission-denied", """
+            {"code":"CABIN_AUDIT_EXPORTER","name":"越权审计导出","description":"超过 BU 管理员权限上限","scope":"TENANT","permissionCodes":["platform:audit:export"]}
+            """, buAdmin);
+        assertThat(overPermission.at("/code").asInt()).isEqualTo(40300);
+        assertThat(overPermission.at("/message").asText()).contains("权限上限");
+
+        JsonNode assignSuperAdmin = putJson("/api/v1/platform/users/USR-ANNOTATOR/roles", "trace-f006-bu-assign-super-admin-denied", """
+            {"roleCodes":["SUPER_ADMIN"]}
+            """, buAdmin);
+        assertThat(assignSuperAdmin.at("/code").asInt()).isEqualTo(40300);
+        assertThat(assignSuperAdmin.at("/message").asText()).contains("全局角色");
     }
 
     private String login(String username, String tenantCode) throws Exception {

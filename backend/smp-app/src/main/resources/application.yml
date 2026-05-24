@@ -22,3 +22,10 @@ management:
         enabled: true
 server:
   port: ${SERVER_PORT:8080}
+smp:
+  storage:
+    endpoint: ${SMP_STORAGE_ENDPOINT:}
+    public-endpoint: ${SMP_STORAGE_PUBLIC_ENDPOINT:}
+    bucket: ${SMP_STORAGE_BUCKET:}
+    access-key: ${SMP_STORAGE_ACCESS_KEY:}
+    secret-key: ${SMP_STORAGE_SECRET_KEY:}

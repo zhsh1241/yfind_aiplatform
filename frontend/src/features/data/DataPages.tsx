@@ -1,24 +1,23 @@
 import { Alert, Button, Card, Descriptions, Drawer, Form, Input, Modal, Select, Space, Steps, Table, Tabs, Tag, Typography, message } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
   dataApi,
   platformApi,
   type AnnotationLabelTemplate,
+  type AnnotationLabelTemplateInput,
   type AnnotationExternalBinding,
   type AnnotationReviewItem,
   type AnnotationTaskSummary,
-  type AnnotationWorkItem,
+  type AnnotationTrainingExport,
+  type DatasetAnnotationTask,
   type DataSourceSummary,
   type DataSourceSyncTask,
   type DataStandardProfile,
   type DataStandardTask,
-  type DatasetDetail,
-  type DatasetUploadSession,
   type DatasetSummary,
   type DatasetVersion,
-  type FileObjectSummary,
   type OperatorDetail,
   type OperatorSummary,
   type PipelineDetail,
@@ -33,7 +32,7 @@ const color = (status?: string) => ['ACTIVE', 'PUBLISHED', 'TESTED', 'OK', 'AVAI
   ? 'green'
   : ['UNCONFIGURED', 'DRAFT', 'PAUSED'].includes(status ?? '') ? 'orange' : ['FAILED', 'DISABLED', 'ARCHIVED'].includes(status ?? '') ? 'red' : 'blue';
 const fmtSize = (n?: number | null) => !n ? '0 B' : n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : n > 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${n} B`;
-const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', TEXT: '文本', TABULAR: '表格', EVENT: '事件', TIME_SERIES: '时序库', TELEMETRY: '遥测', FILE: '文件', OBJECT: '对象', RELATIONAL_DB: '关系型数据库', OBJECT_STORAGE: '对象存储', STREAM: '流数据', INDUSTRIAL_PROTOCOL: '工业协议', API: '外部接口' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
+const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', AUDIO_VIDEO: '影音', TEXT: '文本', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', TIME_SERIES: '时序库', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
 
 const safeJson = (value?: string | null) => {
   try {
@@ -66,25 +65,321 @@ const annStatusText = (status?: string) => ({
   CANCELLED: '已取消',
 } as Record<string, string>)[status ?? ''] ?? status ?? '-';
 const pct = (done?: number, total?: number) => !total ? 0 : Math.round(((done ?? 0) / total) * 100);
-const annJson = '{"boxes":[{"label":"缺陷","x":12,"y":20,"w":80,"h":32}]}';
 const lsStatusType = (status?: string) => ['PROJECT_SYNCED', 'TASK_SYNCED', 'RESULT_IMPORTED'].includes(status ?? '') ? 'success' : status === 'UNCONFIGURED' ? 'warning' : status?.includes('FAILED') || status?.includes('AUTH') || status?.includes('UNREACHABLE') ? 'error' : 'info';
+const annotationClasses = ['焊接气孔', '裂纹', '夹渣', '未熔合'];
+const annotationClassColors = ['#ff6533', '#1a6bff', '#10b981', '#f59e0b'];
+const industrialSampleImages: Record<string, { url: string; title: string; source: string }> = {
+  'TENANT-CABIN/weld/batch3/0001.jpg': {
+    url: '/industrial-samples/tig-welding.jpg',
+    title: 'Industrial TIG welding sample',
+    source: 'Wikimedia Commons: TIG welding.jpg',
+  },
+  'TENANT-CABIN/weld/batch3/0002.jpg': {
+    url: '/industrial-samples/foundry-blowhole.jpg',
+    title: 'Industrial foundry blowhole sample',
+    source: 'Wikimedia Commons: Foundry defect blowhole.jpg',
+  },
+  'weld/0001.jpg': {
+    url: '/industrial-samples/tig-welding.jpg',
+    title: 'Industrial TIG welding sample',
+    source: 'Wikimedia Commons: TIG welding.jpg',
+  },
+};
+type DraftBox = { x: number; y: number; w: number; h: number };
+type AnnotationPoint = { x: number; y: number };
+type AnnotationShape = 'rect' | 'ellipse' | 'polygon';
+type AnnotationBox = { id: string; x: number; y: number; w: number; h: number; label: string; cls: number; shape: AnnotationShape; confidence?: number; source?: 'manual' | 'ai' };
+type AnnotationPolygon = { id: string; points: AnnotationPoint[]; label: string; cls: number; confidence?: number; source?: 'manual' | 'ai' };
+type AiSuggestionBox = AnnotationBox & { source: 'ai' };
+type AiSuggestionPolygon = AnnotationPolygon & { source: 'ai' };
+type DragState = { boxId: string; start: { x: number; y: number }; origin: { x: number; y: number } };
+type PolygonVertexDragState = { polygonId: string; pointIndex: number; pointerId: number };
+type PolygonEdgeDragState = {
+  polygonId: string;
+  edgeIndex: number;
+  pointerId: number;
+  start: AnnotationPoint;
+  originStart: AnnotationPoint;
+  originEnd: AnnotationPoint;
+};
+type AnnotationSnapshot = { boxes: AnnotationBox[]; polygons: AnnotationPolygon[]; selectedShapeId: string };
+type AnnotationEditorState = AnnotationSnapshot & { history: AnnotationSnapshot[]; historyIndex: number };
+type AnnotationEditorAction =
+  | { type: 'reset'; boxes: AnnotationBox[]; polygons: AnnotationPolygon[]; selectedShapeId?: string }
+  | { type: 'commit'; boxes: AnnotationBox[]; polygons: AnnotationPolygon[]; selectedShapeId?: string }
+  | { type: 'commit-current'; selectedShapeId?: string }
+  | { type: 'move-box'; boxId: string; x: number; y: number }
+  | { type: 'replace-current'; boxes: AnnotationBox[]; polygons: AnnotationPolygon[] }
+  | { type: 'select'; selectedShapeId: string }
+  | { type: 'undo' }
+  | { type: 'redo' };
+const prototypeBoxes: AnnotationBox[] = [
+  { id: 'box-porosity-001', x: 62, y: 48, w: 110, h: 74, label: '焊接气孔', cls: 0, source: 'manual', shape: 'rect' },
+  { id: 'box-crack-001', x: 240, y: 110, w: 88, h: 60, label: '裂纹', cls: 1, source: 'manual', shape: 'rect' },
+  { id: 'box-slag-001', x: 140, y: 180, w: 130, h: 50, label: '夹渣', cls: 2, source: 'manual', shape: 'rect' },
+  { id: 'box-fusion-001', x: 360, y: 60, w: 70, h: 82, label: '未熔合', cls: 3, source: 'manual', shape: 'rect' },
+];
+const aiSuggestionBoxes = [
+  { id: 'ai-suggestion-porosity-001', x: 62, y: 240, w: 105, h: 58, label: '焊接气孔', cls: 0, shape: 'rect', confidence: 0.91, source: 'ai' },
+  { id: 'ai-suggestion-crack-001', x: 298, y: 138, w: 84, h: 52, label: '裂纹', cls: 1, shape: 'rect', confidence: 0.78, source: 'ai' },
+  { id: 'ai-suggestion-fusion-001', x: 170, y: 60, w: 90, h: 44, label: '未熔合', cls: 3, shape: 'rect', confidence: 0.65, source: 'ai' },
+] satisfies AiSuggestionBox[];
+const prototypeSegmentationPolygons: AnnotationPolygon[] = [
+  { id: 'poly-crack-001', label: '裂纹', cls: 1, source: 'manual', points: [{ x: 146, y: 108 }, { x: 188, y: 92 }, { x: 238, y: 126 }, { x: 224, y: 178 }, { x: 162, y: 170 }] },
+  { id: 'poly-porosity-001', label: '焊接气孔', cls: 0, source: 'manual', points: [{ x: 298, y: 172 }, { x: 338, y: 154 }, { x: 366, y: 192 }, { x: 350, y: 232 }, { x: 306, y: 224 }] },
+];
+const aiSuggestionPolygons = [
+  { id: 'ai-poly-slag-001', label: '夹渣', cls: 2, source: 'ai', confidence: 0.84, points: [{ x: 84, y: 222 }, { x: 134, y: 204 }, { x: 154, y: 242 }, { x: 126, y: 278 }, { x: 78, y: 264 }] },
+] satisfies AiSuggestionPolygon[];
+const shortcutGroups = [
+  { group: '绘制工具', items: [['W', '矩形框'], ['E', '椭圆框'], ['P', '多边形框'], ['D / Delete', '删除所选']] },
+  { group: '类别选择', items: [['1-4', '切换类别'], ['Ctrl+Z', '撤销'], ['Ctrl+Y', '重做'], ['Space', '下一张']] },
+];
+const editableWorkStatuses = ['PENDING', 'DRAFT', 'REJECTED'];
+const canEditWorkItem = (status?: string | null) => editableWorkStatuses.includes(status ?? '');
+const canAutoStartAnnotationTask = (status?: string | null) => status === 'ASSIGNED';
+const annotationTaskDefaults = {
+  name: '焊缝缺陷检测标注任务',
+  scene: 'IMAGE_TAGGING',
+  reviewEnabled: true,
+  prelabelEnabled: true,
+  labelStudioEnabled: true,
+} as const;
+const shapeText = (shape: AnnotationShape) => ({ rect: '矩形', ellipse: '椭圆', polygon: '多边形' })[shape];
+const annotationSceneOptions = [
+  { value: 'IMAGE_TAGGING', label: '图片打标' },
+  { value: 'IMAGE_SEGMENTATION', label: '图片分割' },
+];
+const annotationTemplateSceneOptions = [
+  ...annotationSceneOptions,
+  { value: 'TEXT_LABELING', label: '文本分类' },
+];
+const annotationLabelTypeOptions = [
+  { value: 'BOUNDING_BOX', label: '边界框' },
+  { value: 'CATEGORY', label: '分类标签' },
+  { value: 'POLYGON', label: '多边形' },
+  { value: 'TEXT_CLASSIFICATION', label: '文本分类' },
+];
+const defaultLabelSchema = (scene?: string) => scene === 'IMAGE_SEGMENTATION'
+  ? '{"labels":["裂纹区域","气孔区域"]}'
+  : scene === 'TEXT_LABELING'
+    ? '{"labels":["质量投诉","设备故障","工艺咨询"],"dataType":"TEXT"}'
+    : '{"labels":["裂纹","气孔"]}';
+const labelStudioXmlForTemplate = (scene?: string, labelSchemaJson?: string, fallbackXml?: string) => {
+  if (fallbackXml?.trim()) return fallbackXml.trim();
+  let labels = ['待确认标签'];
+  try {
+    const parsed = JSON.parse(labelSchemaJson || '{}') as { labels?: unknown };
+    if (Array.isArray(parsed.labels)) {
+      labels = parsed.labels
+        .map((item) => typeof item === 'string' ? item : (item && typeof item === 'object' && 'name' in item ? String((item as { name?: unknown }).name ?? '') : ''))
+        .filter(Boolean);
+    }
+  } catch {
+    // 保留默认标签，避免用户暂存中的 JSON 破坏页面操作。
+  }
+  if (scene === 'TEXT_LABELING') {
+    const choiceNodes = labels.map((label) => `<Choice value="${label}"/>`).join('');
+    return `<View><Text name="text" value="$text"/><Choices name="label" toName="text" choice="single">${choiceNodes}</Choices></View>`;
+  }
+  const labelNodes = labels.map((label) => `<Label value="${label}"/>`).join('');
+  if (scene === 'IMAGE_SEGMENTATION') {
+    return `<View><Image name="image" value="$image"/><PolygonLabels name="label" toName="image">${labelNodes}</PolygonLabels></View>`;
+  }
+  return `<View><Image name="image" value="$image"/><RectangleLabels name="label" toName="image">${labelNodes}</RectangleLabels></View>`;
+};
+const polygonPoints = (box: DraftBox) => [
+  [box.x + box.w * 0.5, box.y],
+  [box.x + box.w, box.y + box.h * 0.28],
+  [box.x + box.w * 0.82, box.y + box.h],
+  [box.x + box.w * 0.18, box.y + box.h],
+  [box.x, box.y + box.h * 0.28],
+].map(([x, y]) => `${Math.round(x)},${Math.round(y)}`).join(' ');
+const polygonPath = (points: AnnotationPoint[]) => points.map((point) => `${Math.round(point.x)},${Math.round(point.y)}`).join(' ');
+const polygonCentroid = (points: AnnotationPoint[]) => {
+  if (!points.length) return { x: 0, y: 0 };
+  const sum = points.reduce((acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }), { x: 0, y: 0 });
+  return { x: Math.round(sum.x / points.length), y: Math.round(sum.y / points.length) };
+};
+let annotationShapeSequence = 0;
+const nextAnnotationShapeId = (prefix: 'box' | 'poly') => `${prefix}-${++annotationShapeSequence}`;
+const safeSetPointerCapture = (element: Element | null | undefined, pointerId: number) => {
+  if (element && 'setPointerCapture' in element && typeof element.setPointerCapture === 'function') {
+    element.setPointerCapture(pointerId);
+  }
+};
+const safeReleasePointerCapture = (element: Element | null | undefined, pointerId: number) => {
+  if (element && 'hasPointerCapture' in element && typeof element.hasPointerCapture === 'function' && element.hasPointerCapture(pointerId) && 'releasePointerCapture' in element && typeof element.releasePointerCapture === 'function') {
+    element.releasePointerCapture(pointerId);
+  }
+};
+const clampAnnotationPoint = (point: AnnotationPoint): AnnotationPoint => ({
+  x: Math.max(0, Math.min(520, Math.round(point.x))),
+  y: Math.max(0, Math.min(340, Math.round(point.y))),
+});
+const normalizePoint = (value: unknown): AnnotationPoint | null => {
+  if (!value || typeof value !== 'object') return null;
+  const x = Number((value as { x?: unknown }).x);
+  const y = Number((value as { y?: unknown }).y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+};
+const parseAnnotationPayload = (scene?: string, rawJson?: string | null) => {
+  if (!rawJson?.trim()) {
+    return scene === 'IMAGE_SEGMENTATION'
+      ? { boxes: [] as AnnotationBox[], polygons: [...prototypeSegmentationPolygons, ...aiSuggestionPolygons] as AnnotationPolygon[] }
+      : { boxes: [...prototypeBoxes, ...aiSuggestionBoxes] as AnnotationBox[], polygons: [] as AnnotationPolygon[] };
+  }
+  try {
+    const parsed = JSON.parse(rawJson) as { boxes?: unknown[]; polygons?: unknown[] };
+    if (scene === 'IMAGE_SEGMENTATION') {
+      const polygons = Array.isArray(parsed.polygons)
+        ? parsed.polygons.map((item, index) => {
+          const points = Array.isArray((item as { points?: unknown[] }).points)
+            ? ((item as { points?: unknown[] }).points ?? []).map(normalizePoint).filter(Boolean) as AnnotationPoint[]
+            : [];
+          if (points.length < 3) return null;
+          return {
+            id: String((item as { id?: unknown }).id ?? `poly-${index + 1}`),
+            label: String((item as { label?: unknown }).label ?? annotationClasses[index % annotationClasses.length]),
+            cls: Number((item as { cls?: unknown }).cls ?? index % annotationClasses.length),
+            confidence: typeof (item as { confidence?: unknown }).confidence === 'number' ? Number((item as { confidence?: unknown }).confidence) : undefined,
+            source: ((item as { source?: unknown }).source === 'ai' ? 'ai' : 'manual') as 'manual' | 'ai',
+            points,
+          } satisfies AnnotationPolygon;
+        }).filter(Boolean) as AnnotationPolygon[]
+        : [];
+      if (polygons.length) return { boxes: [] as AnnotationBox[], polygons };
+      const fallbackPolygons = Array.isArray(parsed.boxes)
+        ? parsed.boxes.map((item, index) => {
+          const x = Number((item as { x?: unknown }).x);
+          const y = Number((item as { y?: unknown }).y);
+          const w = Number((item as { w?: unknown }).w);
+          const h = Number((item as { h?: unknown }).h);
+          if (![x, y, w, h].every(Number.isFinite)) return null;
+          return {
+            id: String((item as { id?: unknown }).id ?? `poly-box-${index + 1}`),
+            label: String((item as { label?: unknown }).label ?? annotationClasses[index % annotationClasses.length]),
+            cls: Number((item as { cls?: unknown }).cls ?? index % annotationClasses.length),
+            confidence: typeof (item as { confidence?: unknown }).confidence === 'number' ? Number((item as { confidence?: unknown }).confidence) : undefined,
+            source: ((item as { source?: unknown }).source === 'ai' ? 'ai' : 'manual') as 'manual' | 'ai',
+            points: [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }],
+          } satisfies AnnotationPolygon;
+        }).filter(Boolean) as AnnotationPolygon[]
+        : [];
+      return { boxes: [] as AnnotationBox[], polygons: fallbackPolygons.length ? fallbackPolygons : [...prototypeSegmentationPolygons, ...aiSuggestionPolygons] };
+    }
+    const boxes = Array.isArray(parsed.boxes)
+      ? parsed.boxes.map((item, index) => {
+        const x = Number((item as { x?: unknown }).x);
+        const y = Number((item as { y?: unknown }).y);
+        const w = Number((item as { w?: unknown }).w);
+        const h = Number((item as { h?: unknown }).h);
+        if (![x, y, w, h].every(Number.isFinite)) return null;
+        return {
+          id: String((item as { id?: unknown }).id ?? `box-${index + 1}`),
+          x, y, w, h,
+          label: String((item as { label?: unknown }).label ?? annotationClasses[index % annotationClasses.length]),
+          cls: Number((item as { cls?: unknown }).cls ?? index % annotationClasses.length),
+          shape: (((item as { shape?: unknown }).shape ?? 'rect') === 'ellipse' ? 'ellipse' : ((item as { shape?: unknown }).shape ?? 'rect') === 'polygon' ? 'polygon' : 'rect') as AnnotationShape,
+          confidence: typeof (item as { confidence?: unknown }).confidence === 'number' ? Number((item as { confidence?: unknown }).confidence) : undefined,
+          source: ((item as { source?: unknown }).source === 'ai' ? 'ai' : 'manual') as 'manual' | 'ai',
+        } satisfies AnnotationBox;
+      }).filter(Boolean) as AnnotationBox[]
+      : [];
+    return { boxes: boxes.length ? boxes : [...prototypeBoxes, ...aiSuggestionBoxes], polygons: [] as AnnotationPolygon[] };
+  } catch {
+    return scene === 'IMAGE_SEGMENTATION'
+      ? { boxes: [] as AnnotationBox[], polygons: [...prototypeSegmentationPolygons, ...aiSuggestionPolygons] as AnnotationPolygon[] }
+      : { boxes: [...prototypeBoxes, ...aiSuggestionBoxes] as AnnotationBox[], polygons: [] as AnnotationPolygon[] };
+  }
+};
+const initialAnnotationEditorState: AnnotationEditorState = {
+  boxes: [...prototypeBoxes, ...aiSuggestionBoxes],
+  polygons: [],
+  selectedShapeId: prototypeBoxes[0]?.id ?? '',
+  history: [{ boxes: [...prototypeBoxes, ...aiSuggestionBoxes], polygons: [], selectedShapeId: prototypeBoxes[0]?.id ?? '' }],
+  historyIndex: 0,
+};
+const pushAnnotationHistory = (state: AnnotationEditorState, boxes: AnnotationBox[], polygons: AnnotationPolygon[], selectedShapeId?: string): AnnotationEditorState => {
+  const selected = selectedShapeId !== undefined ? selectedShapeId : state.selectedShapeId;
+  const nextSelected = [...boxes, ...polygons].some((shape) => shape.id === selected) ? selected : boxes[0]?.id ?? polygons[0]?.id ?? '';
+  const snapshot = { boxes, polygons, selectedShapeId: nextSelected };
+  const snapshots = [...state.history.slice(0, state.historyIndex + 1), snapshot];
+  return { ...snapshot, history: snapshots, historyIndex: snapshots.length - 1 };
+};
+const annotationEditorReducer = (state: AnnotationEditorState, action: AnnotationEditorAction): AnnotationEditorState => {
+  if (action.type === 'reset') {
+    const selectedShapeId = action.selectedShapeId ?? action.boxes[0]?.id ?? action.polygons[0]?.id ?? '';
+    const snapshot = { boxes: action.boxes, polygons: action.polygons, selectedShapeId };
+    return { ...snapshot, history: [snapshot], historyIndex: 0 };
+  }
+  if (action.type === 'commit') return pushAnnotationHistory(state, action.boxes, action.polygons, action.selectedShapeId);
+  if (action.type === 'commit-current') return pushAnnotationHistory(state, state.boxes, state.polygons, action.selectedShapeId);
+  if (action.type === 'move-box') {
+    return {
+      ...state,
+      boxes: state.boxes.map((box) => box.id === action.boxId ? {
+        ...box,
+        x: Math.max(0, Math.min(520 - box.w, action.x)),
+        y: Math.max(0, Math.min(340 - box.h, action.y)),
+      } : box),
+      selectedShapeId: action.boxId,
+    };
+  }
+  if (action.type === 'replace-current') return { ...state, boxes: action.boxes, polygons: action.polygons };
+  if (action.type === 'select') return { ...state, selectedShapeId: action.selectedShapeId };
+  if (action.type === 'undo') {
+    if (state.historyIndex <= 0) return state;
+    const historyIndex = state.historyIndex - 1;
+    const snapshot = state.history[historyIndex] ?? initialAnnotationEditorState.history[0];
+    return { ...state, ...snapshot, historyIndex };
+  }
+  if (action.type === 'redo') {
+    if (state.historyIndex >= state.history.length - 1) return state;
+    const historyIndex = state.historyIndex + 1;
+    const snapshot = state.history[historyIndex] ?? initialAnnotationEditorState.history[0];
+    return { ...state, ...snapshot, historyIndex };
+  }
+  return state;
+};
 
 export function AnnotationTasksPage() {
+  const nav = useNavigate();
+  const loc = useLocation() as { state?: { openCreateTask?: boolean; datasetId?: string } };
   const currentTenantId = useSessionStore((state) => state.user?.tenantId);
   const qc = useQueryClient();
   const [msg, holder] = message.useMessage();
   const [status, setStatus] = useState<string>();
   const [wizardOpen, setWizardOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [enteringTaskId, setEnteringTaskId] = useState<string>();
+  const [taskForm] = Form.useForm<{
+    name: string;
+    sourceDatasetId?: string;
+    sourceVersionId?: string | null;
+    templateId?: string;
+    scene: string;
+    reviewEnabled: boolean;
+    prelabelEnabled: boolean;
+    labelStudioEnabled: boolean;
+    note?: string;
+  }>();
+  const [templateForm] = Form.useForm<AnnotationLabelTemplateInput>();
+  const taskScene = Form.useWatch('scene', taskForm) ?? 'IMAGE_TAGGING';
+  const selectedTaskDatasetId = Form.useWatch('sourceDatasetId', taskForm);
+  const selectedTaskTemplateId = Form.useWatch('templateId', taskForm);
+  const templateScene = Form.useWatch('scene', templateForm);
+  const templateSchema = Form.useWatch('labelSchemaJson', templateForm);
   const overview = useQuery({ queryKey: ['annotation-overview'], queryFn: dataApi.annotationOverview });
   const tasks = useQuery({ queryKey: ['annotation-tasks', status], queryFn: () => dataApi.annotationTasks({ status }) });
   const datasets = useQuery({ queryKey: ['datasets-active-for-annotation'], queryFn: () => dataApi.datasets({ status: 'ACTIVE' }) });
   const templates = useQuery({ queryKey: ['annotation-templates'], queryFn: () => dataApi.labelTemplates() });
-  const inv = () => Promise.all([
+  const inv = useCallback(() => Promise.all([
     qc.invalidateQueries({ queryKey: ['annotation-overview'] }),
     qc.invalidateQueries({ queryKey: ['annotation-tasks'] }),
     qc.invalidateQueries({ queryKey: ['annotation-templates'] }),
-  ]);
+  ]), [qc]);
   const createTask = useMutation({
     mutationFn: dataApi.createAnnotationTask,
     onSuccess: async () => { setWizardOpen(false); await inv(); msg.success('标注任务已创建并完成分派'); },
@@ -99,6 +394,64 @@ export function AnnotationTasksPage() {
   const rows = tasks.data?.items ?? overview.data?.tasks ?? [];
   const publishedTemplates = (templates.data ?? overview.data?.templates ?? []).filter((item) => item.status === 'PUBLISHED');
   const activeDatasets = (datasets.data?.items ?? []).filter((item) => item.status === 'ACTIVE');
+  const annotationDatasets = activeDatasets.filter((item) => item.dataType === 'IMAGE');
+  const selectableTaskTemplates = publishedTemplates.filter((item) => item.scene === taskScene);
+  const selectedTaskDataset = annotationDatasets.find((item) => item.datasetId === selectedTaskDatasetId);
+  const openWorkbench = useCallback((taskId: string) => {
+    nav(`/annwork?taskId=${encodeURIComponent(taskId)}`, { state: { taskId } });
+  }, [nav]);
+  const enterWorkbench = useCallback(async (task: AnnotationTaskSummary) => {
+    try {
+      setEnteringTaskId(task.taskId);
+      if (canAutoStartAnnotationTask(task.status)) {
+        await dataApi.startAnnotationTask(task.taskId);
+        await inv();
+      }
+      openWorkbench(task.taskId);
+    } catch (error) {
+      msg.error(error instanceof Error ? error.message : '进入标注工作台失败');
+    } finally {
+      setEnteringTaskId(undefined);
+    }
+  }, [inv, msg, openWorkbench]);
+  const openTaskWizard = useCallback((datasetId?: string) => {
+    const selectedDataset = annotationDatasets.find((item) => item.datasetId === datasetId);
+    setWizardOpen(true);
+    taskForm.resetFields();
+    taskForm.setFieldsValue({
+      ...annotationTaskDefaults,
+      sourceDatasetId: selectedDataset?.datasetId,
+      sourceVersionId: selectedDataset?.currentVersionId ?? undefined,
+    });
+  }, [annotationDatasets, taskForm]);
+
+  useEffect(() => {
+    if (!wizardOpen) return;
+    const currentTemplateId = taskForm.getFieldValue('templateId');
+    if (currentTemplateId && !selectableTaskTemplates.some((item) => item.templateId === currentTemplateId)) {
+      taskForm.setFieldValue('templateId', undefined);
+    }
+  }, [taskForm, selectableTaskTemplates, wizardOpen]);
+
+  useEffect(() => {
+    if (!wizardOpen || !selectedTaskDataset) return;
+    const currentVersionId = taskForm.getFieldValue('sourceVersionId');
+    if (!currentVersionId || currentVersionId !== selectedTaskDataset.currentVersionId) {
+      taskForm.setFieldValue('sourceVersionId', selectedTaskDataset.currentVersionId ?? undefined);
+    }
+  }, [selectedTaskDataset, taskForm, wizardOpen]);
+
+  useEffect(() => {
+    if (!loc.state?.openCreateTask || datasets.isLoading) return;
+    const timer = window.setTimeout(() => {
+      openTaskWizard(loc.state?.datasetId);
+      if (loc.state?.datasetId && !annotationDatasets.some((item) => item.datasetId === loc.state?.datasetId)) {
+        msg.warning('当前仅支持从 ACTIVE 图片数据集创建标注任务，请重新确认数据集状态。');
+      }
+    }, 0);
+    nav('/ann', { replace: true });
+    return () => window.clearTimeout(timer);
+  }, [annotationDatasets, datasets.isLoading, loc.state, msg, nav, openTaskWizard]);
   const tabStatus: Record<string, string | undefined> = { all: undefined, running: 'IN_PROGRESS', assigned: 'ASSIGNED', review: 'PENDING_REVIEW', done: 'COMPLETED' };
   const annSummaryCards = [
     { n: overview.data?.stats.total ?? rows.length, l: '全部任务' },
@@ -117,7 +470,7 @@ export function AnnotationTasksPage() {
         </div>
         <Space wrap>
           <Button onClick={() => setTemplateOpen(true)}>标签模板</Button>
-          <Button type="primary" onClick={() => setWizardOpen(true)}>＋ 新建标注任务</Button>
+          <Button type="primary" onClick={() => openTaskWizard()}>＋ 新建标注任务</Button>
         </Space>
       </div>
       <Alert type="info" showIcon title="外部标注工具 / Label Studio" description="配置有效时创建/复用真实 Label Studio project；未配置、认证失败、网络失败和 schema 失败均展示诊断，不伪造外部成功。" style={{ marginBottom: 16 }} />
@@ -146,35 +499,58 @@ export function AnnotationTasksPage() {
           { title: '质量评分', dataIndex: 'qualityScore', render: (v) => v == null ? '待质检' : <Tag color={v >= 90 ? 'green' : 'orange'}>{v}</Tag> },
           { title: '截止', dataIndex: 'deadline', render: (v) => v ? new Date(v).toLocaleDateString('zh-CN') : 'TODO_CONFIRM_ANNOTATION_DEADLINE' },
           { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{annStatusText(v)}</Tag> },
-          { title: '操作', render: (_, r) => <Space><a onClick={() => syncLs.mutate(r.taskId)}>同步 Label Studio project</a><a onClick={() => void navigator.clipboard?.writeText(r.taskId)}>复制ID</a></Space> },
+          { title: '操作', render: (_, r) => <Space><Button size="small" type="primary" loading={enteringTaskId === r.taskId} onClick={() => void enterWorkbench(r)} disabled={['COMPLETED', 'CANCELLED'].includes(r.status)}>{canAutoStartAnnotationTask(r.status) ? '开始并进入标注' : '进入标注'}</Button><a onClick={() => syncLs.mutate(r.taskId)}>同步 Label Studio project</a><a onClick={() => void navigator.clipboard?.writeText(r.taskId)}>复制ID</a></Space> },
         ]}
       />
       <Modal title="＋ 新建标注任务" open={wizardOpen} onCancel={() => setWizardOpen(false)} footer={null} destroyOnHidden width={760}>
         <Steps size="small" current={1} items={[{ title: '选择数据集' }, { title: '配置模板' }, { title: '分派审核' }]} style={{ marginBottom: 16 }} />
-        <Form layout="vertical" onFinish={(v) => createTask.mutate({ ...v, assigneeIds: ['USR-ANNOTATOR'], reviewerIds: ['USR-BU-CABIN'], prelabelModelSource: 'TODO_CONFIRM_PRELABEL_MODEL_SOURCE', prelabelConfidence: 0.7 })} initialValues={{ name: '焊缝缺陷检测标注任务', sourceDatasetId: activeDatasets[0]?.datasetId ?? 'DATASET-WELD-DEFECT', sourceVersionId: activeDatasets[0]?.currentVersionId ?? 'DVER-WELD-001', templateId: publishedTemplates[0]?.templateId ?? 'LT-WELD-BBOX', scene: 'OBJECT_DETECTION', reviewEnabled: true, prelabelEnabled: true, labelStudioEnabled: true }}>
-          <Form.Item name="sourceDatasetId" label="源数据集（必须 ACTIVE）" rules={[{ required: true }]}><Select options={activeDatasets.map((d) => ({ value: d.datasetId, label: `${d.name} · ${d.status}` }))} /></Form.Item>
-          <Form.Item name="sourceVersionId" label="数据版本"><Input placeholder="默认使用 currentVersionId" /></Form.Item>
-          <Form.Item name="templateId" label="标签模板（必须 PUBLISHED）" rules={[{ required: true }]}><Select options={publishedTemplates.map((t) => ({ value: t.templateId, label: `${t.name} · ${t.status}` }))} /></Form.Item>
+        <Alert type="info" showIcon title="数据集范围说明" description="这里不是数据集总览页；仅展示可用于创建标注任务的 ACTIVE 图片数据集。为避免误选，创建前必须手动确认源数据集。" style={{ marginBottom: 12 }} />
+        <Form form={taskForm} layout="vertical" onFinish={(v) => {
+          if (!v.sourceDatasetId || !v.templateId) return;
+          createTask.mutate({ ...v, sourceDatasetId: v.sourceDatasetId, templateId: v.templateId, assigneeIds: ['USR-ANNOTATOR'], reviewerIds: ['USR-BU-CABIN'], prelabelModelSource: 'TODO_CONFIRM_PRELABEL_MODEL_SOURCE', prelabelConfidence: 0.7 });
+        }} initialValues={annotationTaskDefaults}>
+          <Form.Item name="sourceDatasetId" label="源数据集（仅 ACTIVE 图片数据集）" rules={[{ required: true, message: '请选择源数据集' }]}>
+            <Select
+              placeholder="请选择要创建标注任务的数据集"
+              options={annotationDatasets.map((d) => ({ value: d.datasetId, label: `${d.name}（${d.datasetId}）· 当前版本 ${d.currentVersionName ?? d.currentVersionId ?? '未发布'} · ${d.status}` }))}
+            />
+          </Form.Item>
+          <Form.Item name="sourceVersionId" label="数据版本"><Input placeholder="选择数据集后自动带出 currentVersionId" /></Form.Item>
+          <Form.Item name="templateId" label="标签模板（按标注场景过滤，必须 PUBLISHED）" rules={[{ required: true, message: '请选择标签模板' }]}>
+            <Select
+              placeholder={selectableTaskTemplates.length ? '请选择标签模板' : '当前场景无可用模板'}
+              disabled={!selectableTaskTemplates.length}
+              options={selectableTaskTemplates.map((t) => ({ value: t.templateId, label: `${t.name} · ${t.scene}` }))}
+            />
+          </Form.Item>
           <Form.Item name="name" label="任务名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="scene" label="标注场景"><Select options={[{ value: 'OBJECT_DETECTION', label: '目标检测' }, { value: 'TEXT_LABELING', label: '文本分类' }]} /></Form.Item>
+          <Form.Item name="scene" label="标注场景"><Select options={annotationSceneOptions} onChange={() => taskForm.setFieldValue('templateId', undefined)} /></Form.Item>
           <Space wrap>
             <Form.Item name="reviewEnabled" label="审核"><Select options={[{ value: true, label: '启用审核' }, { value: false, label: '不审核' }]} /></Form.Item>
             <Form.Item name="prelabelEnabled" label="AI 预标注"><Select options={[{ value: true, label: '启用 AI 预标注' }, { value: false, label: '不启用' }]} /></Form.Item>
           </Space>
           <Form.Item name="note" label="备注"><Input.TextArea rows={2} /></Form.Item>
           <Alert type="info" showIcon title="分派策略" description="示例任务默认分派给 USR-ANNOTATOR 标注、USR-BU-CABIN 审核；DAT-004 阻断自审。" style={{ marginBottom: 12 }} />
-          <Button type="primary" htmlType="submit" loading={createTask.isPending}>创建任务</Button>
+          <Button type="primary" htmlType="submit" loading={createTask.isPending} disabled={!selectedTaskDatasetId || !selectedTaskTemplateId || !selectableTaskTemplates.length}>创建任务</Button>
         </Form>
       </Modal>
-      <Drawer title="标签模板" open={templateOpen} onClose={() => setTemplateOpen(false)} width={720}>
+      <Drawer title={<Typography.Title level={4} style={{ margin: 0 }}>标签模板</Typography.Title>} open={templateOpen} onClose={() => setTemplateOpen(false)} size="large">
         <Alert type="info" showIcon title="Label Studio label config seam" description="模板会生成 <View> XML；workspace/storage/token 仍保留 TODO_CONFIRM_*。" style={{ marginBottom: 16 }} />
         <Table<AnnotationLabelTemplate> rowKey="templateId" dataSource={templates.data ?? []} pagination={false} columns={[{ title: '名称', dataIndex: 'name' }, { title: '场景', dataIndex: 'scene' }, { title: '类型', dataIndex: 'labelType' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }]} />
-        <Form layout="vertical" style={{ marginTop: 16 }} initialValues={{ name: '焊缝 BBox 模板', tenantId: currentTenantId, scene: 'OBJECT_DETECTION', labelType: 'BOUNDING_BOX', labelSchemaJson: '{"labels":["裂纹","气孔"]}' }} onFinish={(v) => createTemplate.mutate(v)}>
+        <Form
+          form={templateForm}
+          layout="vertical"
+          style={{ marginTop: 16 }}
+          initialValues={{ name: '焊缝图片打标模板', tenantId: currentTenantId, scene: 'IMAGE_TAGGING', labelType: 'BOUNDING_BOX', labelSchemaJson: defaultLabelSchema('IMAGE_TAGGING') }}
+          onFinish={(v) => createTemplate.mutate({ ...v, labelStudioConfigXml: labelStudioXmlForTemplate(v.scene, v.labelSchemaJson, v.labelStudioConfigXml) })}
+        >
           <Form.Item name="name" label="模板名称"><Input /></Form.Item>
           <Form.Item name="tenantId" label="BU"><Input /></Form.Item>
-          <Form.Item name="scene" label="场景"><Input /></Form.Item>
-          <Form.Item name="labelType" label="标注类型"><Input /></Form.Item>
+          <Form.Item name="scene" label="场景"><Select options={annotationTemplateSceneOptions} onChange={(scene) => templateForm.setFieldsValue({ labelType: scene === 'TEXT_LABELING' ? 'TEXT_CLASSIFICATION' : scene === 'IMAGE_SEGMENTATION' ? 'POLYGON' : 'BOUNDING_BOX', labelSchemaJson: defaultLabelSchema(scene) })} /></Form.Item>
+          <Form.Item name="labelType" label="标注类型"><Select options={annotationLabelTypeOptions} /></Form.Item>
           <Form.Item name="labelSchemaJson" label="标签 Schema"><Input.TextArea rows={3} /></Form.Item>
+          <Form.Item name="labelStudioConfigXml" label="Label Studio XML（可选；留空自动生成）"><Input.TextArea rows={4} placeholder={labelStudioXmlForTemplate(templateScene, templateSchema)} /></Form.Item>
+          <Alert type="success" showIcon title={templateScene === 'TEXT_LABELING' ? '文本分类模板将自动生成 Text + Choices 的 Label Studio XML' : '当前支持图片打标、图片分割与文本分类；图片模板将自动生成 Image + RectangleLabels/PolygonLabels XML'} style={{ marginBottom: 12 }} />
           <Button htmlType="submit" loading={createTemplate.isPending}>创建并发布模板</Button>
         </Form>
       </Drawer>
@@ -184,59 +560,689 @@ export function AnnotationTasksPage() {
 
 export function AnnotationWorkbenchPage() {
   const qc = useQueryClient();
+  const nav = useNavigate();
+  const loc = useLocation() as { state?: { taskId?: string }; search?: string };
+  const canvasRef = useRef<SVGSVGElement | null>(null);
   const [msg, holder] = message.useMessage();
-  const tasks = useQuery({ queryKey: ['annotation-workbench-tasks'], queryFn: () => dataApi.annotationTasks({ status: 'IN_PROGRESS' }) });
-  const taskId = tasks.data?.items[0]?.taskId ?? 'ANN-WELD-Q2';
-  const detail = useQuery({ queryKey: ['annotation-detail', taskId], queryFn: () => dataApi.annotationTaskDetail(taskId), enabled: Boolean(taskId) });
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [editor, dispatchEditor] = useReducer(annotationEditorReducer, initialAnnotationEditorState);
+  const { boxes, polygons, selectedShapeId } = editor;
+  const [activeClass, setActiveClass] = useState(0);
+  const [activeShape, setActiveShape] = useState<AnnotationShape>('rect');
+  const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
+  const [draftBox, setDraftBox] = useState<DraftBox | null>(null);
+  const [dragState, setDragState] = useState<DragState | null>(null);
+  const [polygonDraftPoints, setPolygonDraftPoints] = useState<AnnotationPoint[]>([]);
+  const [polygonVertexDrag, setPolygonVertexDrag] = useState<PolygonVertexDragState | null>(null);
+  const [polygonEdgeDrag, setPolygonEdgeDrag] = useState<PolygonEdgeDragState | null>(null);
+  const [selectedPolygonEdgeIndex, setSelectedPolygonEdgeIndex] = useState<number | null>(null);
+  const [selectedPolygonPointIndex, setSelectedPolygonPointIndex] = useState<number | null>(null);
+  const [aiMode, setAiMode] = useState(true);
+  const [shortcutOpen, setShortcutOpen] = useState(false);
   const [syncedBinding, setSyncedBinding] = useState<AnnotationExternalBinding | null>(null);
-  const save = useMutation({ mutationFn: (id: string) => dataApi.saveAnnotationDraft(id, annJson), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); msg.success('草稿已保存'); }, onError: (e: Error) => msg.error(e.message) });
-  const submit = useMutation({ mutationFn: (id: string) => dataApi.submitAnnotationWorkItem(id, annJson), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); msg.success('标注结果已提交，等待审核'); }, onError: (e: Error) => msg.error(e.message) });
+  const requestedTaskId = useMemo(() => {
+    const routeTaskId = loc.state?.taskId;
+    if (routeTaskId) return routeTaskId;
+    const queryTaskId = new URLSearchParams(loc.search ?? '').get('taskId');
+    return queryTaskId ?? undefined;
+  }, [loc.search, loc.state?.taskId]);
+  const tasks = useQuery({ queryKey: ['annotation-workbench-tasks'], queryFn: () => dataApi.annotationTasks({ status: 'IN_PROGRESS' }) });
+  const taskId = requestedTaskId ?? tasks.data?.items[0]?.taskId ?? 'ANN-WELD-Q2';
+  const detail = useQuery({ queryKey: ['annotation-detail', taskId], queryFn: () => dataApi.annotationTaskDetail(taskId), enabled: Boolean(taskId) });
+  const save = useMutation({ mutationFn: ({ id, payload }: { id: string; payload: string }) => dataApi.saveAnnotationDraft(id, payload), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); msg.success('草稿已保存'); }, onError: (e: Error) => msg.error(e.message) });
+  const submit = useMutation({ mutationFn: ({ id, payload }: { id: string; payload: string }) => dataApi.submitAnnotationWorkItem(id, payload), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); msg.success('标注结果已提交，等待审核'); }, onError: (e: Error) => msg.error(e.message) });
   const sync = useMutation({ mutationFn: dataApi.syncLabelStudioTask, onSuccess: async (r) => { setSyncedBinding(r); await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); (r.lastSyncStatus === 'TASK_SYNCED' ? msg.success : msg.warning)(`Label Studio ${r.lastSyncStatus}: ${r.diagnosticMessage}`); }, onError: (e: Error) => msg.error(e.message) });
   const task = detail.data?.task;
+  const scene = task?.scene ?? 'IMAGE_TAGGING';
+  const isSegmentation = scene === 'IMAGE_SEGMENTATION';
   const items = detail.data?.workItems ?? [];
+  const editableIndex = items.findIndex((item) => canEditWorkItem(item.status));
+  const effectiveSelectedIndex = selectedIndex === 0 && items[0] && items[0].status === 'REVIEW_PENDING' && editableIndex > 0 ? editableIndex : selectedIndex;
+  const selectedItem = items[effectiveSelectedIndex] ?? items[0];
   const externalBinding = syncedBinding ?? detail.data?.externalBinding;
+  const total = task?.totalCount ?? Math.max(items.length, 1);
+  const currentNo = Math.min(effectiveSelectedIndex + 1, total);
+  const canEditSelectedItem = canEditWorkItem(selectedItem?.status);
+  const canSubmit = selectedItem && selectedItem.status !== 'APPROVED' && selectedItem.status !== 'REVIEW_PENDING';
+  const selectedSampleImage = selectedItem ? (industrialSampleImages[selectedItem.sampleKey] ?? (selectedItem.sampleImageUrl ? { url: selectedItem.sampleImageUrl, title: '????', source: 'annotation_work_item.sampleImageUrl' } : null)) : null;
+  const currentBox = boxes.find((box) => box.id === selectedShapeId);
+  const currentPolygon = polygons.find((polygon) => polygon.id === selectedShapeId);
+  const currentPolygonCenter = currentPolygon ? polygonCentroid(currentPolygon.points) : null;
+  const effectiveSelectedPolygonPointIndex = currentPolygon && selectedPolygonPointIndex != null && selectedPolygonPointIndex < currentPolygon.points.length
+    ? selectedPolygonPointIndex
+    : null;
+  const selectedPolygonPoint = currentPolygon && effectiveSelectedPolygonPointIndex != null ? currentPolygon.points[effectiveSelectedPolygonPointIndex] ?? null : null;
+  const workbenchShortcutGroups = useMemo(() => isSegmentation ? [
+    { group: '分割工具', items: [['P', '开始多边形'], ['Enter / Double Click', '完成闭合'], ['Delete', '删除顶点/区域'], ['单击线条', '选中连接线'], ['双击线条', '新增顶点'], ['鼠标拖拽', '移动选中顶点/连接线']] },
+    { group: '类别选择', items: [['1-4', '切换类别'], ['Ctrl+Z', '撤销'], ['Ctrl+Y', '重做'], ['Space', '下一张']] },
+  ] : shortcutGroups, [isSegmentation]);
+  const annotationPayload = useMemo(() => JSON.stringify(isSegmentation ? {
+    polygons: polygons.map((polygon) => ({ id: polygon.id, label: polygon.label, cls: polygon.cls, source: polygon.source ?? 'manual', confidence: polygon.confidence, points: polygon.points })),
+  } : {
+    boxes: boxes.map((box) => ({ id: box.id, label: box.label, cls: box.cls, shape: box.shape, x: box.x, y: box.y, w: box.w, h: box.h, source: box.source ?? 'manual', confidence: box.confidence })),
+  }), [boxes, isSegmentation, polygons]);
+  const commitBoxes = useCallback((updater: AnnotationBox[] | ((items: AnnotationBox[]) => AnnotationBox[]), nextSelectedId?: string) => {
+    const next = typeof updater === 'function' ? updater(boxes) : updater;
+    dispatchEditor({ type: 'commit', boxes: next, polygons, selectedShapeId: nextSelectedId });
+  }, [boxes, polygons]);
+  const commitPolygons = useCallback((updater: AnnotationPolygon[] | ((items: AnnotationPolygon[]) => AnnotationPolygon[]), nextSelectedId?: string) => {
+    const next = typeof updater === 'function' ? updater(polygons) : updater;
+    dispatchEditor({ type: 'commit', boxes, polygons: next, selectedShapeId: nextSelectedId });
+  }, [boxes, polygons]);
+  const undo = useCallback(() => dispatchEditor({ type: 'undo' }), []);
+  const redo = useCallback(() => dispatchEditor({ type: 'redo' }), []);
+
+  const goPrev = useCallback(() => setSelectedIndex((i) => Math.max(0, i - 1)), []);
+  const goNext = useCallback(() => setSelectedIndex((i) => Math.min(Math.max(items.length - 1, 0), i + 1)), [items.length]);
+  const syncCurrent = () => selectedItem?.workItemId && sync.mutate(selectedItem.workItemId);
+  const finalizePolygon = useCallback(() => {
+    if (polygonDraftPoints.length < 3) {
+      msg.warning('图片分割至少需要 3 个点才能闭合多边形');
+      return;
+    }
+    const id = nextAnnotationShapeId('poly');
+    const polygon = { id, points: polygonDraftPoints, label: annotationClasses[activeClass], cls: activeClass, source: 'manual' as const };
+    commitPolygons((items) => [...items, polygon], id);
+    setPolygonDraftPoints([]);
+    setActiveShape('polygon');
+    setSelectedPolygonEdgeIndex(null);
+    msg.success(`已新增分割区域：${annotationClasses[activeClass]}`);
+  }, [activeClass, commitPolygons, msg, polygonDraftPoints]);
+  const saveCurrent = useCallback(() => {
+    if (!selectedItem?.workItemId) return;
+    if (!canEditWorkItem(selectedItem.status)) {
+      msg.warning('当前样本已提交/已审核，不能保存草稿，请切换到草稿或待标注样本');
+      return;
+    }
+    save.mutate({ id: selectedItem.workItemId, payload: annotationPayload });
+  }, [annotationPayload, msg, save, selectedItem]);
+  const submitCurrent = useCallback(() => {
+    if (!selectedItem?.workItemId) return;
+    if (!canEditWorkItem(selectedItem.status) && selectedItem.status !== 'SUBMITTED') {
+      msg.warning('当前样本已提交/已审核，不能重复提交');
+      return;
+    }
+    submit.mutate({ id: selectedItem.workItemId, payload: annotationPayload });
+  }, [annotationPayload, msg, selectedItem, submit]);
+  const selectClass = useCallback((idx: number) => {
+    setActiveClass(idx);
+    if (isSegmentation && selectedShapeId) {
+      commitPolygons((items) => items.map((polygon) => polygon.id === selectedShapeId ? { ...polygon, cls: idx, label: annotationClasses[idx] } : polygon), selectedShapeId);
+      return;
+    }
+    commitBoxes((items) => items.map((box) => box.id === selectedShapeId ? { ...box, cls: idx, label: annotationClasses[idx] } : box), selectedShapeId);
+  }, [commitBoxes, commitPolygons, isSegmentation, selectedShapeId]);
+  const updatePolygonVertex = useCallback((polygonId: string, pointIndex: number, point: AnnotationPoint, commit: boolean) => {
+    const nextPolygons = polygons.map((polygon) => {
+      if (polygon.id !== polygonId) return polygon;
+      return {
+        ...polygon,
+        points: polygon.points.map((item, index) => index === pointIndex ? clampAnnotationPoint(point) : item),
+      };
+    });
+    if (commit) {
+      dispatchEditor({ type: 'commit', boxes, polygons: nextPolygons, selectedShapeId: polygonId });
+      return;
+    }
+    dispatchEditor({ type: 'replace-current', boxes, polygons: nextPolygons });
+  }, [boxes, polygons]);
+  const insertPolygonVertex = useCallback((polygonId: string, edgeIndex: number, point: AnnotationPoint, commit: boolean) => {
+    const nextPoint = clampAnnotationPoint(point);
+    const nextPolygons = polygons.map((polygon) => {
+      if (polygon.id !== polygonId) return polygon;
+      const nextPoints = [...polygon.points];
+      nextPoints.splice(edgeIndex + 1, 0, nextPoint);
+      return { ...polygon, points: nextPoints };
+    });
+    if (commit) {
+      dispatchEditor({ type: 'commit', boxes, polygons: nextPolygons, selectedShapeId: polygonId });
+      return;
+    }
+    dispatchEditor({ type: 'replace-current', boxes, polygons: nextPolygons });
+  }, [boxes, polygons]);
+  const updatePolygonEdge = useCallback((polygonId: string, edgeIndex: number, startPoint: AnnotationPoint, endPoint: AnnotationPoint, commit: boolean) => {
+    const nextStart = clampAnnotationPoint(startPoint);
+    const nextEnd = clampAnnotationPoint(endPoint);
+    const nextPolygons = polygons.map((polygon) => {
+      if (polygon.id !== polygonId) return polygon;
+      const targetIndex = (edgeIndex + 1) % polygon.points.length;
+      return {
+        ...polygon,
+        points: polygon.points.map((item, index) => {
+          if (index === edgeIndex) return nextStart;
+          if (index === targetIndex) return nextEnd;
+          return item;
+        }),
+      };
+    });
+    if (commit) {
+      dispatchEditor({ type: 'commit', boxes, polygons: nextPolygons, selectedShapeId: polygonId });
+      return;
+    }
+    dispatchEditor({ type: 'replace-current', boxes, polygons: nextPolygons });
+  }, [boxes, polygons]);
+  const deleteSelectedVertex = useCallback(() => {
+    if (!selectedShapeId || effectiveSelectedPolygonPointIndex == null) return false;
+    const targetPolygon = polygons.find((polygon) => polygon.id === selectedShapeId);
+    if (!targetPolygon) return false;
+    if (targetPolygon.points.length <= 3) {
+      msg.warning('多边形至少需要保留 3 个顶点');
+      return true;
+    }
+    const nextPointIndex = Math.min(effectiveSelectedPolygonPointIndex, targetPolygon.points.length - 2);
+    commitPolygons((items) => items.map((polygon) => polygon.id === selectedShapeId
+      ? { ...polygon, points: polygon.points.filter((_, index) => index !== effectiveSelectedPolygonPointIndex) }
+      : polygon), selectedShapeId);
+    setSelectedPolygonEdgeIndex(null);
+    setSelectedPolygonPointIndex(nextPointIndex);
+    msg.success('已删除选中顶点');
+    return true;
+  }, [commitPolygons, effectiveSelectedPolygonPointIndex, msg, polygons, selectedShapeId]);
+  const deleteSelectedShape = useCallback(() => {
+    if (!selectedShapeId) return;
+    if (deleteSelectedVertex()) return;
+    if (isSegmentation) {
+      setSelectedPolygonEdgeIndex(null);
+      setSelectedPolygonPointIndex(null);
+      commitPolygons((items) => items.filter((polygon) => polygon.id !== selectedShapeId), polygons.find((polygon) => polygon.id !== selectedShapeId)?.id ?? '');
+      return;
+    }
+    commitBoxes((items) => items.filter((box) => box.id !== selectedShapeId), boxes.find((box) => box.id !== selectedShapeId)?.id ?? '');
+  }, [boxes, commitBoxes, commitPolygons, deleteSelectedVertex, isSegmentation, polygons, selectedShapeId]);
+  const createManualShape = useCallback((shape: AnnotationShape) => {
+    if (isSegmentation || shape === 'polygon') {
+      setActiveShape('polygon');
+      setPolygonDraftPoints([]);
+      setSelectedPolygonEdgeIndex(null);
+      setSelectedPolygonPointIndex(null);
+      msg.info('图片分割请在画布上逐点点击绘制区域，双击或点击“完成多边形”闭合');
+      return;
+    }
+    const id = nextAnnotationShapeId('box');
+    const box = { id, x: 86 + boxes.length * 6, y: 230, w: 96, h: 58, label: annotationClasses[activeClass], cls: activeClass, shape, source: 'manual' as const };
+    setActiveShape(shape);
+    commitBoxes((items) => [...items, box], id);
+    msg.success(`已新增标注框：${annotationClasses[activeClass]}（${shapeText(shape)}）`);
+  }, [activeClass, boxes.length, commitBoxes, isSegmentation, msg]);
+  const acceptAiShape = useCallback(() => {
+    const selectedPolygon = polygons.find((item) => item.id === selectedShapeId);
+    if (selectedPolygon?.source === 'ai') {
+      commitPolygons((items) => items.map((item) => item.id === selectedPolygon.id ? { ...item, source: 'manual', confidence: undefined } : item), selectedPolygon.id);
+      setActiveClass(selectedPolygon.cls);
+      msg.success(`已采纳 AI 建议：${selectedPolygon.label}`);
+      return;
+    }
+    const selectedBox = boxes.find((item) => item.id === selectedShapeId);
+    if (selectedBox?.source === 'ai') {
+      commitBoxes((items) => items.map((item) => item.id === selectedBox.id ? { ...item, source: 'manual', confidence: undefined } : item), selectedBox.id);
+      setActiveClass(selectedBox.cls);
+      msg.success(`已采纳 AI 建议：${selectedBox.label}`);
+    }
+  }, [boxes, commitBoxes, commitPolygons, msg, polygons, selectedShapeId]);
+  const svgPoint = (event: { clientX: number; clientY: number }) => {
+    const svg = canvasRef.current;
+    if (!svg) return { x: 0, y: 0 };
+    const rect = svg.getBoundingClientRect();
+    const x = Math.max(0, Math.min(520, ((event.clientX - rect.left) / rect.width) * 520));
+    const y = Math.max(0, Math.min(340, ((event.clientY - rect.top) / rect.height) * 340));
+    return { x: Math.round(x), y: Math.round(y) };
+  };
+  const startDraw = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (event.button !== 0 || (event.target as Element).closest('.annotation-shape-group')) return;
+    if (isSegmentation) {
+      if (!canEditSelectedItem) {
+        msg.warning('当前样本已提交/已审核，不能新增分割区域');
+        return;
+      }
+      const point = svgPoint(event);
+      setPolygonDraftPoints((items) => [...items, point]);
+      setActiveShape('polygon');
+      setSelectedPolygonEdgeIndex(null);
+      setSelectedPolygonPointIndex(null);
+      return;
+    }
+    const point = svgPoint(event);
+    setDrawStart(point);
+    setDraftBox({ x: point.x, y: point.y, w: 0, h: 0 });
+    safeSetPointerCapture(event.currentTarget, event.pointerId);
+  };
+  const moveDraw = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (polygonVertexDrag) {
+      const point = svgPoint(event);
+      updatePolygonVertex(polygonVertexDrag.polygonId, polygonVertexDrag.pointIndex, point, false);
+      return;
+    }
+    if (polygonEdgeDrag) {
+      const point = svgPoint(event);
+      const dx = point.x - polygonEdgeDrag.start.x;
+      const dy = point.y - polygonEdgeDrag.start.y;
+      updatePolygonEdge(
+        polygonEdgeDrag.polygonId,
+        polygonEdgeDrag.edgeIndex,
+        { x: polygonEdgeDrag.originStart.x + dx, y: polygonEdgeDrag.originStart.y + dy },
+        { x: polygonEdgeDrag.originEnd.x + dx, y: polygonEdgeDrag.originEnd.y + dy },
+        false,
+      );
+      return;
+    }
+    if (isSegmentation) return;
+    if (dragState) {
+      const point = svgPoint(event);
+      const dx = point.x - dragState.start.x;
+      const dy = point.y - dragState.start.y;
+      dispatchEditor({ type: 'move-box', boxId: dragState.boxId, x: dragState.origin.x + dx, y: dragState.origin.y + dy });
+      return;
+    }
+    if (!drawStart) return;
+    const point = svgPoint(event);
+    setDraftBox({
+      x: Math.min(drawStart.x, point.x),
+      y: Math.min(drawStart.y, point.y),
+      w: Math.abs(point.x - drawStart.x),
+      h: Math.abs(point.y - drawStart.y),
+    });
+  };
+  const finishDraw = (event?: ReactPointerEvent<SVGSVGElement>) => {
+    if (event) safeReleasePointerCapture(event.currentTarget, event.pointerId);
+    if (polygonVertexDrag) {
+      const point = event ? svgPoint(event) : selectedPolygonPoint ?? null;
+      if (point) {
+        updatePolygonVertex(polygonVertexDrag.polygonId, polygonVertexDrag.pointIndex, point, true);
+      } else {
+        dispatchEditor({ type: 'commit-current', selectedShapeId: polygonVertexDrag.polygonId });
+      }
+      setSelectedPolygonEdgeIndex(null);
+      setPolygonVertexDrag(null);
+      return;
+    }
+    if (polygonEdgeDrag) {
+      const point = event ? svgPoint(event) : polygonEdgeDrag.start;
+      const dx = point.x - polygonEdgeDrag.start.x;
+      const dy = point.y - polygonEdgeDrag.start.y;
+      updatePolygonEdge(
+        polygonEdgeDrag.polygonId,
+        polygonEdgeDrag.edgeIndex,
+        { x: polygonEdgeDrag.originStart.x + dx, y: polygonEdgeDrag.originStart.y + dy },
+        { x: polygonEdgeDrag.originEnd.x + dx, y: polygonEdgeDrag.originEnd.y + dy },
+        true,
+      );
+      setSelectedPolygonEdgeIndex(polygonEdgeDrag.edgeIndex);
+      setPolygonEdgeDrag(null);
+      return;
+    }
+    if (isSegmentation) return;
+    if (dragState) {
+      dispatchEditor({ type: 'commit-current', selectedShapeId: dragState.boxId });
+      setDragState(null);
+      return;
+    }
+    if (draftBox && draftBox.w >= 8 && draftBox.h >= 8) {
+      const id = nextAnnotationShapeId('box');
+      commitBoxes((items) => [...items, { id, ...draftBox, label: annotationClasses[activeClass], cls: activeClass, shape: activeShape, source: 'manual' }], id);
+      msg.success(`已新增标注框：${annotationClasses[activeClass]}`);
+    }
+    setDrawStart(null);
+    setDraftBox(null);
+  };
+  const startDragBox = (event: ReactPointerEvent<SVGGElement>, box: AnnotationBox) => {
+    if (isSegmentation) return;
+    if (!canEditSelectedItem) {
+      msg.warning('当前样本已提交/已审核，不能拖动标注框');
+      return;
+    }
+    event.stopPropagation();
+    const point = svgPoint(event);
+    dispatchEditor({ type: 'select', selectedShapeId: box.id });
+    setActiveClass(box.cls);
+    setActiveShape(box.shape);
+    setDragState({ boxId: box.id, start: point, origin: { x: box.x, y: box.y } });
+    safeSetPointerCapture(canvasRef.current, event.pointerId);
+  };
+  const startDragPolygonVertex = (event: ReactPointerEvent<SVGCircleElement>, polygon: AnnotationPolygon, pointIndex: number) => {
+    if (!canEditSelectedItem) {
+      msg.warning('当前样本已提交/已审核，不能编辑分割顶点');
+      return;
+    }
+    event.stopPropagation();
+    dispatchEditor({ type: 'select', selectedShapeId: polygon.id });
+    setActiveClass(polygon.cls);
+    setActiveShape('polygon');
+    setSelectedPolygonEdgeIndex(null);
+    setSelectedPolygonPointIndex(pointIndex);
+    setPolygonVertexDrag({ polygonId: polygon.id, pointIndex, pointerId: event.pointerId });
+    safeSetPointerCapture(canvasRef.current, event.pointerId);
+  };
+  const startDragPolygonEdge = (event: ReactPointerEvent<SVGLineElement>, polygon: AnnotationPolygon, edgeIndex: number) => {
+    if (!canEditSelectedItem) {
+      msg.warning('当前样本已提交/已审核，不能移动连接线');
+      return;
+    }
+    event.stopPropagation();
+    const point = svgPoint(event);
+    const startPoint = polygon.points[edgeIndex];
+    const endPoint = polygon.points[(edgeIndex + 1) % polygon.points.length];
+    if (!startPoint || !endPoint) return;
+    dispatchEditor({ type: 'select', selectedShapeId: polygon.id });
+    setActiveClass(polygon.cls);
+    setActiveShape('polygon');
+    setSelectedPolygonEdgeIndex(edgeIndex);
+    setSelectedPolygonPointIndex(null);
+    setPolygonEdgeDrag({
+      polygonId: polygon.id,
+      edgeIndex,
+      pointerId: event.pointerId,
+      start: point,
+      originStart: startPoint,
+      originEnd: endPoint,
+    });
+    safeSetPointerCapture(canvasRef.current, event.pointerId);
+  };
+  const addPolygonVertexOnEdge = useCallback((event: ReactMouseEvent<SVGLineElement>, polygon: AnnotationPolygon, edgeIndex: number) => {
+    if (!canEditSelectedItem) {
+      msg.warning('当前样本已提交/已审核，不能新增连接点');
+      return;
+    }
+    event.stopPropagation();
+    const point = svgPoint(event);
+    insertPolygonVertex(polygon.id, edgeIndex, point, true);
+    dispatchEditor({ type: 'select', selectedShapeId: polygon.id });
+    setActiveClass(polygon.cls);
+    setActiveShape('polygon');
+    setSelectedPolygonEdgeIndex(edgeIndex);
+    setSelectedPolygonPointIndex(edgeIndex + 1);
+    msg.success('已在线条上新增顶点');
+  }, [canEditSelectedItem, insertPolygonVertex, msg]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setPolygonDraftPoints([]);
+      setPolygonVertexDrag(null);
+      setPolygonEdgeDrag(null);
+      setSelectedPolygonEdgeIndex(null);
+      setSelectedPolygonPointIndex(null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [selectedIndex, scene, taskId]);
+  useEffect(() => {
+    if (!selectedItem) return;
+    const parsed = parseAnnotationPayload(scene, selectedItem.annotationJson ?? selectedItem.predictionJson);
+    const selectedId = parsed.polygons[0]?.id ?? parsed.boxes[0]?.id ?? '';
+    dispatchEditor({ type: 'reset', boxes: parsed.boxes, polygons: parsed.polygons, selectedShapeId: selectedId });
+    const current = parsed.polygons[0] ?? parsed.boxes[0];
+    const timer = window.setTimeout(() => {
+      setActiveClass(current?.cls ?? 0);
+      setActiveShape(scene === 'IMAGE_SEGMENTATION'
+        ? 'polygon'
+        : (current && 'shape' in current && (current.shape === 'rect' || current.shape === 'ellipse' || current.shape === 'polygon')
+          ? current.shape
+          : 'rect'));
+      setSelectedPolygonEdgeIndex(null);
+      setSelectedPolygonPointIndex(null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [scene, selectedItem]);
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.shiftKey) {
+        undo();
+        event.preventDefault();
+      } else if ((event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === 'y' || (event.key.toLowerCase() === 'z' && event.shiftKey))) {
+        redo();
+        event.preventDefault();
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        saveCurrent();
+        event.preventDefault();
+      } else if (/^[1-4]$/.test(event.key)) {
+        selectClass(Number(event.key) - 1);
+        event.preventDefault();
+      } else if (event.key.toLowerCase() === 'd' || event.key === 'Delete') {
+        deleteSelectedShape();
+        event.preventDefault();
+      } else if (event.key === 'Enter' && isSegmentation) {
+        finalizePolygon();
+        event.preventDefault();
+      } else if (event.code === 'Space' || event.key === 'ArrowRight') {
+        goNext();
+        event.preventDefault();
+      } else if (event.key === 'ArrowLeft') {
+        goPrev();
+        event.preventDefault();
+      } else if (event.key === '?') {
+        setShortcutOpen(true);
+        event.preventDefault();
+      } else if (event.key.toLowerCase() === 'w') {
+        createManualShape('rect');
+        event.preventDefault();
+      } else if (event.key.toLowerCase() === 'e') {
+        createManualShape('ellipse');
+        event.preventDefault();
+      } else if (event.key.toLowerCase() === 'p') {
+        createManualShape('polygon');
+        event.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [createManualShape, deleteSelectedShape, finalizePolygon, goNext, goPrev, isSegmentation, redo, saveCurrent, selectClass, undo]);
+
   return (
     <div className="content-page annotation-workbench-page">
       {holder}
-      <div className="page-hero">
-        <div>
-          <Typography.Title level={3}>标注工作台</Typography.Title>
-          <Typography.Text type="secondary">样本队列 · AI 预标注参考 · 草稿保存 · 提交审核闭环</Typography.Text>
+      <Typography.Title level={3} className="annotation-workbench-heading">标注工作台</Typography.Title>
+      <div className="annotation-workbench-shell">
+        <div className="annotation-toolbar" role="toolbar" aria-label="标注工作台操作栏">
+          <Button size="small" onClick={() => nav('/ann')}>← 返回</Button>
+          <Space size={6} wrap>
+            <Typography.Text strong>{task?.name ?? '焊接缺陷标注 v3'}</Typography.Text>
+            <Tag color={color(task?.status)}>{annStatusText(task?.status)}</Tag>
+            <Typography.Text type="secondary" className="mono">{currentNo} / {total}</Typography.Text>
+          </Space>
+          <Tag color="green" className="mono">● 00:47:23 / ~60m</Tag>
+          <Space className="annotation-toolbar-actions" wrap>
+            <Button size="small" onClick={() => setShortcutOpen(true)}>快捷键 ?</Button>
+            <Button size="small" type={aiMode ? 'primary' : 'default'} ghost={aiMode} onClick={() => setAiMode((v) => !v)}>✦ AI 辅助{aiMode ? ' ON' : ''}</Button>
+            <Button size="small" onClick={acceptAiShape} disabled={!aiMode || (currentPolygon?.source !== 'ai' && currentBox?.source !== 'ai')}>采纳 AI 建议</Button>
+            <Button size="small" onClick={goPrev} disabled={effectiveSelectedIndex === 0}>上一张 ←</Button>
+            <Button size="small" onClick={goNext} disabled={!items.length || effectiveSelectedIndex >= items.length - 1}>下一张 →</Button>
+            {!isSegmentation ? <Button size="small" type={activeShape === 'rect' ? 'primary' : 'default'} ghost={activeShape === 'rect'} onClick={() => createManualShape('rect')}>矩形框 W</Button> : null}
+            {!isSegmentation ? <Button size="small" type={activeShape === 'ellipse' ? 'primary' : 'default'} ghost={activeShape === 'ellipse'} onClick={() => createManualShape('ellipse')}>椭圆框 E</Button> : null}
+            <Button size="small" type={activeShape === 'polygon' ? 'primary' : 'default'} ghost={activeShape === 'polygon'} onClick={() => createManualShape('polygon')}>{isSegmentation ? '开始多边形 P' : '多边形框 P'}</Button>
+            {isSegmentation ? <Button size="small" onClick={finalizePolygon} disabled={polygonDraftPoints.length < 3}>完成多边形 Enter</Button> : null}
+            {isSegmentation ? <Button size="small" onClick={deleteSelectedVertex} disabled={!currentPolygon || selectedPolygonPointIndex == null}>删除顶点 Delete</Button> : null}
+            <Button size="small" onClick={deleteSelectedShape} disabled={!selectedShapeId}>删除所选 D</Button>
+            <Button size="small" onClick={undo} disabled={editor.historyIndex <= 0}>撤销 Ctrl+Z</Button>
+            <Button size="small" onClick={redo} disabled={editor.historyIndex >= editor.history.length - 1}>重做 Ctrl+Y</Button>
+            <Button size="small" onClick={syncCurrent} loading={sync.isPending} disabled={!selectedItem}>同步 Label Studio task</Button>
+            {externalBinding?.externalTaskId ? <Button size="small" href={externalBinding.externalTaskUrl ?? externalBinding.launchUrl ?? undefined} target="_blank">打开 Label Studio task</Button> : null}
+            <Button size="small" onClick={saveCurrent} loading={save.isPending} disabled={!selectedItem || !canEditSelectedItem}>保存标注</Button>
+            <Button size="small" type="primary" onClick={submitCurrent} loading={submit.isPending} disabled={!canSubmit}>提交审核</Button>
+          </Space>
         </div>
-        <Tag color={color(task?.status)}>{annStatusText(task?.status)}</Tag>
-      </div>
-      <Alert
-        type={lsStatusType(externalBinding?.lastSyncStatus)}
-        showIcon
-        title={`Label Studio ${externalBinding?.lastSyncStatus ?? '状态待同步'}`}
-        description={<Space direction="vertical" size={2}><span>{externalBinding?.diagnosticMessage ?? 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL'}</span>{externalBinding?.externalTaskId ? <a href={externalBinding.externalTaskUrl ?? externalBinding.launchUrl ?? undefined} target="_blank" rel="noreferrer">打开 Label Studio task：{externalBinding.externalTaskId}</a> : externalBinding?.externalProjectId ? <a href={externalBinding.launchUrl ?? undefined} target="_blank" rel="noreferrer">打开 Label Studio project：{externalBinding.externalProjectId}</a> : null}</Space>}
-        style={{ marginBottom: 16 }}
-      />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 16 }}>
-        <Card title={task?.name ?? '标注任务'} loading={detail.isLoading}>
-          <Descriptions bordered column={1} size="small">
-            <Descriptions.Item label="源数据集">{task?.sourceDatasetName}</Descriptions.Item>
-            <Descriptions.Item label="标签模板">{task?.templateName}</Descriptions.Item>
-            <Descriptions.Item label="AI 预标注">{task?.prelabelEnabled ? '已启用 · TODO_CONFIRM_PRELABEL_MODEL_SOURCE' : '未启用'}</Descriptions.Item>
-            <Descriptions.Item label="进度">{pct(task?.annotatedCount, task?.totalCount)}%</Descriptions.Item>
-          </Descriptions>
-          <Button style={{ marginTop: 12 }} onClick={() => items[0]?.workItemId && sync.mutate(items[0].workItemId)}>同步 Label Studio task</Button>
-          {externalBinding?.externalTaskId ? <Button style={{ marginTop: 12, marginLeft: 8 }} href={externalBinding.externalTaskUrl ?? externalBinding.launchUrl ?? undefined} target="_blank">打开 Label Studio task</Button> : null}
-        </Card>
-        <Card title="样本队列">
-          <Table<AnnotationWorkItem>
-            rowKey="workItemId"
-            dataSource={items}
-            pagination={{ pageSize: 6 }}
-            columns={[
-              { title: '样本', dataIndex: 'sampleKey', render: (v) => <Typography.Text className="mono">{v}</Typography.Text> },
-              { title: '预标注', dataIndex: 'predictionJson', render: (v) => v ? <Tag color="purple">AI 预标注</Tag> : '无' },
-              { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{annStatusText(v)}</Tag> },
-              { title: '操作', render: (_, r) => <Space><Button size="small" onClick={() => save.mutate(r.workItemId)}>保存草稿</Button><Button size="small" type="primary" disabled={r.status === 'APPROVED' || r.status === 'REVIEW_PENDING'} onClick={() => submit.mutate(r.workItemId)}>提交审核</Button></Space> },
-            ]}
+
+        <Alert
+          type={lsStatusType(externalBinding?.lastSyncStatus)}
+          showIcon
+          title={`Label Studio ${externalBinding?.lastSyncStatus ?? '状态待同步'}`}
+          description={<Space direction="vertical" size={2}><span>{externalBinding?.diagnosticMessage ?? 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL'}</span>{externalBinding?.externalTaskId ? <a href={externalBinding.externalTaskUrl ?? externalBinding.launchUrl ?? undefined} target="_blank" rel="noreferrer">打开 Label Studio task：{externalBinding.externalTaskId}</a> : externalBinding?.externalProjectId ? <a href={externalBinding.launchUrl ?? undefined} target="_blank" rel="noreferrer">打开 Label Studio project：{externalBinding.externalProjectId}</a> : null}</Space>}
+          className="annotation-ls-alert"
+        />
+        {items[0]?.status === 'REVIEW_PENDING' && editableIndex > 0 && effectiveSelectedIndex === editableIndex ? (
+          <Alert
+            type="info"
+            showIcon
+            title="已自动选择可编辑样本"
+            description={`队列第一张是 ${annStatusText(items[0].status)}，保存草稿会触发后端状态冲突；当前已切到 ${selectedItem?.sampleKey ?? '可编辑样本'}。`}
+            className="annotation-ls-alert"
           />
-        </Card>
+        ) : null}
+
+        <div className="annotation-workbench-layout">
+          <aside className="annotation-thumb-list" aria-label="样本队列">
+            <h4 className="annotation-panel-title">样本队列</h4>
+            {(items.length ? items : [{ workItemId: 'EMPTY', taskId, sampleKey: '暂无样本', sampleFileId: null, annotatorId: null, annotatorName: null, status: 'DRAFT', predictionJson: null, annotationJson: null, submittedAt: null, updatedAt: '' }]).map((item, idx) => (
+              <button key={item.workItemId} className={`annotation-thumb ${idx === effectiveSelectedIndex ? 'active' : ''}`} onClick={() => setSelectedIndex(idx)} type="button">
+                <span className="annotation-thumb-image">{industrialSampleImages[item.sampleKey] ? <img src={industrialSampleImages[item.sampleKey].url} alt={`${item.sampleKey} ?????????`} loading="lazy" /> : <span className="annotation-thumb-weld" />}{item.status === 'REVIEW_PENDING' || item.status === 'APPROVED' ? <span className="annotation-thumb-done" /> : null}</span>
+                <span className="annotation-thumb-name">{item.sampleKey}</span>
+                <Tag color={item.predictionJson ? 'purple' : color(item.status)}>{item.predictionJson ? 'AI 预标注' : annStatusText(item.status)}</Tag>
+              </button>
+            ))}
+            {!canEditSelectedItem ? <Alert type="warning" showIcon title="只读样本" description="已提交/已审核样本不能拖动或保存草稿，请选择 DRAFT/PENDING/REJECTED 样本。" className="annotation-readonly-alert" /> : null}
+          </aside>
+
+          <main className="annotation-canvas-panel" aria-label="原生标注画布">
+            <svg
+              ref={canvasRef}
+              className="annotation-canvas"
+              viewBox="0 0 520 340"
+              role="img"
+              aria-label="焊缝缺陷标注画布"
+              tabIndex={0}
+              onPointerDown={startDraw}
+              onPointerMove={moveDraw}
+              onPointerUp={finishDraw}
+              onPointerCancel={finishDraw}
+              onDoubleClick={() => isSegmentation && polygonDraftPoints.length >= 3 ? finalizePolygon() : undefined}
+            >
+              <defs>
+                <linearGradient id="ann-img-bg" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#1c2840" />
+                  <stop offset="50%" stopColor="#243050" />
+                  <stop offset="100%" stopColor="#1a2236" />
+                </linearGradient>
+              </defs>
+              <rect width="520" height="340" fill="url(#ann-img-bg)" />
+              {selectedSampleImage ? (
+                <>
+                  <image href={selectedSampleImage.url} x="0" y="0" width="520" height="340" preserveAspectRatio="xMidYMid slice" data-testid="annotation-industrial-image" />
+                  <rect width="520" height="340" fill="rgba(7, 12, 24, .28)" />
+                </>
+              ) : (
+                <>
+                  <line x1="0" y1="170" x2="520" y2="170" stroke="#2a3d5a" strokeWidth="28" />
+                  <line x1="0" y1="170" x2="520" y2="170" stroke="#1e2f48" strokeWidth="16" />
+                  <line x1="0" y1="170" x2="520" y2="168" stroke="#2c3f5c" strokeWidth="4" strokeDasharray="8 4" />
+                  {[60, 140, 210, 300, 380, 450].map((x, i) => <circle key={x} cx={x} cy={158 + ((i % 3) * 8)} r={3 + (i % 2)} fill="#16253a" opacity="0.7" />)}
+                </>
+              )}
+              <rect className="annotation-draw-layer" width="520" height="340" fill="transparent" data-testid="annotation-draw-layer" />
+              {!isSegmentation ? boxes.map((box) => (
+                <g key={box.id} onPointerDown={(event) => startDragBox(event, box)} onClick={() => { dispatchEditor({ type: 'select', selectedShapeId: box.id }); setActiveClass(box.cls); setActiveShape(box.shape); }} className={`annotation-shape-group ${box.source === 'ai' ? 'annotation-ai-box-group' : ''}`} data-testid={`annotation-box-${box.id}`}>
+                  {box.shape === 'ellipse' ? <ellipse cx={box.x + box.w / 2} cy={box.y + box.h / 2} rx={box.w / 2} ry={box.h / 2} fill={`${annotationClassColors[box.cls]}26`} stroke={annotationClassColors[box.cls]} strokeWidth={selectedShapeId === box.id ? 3 : 1.8} strokeDasharray={selectedShapeId === box.id ? undefined : '4 2'} />
+                    : box.shape === 'polygon' ? <polygon points={polygonPoints(box)} fill={`${annotationClassColors[box.cls]}26`} stroke={annotationClassColors[box.cls]} strokeWidth={selectedShapeId === box.id ? 3 : 1.8} strokeDasharray={selectedShapeId === box.id ? undefined : '4 2'} />
+                      : <rect x={box.x} y={box.y} width={box.w} height={box.h} fill={`${annotationClassColors[box.cls]}26`} stroke={box.source === 'ai' ? '#a78bfa' : annotationClassColors[box.cls]} strokeWidth={selectedShapeId === box.id ? 3 : 1.8} strokeDasharray={box.source === 'ai' || selectedShapeId !== box.id ? '6 3' : undefined} rx="2" />}
+                  <rect x={box.x} y={box.y - 20} width={box.label.length * 13 + (box.source === 'ai' ? 42 : 8)} height={box.source === 'ai' ? 20 : 18} fill={box.source === 'ai' ? 'rgba(139,92,246,.85)' : annotationClassColors[box.cls]} rx="3" />
+                  <text x={box.x + 5} y={box.y - 6} fill="#fff" fontSize="12" fontFamily="system-ui">{box.label}{box.source === 'ai' ? ` ${Math.round((box.confidence ?? 0) * 100)}%` : ''}</text>
+                  {selectedShapeId === box.id ? [[box.x, box.y], [box.x + box.w, box.y], [box.x, box.y + box.h], [box.x + box.w, box.y + box.h]].map(([cx, cy]) => <rect key={`${cx}-${cy}`} x={cx - 4} y={cy - 4} width="8" height="8" fill="#fff" stroke={annotationClassColors[box.cls]} strokeWidth="1.5" rx="1" />) : null}
+                </g>
+              )) : polygons.map((polygon) => {
+                const center = polygonCentroid(polygon.points);
+                return (
+                  <g key={polygon.id} onClick={() => { dispatchEditor({ type: 'select', selectedShapeId: polygon.id }); setActiveClass(polygon.cls); setActiveShape('polygon'); setSelectedPolygonEdgeIndex(null); setSelectedPolygonPointIndex(null); }} className={`annotation-shape-group ${polygon.source === 'ai' ? 'annotation-ai-box-group' : ''}`} data-testid={`annotation-polygon-${polygon.id}`}>
+                    <polygon points={polygonPath(polygon.points)} fill={`${annotationClassColors[polygon.cls]}26`} stroke={polygon.source === 'ai' ? '#a78bfa' : annotationClassColors[polygon.cls]} strokeWidth={selectedShapeId === polygon.id ? 3 : 1.8} strokeDasharray={polygon.source === 'ai' || selectedShapeId !== polygon.id ? '6 3' : undefined} />
+                    {selectedShapeId === polygon.id ? polygon.points.map((point, index) => {
+                      const nextPoint = polygon.points[(index + 1) % polygon.points.length];
+                      if (!nextPoint) return null;
+                      const isEdgeSelected = (polygonEdgeDrag?.polygonId === polygon.id && polygonEdgeDrag.edgeIndex === index)
+                        || (selectedPolygonEdgeIndex === index);
+                      return (
+                        <line
+                          key={`edge-${polygon.id}-${index}`}
+                          x1={point.x}
+                          y1={point.y}
+                          x2={nextPoint.x}
+                          y2={nextPoint.y}
+                          stroke={isEdgeSelected ? '#ffffff' : annotationClassColors[polygon.cls]}
+                          strokeWidth={isEdgeSelected ? 10 : 8}
+                          strokeOpacity={0.001}
+                          onPointerDown={(event) => startDragPolygonEdge(event, polygon, index)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            dispatchEditor({ type: 'select', selectedShapeId: polygon.id });
+                            setActiveClass(polygon.cls);
+                            setActiveShape('polygon');
+                            setSelectedPolygonEdgeIndex(index);
+                            setSelectedPolygonPointIndex(null);
+                          }}
+                          onDoubleClick={(event) => addPolygonVertexOnEdge(event, polygon, index)}
+                          data-testid={`annotation-polygon-edge-${polygon.id}-${index}`}
+                        />
+                      );
+                    }) : null}
+                    <rect x={center.x - 4} y={center.y - 4} width="8" height="8" fill="#fff" stroke={annotationClassColors[polygon.cls]} strokeWidth="1.5" rx="1" />
+                    <rect x={center.x - 4} y={center.y - 24} width={polygon.label.length * 13 + (polygon.source === 'ai' ? 42 : 8)} height={polygon.source === 'ai' ? 20 : 18} fill={polygon.source === 'ai' ? 'rgba(139,92,246,.85)' : annotationClassColors[polygon.cls]} rx="3" />
+                    <text x={center.x + 1} y={center.y - 10} fill="#fff" fontSize="12" fontFamily="system-ui">{polygon.label}{polygon.source === 'ai' ? ` ${Math.round((polygon.confidence ?? 0) * 100)}%` : ''}</text>
+                    {selectedShapeId === polygon.id ? polygon.points.map((point, index) => <circle key={`${polygon.id}-${index}`} cx={point.x} cy={point.y} r="5" fill="#fff" stroke={annotationClassColors[polygon.cls]} strokeWidth={selectedPolygonPointIndex === index ? '2.5' : '1.5'} onPointerDown={(event) => startDragPolygonVertex(event, polygon, index)} onClick={(event) => { event.stopPropagation(); dispatchEditor({ type: 'select', selectedShapeId: polygon.id }); setActiveClass(polygon.cls); setActiveShape('polygon'); setSelectedPolygonEdgeIndex(null); setSelectedPolygonPointIndex(index); }} data-testid={`annotation-polygon-vertex-${polygon.id}-${index}`} />) : null}
+                  </g>
+                );
+              })}
+              {!isSegmentation && draftBox ? (activeShape === 'ellipse'
+                ? <ellipse cx={draftBox.x + draftBox.w / 2} cy={draftBox.y + draftBox.h / 2} rx={draftBox.w / 2} ry={draftBox.h / 2} fill={`${annotationClassColors[activeClass]}18`} stroke={annotationClassColors[activeClass]} strokeWidth="2" strokeDasharray="4 2" data-testid="annotation-draft-box" />
+                : activeShape === 'polygon'
+                  ? <polygon points={polygonPoints(draftBox)} fill={`${annotationClassColors[activeClass]}18`} stroke={annotationClassColors[activeClass]} strokeWidth="2" strokeDasharray="4 2" data-testid="annotation-draft-box" />
+                  : <rect x={draftBox.x} y={draftBox.y} width={draftBox.w} height={draftBox.h} fill={`${annotationClassColors[activeClass]}18`} stroke={annotationClassColors[activeClass]} strokeWidth="2" strokeDasharray="4 2" rx="2" data-testid="annotation-draft-box" />) : null}
+              {isSegmentation && polygonDraftPoints.length ? (
+                <>
+                  <polyline points={polygonPath(polygonDraftPoints)} fill="rgba(26,107,255,.18)" stroke={annotationClassColors[activeClass]} strokeWidth="2" strokeDasharray="4 2" data-testid="annotation-draft-polygon" />
+                  {polygonDraftPoints.map((point, index) => <circle key={`draft-${index}`} cx={point.x} cy={point.y} r="4" fill={annotationClassColors[activeClass]} />)}
+                </>
+              ) : null}
+            </svg>
+            {selectedSampleImage ? <div className="annotation-sample-caption" data-testid="annotation-sample-caption">{selectedSampleImage.title} ? {selectedSampleImage.source}</div> : null}
+            <div className="annotation-canvas-hint">{isSegmentation ? '逐点点击绘制分割区域 · 双击/Enter 完成闭合 · 单击线条可选中并拖动连接线 · 双击线条可新增顶点 · Space 下一张 · Ctrl+S 保存当前标注' : '拖拽绘制框 · 右键删除 · Space 下一张 · Ctrl+S 保存当前标注'}</div>
+          </main>
+
+          <aside className="annotation-right-panel">
+            <h4 className="annotation-panel-title">标注类别</h4>
+            {annotationClasses.map((name, idx) => (
+              <button key={name} className={`annotation-class-row ${activeClass === idx ? 'active' : ''}`} style={{ borderColor: activeClass === idx ? annotationClassColors[idx] : 'transparent' }} onClick={() => selectClass(idx)} type="button">
+                <span className="annotation-class-color" style={{ background: annotationClassColors[idx] }} />
+                <span>{name}</span>
+                <kbd>{idx + 1}</kbd>
+              </button>
+            ))}
+            <div className="annotation-panel-divider" />
+            <h4 className="annotation-panel-title">{isSegmentation ? '当前分割区域属性' : '当前框属性'}</h4>
+            {currentPolygon ? <div className="annotation-box-meta">
+              <div>类别：<span style={{ color: annotationClassColors[currentPolygon.cls] }}>{currentPolygon.label}</span></div>
+              <div>顶点数：<span data-testid="annotation-polygon-point-count">{currentPolygon.points.length}</span></div>
+              <div>选中顶点：<span data-testid="annotation-selected-polygon-point">{selectedPolygonPointIndex == null ? '未选择' : `#${selectedPolygonPointIndex + 1}`}</span></div>
+              <div>选中线段：<span data-testid="annotation-selected-polygon-edge">{selectedPolygonEdgeIndex == null ? '未选择' : `#${selectedPolygonEdgeIndex + 1}`}</span></div>
+              <div>顶点坐标：<span data-testid="annotation-selected-polygon-point-coords">{selectedPolygonPoint ? `(${selectedPolygonPoint.x}, ${selectedPolygonPoint.y})` : '-'}</span></div>
+              <div>中心：({currentPolygonCenter?.x ?? 0}, {currentPolygonCenter?.y ?? 0})</div>
+              <div>形状：<span data-testid="annotation-current-shape">多边形区域</span></div>
+              <div>置信度：<span>{currentPolygon.source === 'ai' ? `${Math.round((currentPolygon.confidence ?? 0) * 100)}%` : '手动'}</span></div>
+              <div>分割区域数：<span data-testid="annotation-polygon-count">{polygons.length}</span></div>
+            </div> : currentBox ? <div className="annotation-box-meta">
+              <div>类别：<span style={{ color: annotationClassColors[currentBox.cls] }}>{currentBox.label}</span></div>
+              <div>坐标：({currentBox.x}, {currentBox.y})</div>
+              <div>尺寸：{currentBox.w} × {currentBox.h}</div>
+              <div>形状：<span data-testid="annotation-current-shape">{shapeText(currentBox.shape)}</span></div>
+              <div>置信度：<span>{currentBox.source === 'ai' ? `${Math.round((currentBox.confidence ?? 0) * 100)}%` : '手动'}</span></div>
+              <div>标注框数：<span data-testid="annotation-box-count">{boxes.length}</span></div>
+            </div> : <Typography.Text type="secondary">{isSegmentation ? '点击区域或在画布上逐点创建多边形' : '点击框体选中'}</Typography.Text>}
+            <div className="annotation-panel-divider" />
+            <h4 className="annotation-panel-title">快捷键</h4>
+            {workbenchShortcutGroups.flatMap((group) => group.items).map(([key, text]) => (
+              <div className="annotation-shortcut-row" key={key}><kbd>{key}</kbd><span>{text}</span></div>
+            ))}
+            <div className="annotation-panel-divider" />
+            <div className="annotation-box-meta">
+              <div>源数据集：<span>{task?.sourceDatasetName ?? '-'}</span></div>
+              <div>标签模板：<span>{task?.templateName ?? '-'}</span></div>
+              <div>进度：<span>{pct(task?.annotatedCount, task?.totalCount)}%</span></div>
+              <div>保存内容：<span>{isSegmentation ? `${polygons.length} 个分割区域` : `${boxes.length} 个框`}</span></div>
+            </div>
+          </aside>
+        </div>
       </div>
+
+      <Modal title="快捷键参考" open={shortcutOpen} onCancel={() => setShortcutOpen(false)} footer={null} width={560}>
+        <Typography.Text type="secondary">标注工作台 · 提升 3× 标注效率</Typography.Text>
+        <div className="annotation-shortcut-modal">
+          {workbenchShortcutGroups.map((group) => <Card size="small" key={group.group} title={group.group}>{group.items.map(([key, text]) => <div className="annotation-shortcut-row" key={key}><kbd>{key}</kbd><span>{text}</span></div>)}</Card>)}
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -249,7 +1255,7 @@ export function AnnotationReviewPage() {
   const approve = useMutation({ mutationFn: dataApi.approveAnnotationReviewItem, onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-review-items'] }); msg.success('审核通过'); }, onError: (e: Error) => msg.error(e.message) });
   const reject = useMutation({ mutationFn: ({ id, reason }: { id: string; reason: string }) => dataApi.rejectAnnotationReviewItem(id, reason), onSuccess: async () => { setReasonOpen(null); await qc.invalidateQueries({ queryKey: ['annotation-review-items'] }); msg.warning('已驳回并返回标注员'); }, onError: (e: Error) => msg.error(e.message) });
   const quality = useMutation({ mutationFn: dataApi.qualityCheckAnnotationTask, onSuccess: (r) => msg.info(`${r.qualityStatus}: ${r.diagnosticMessage}`), onError: (e: Error) => msg.error(e.message) });
-  const publish = useMutation({ mutationFn: dataApi.publishAnnotationDataset, onSuccess: (r) => msg.success(`已发布 ANNOTATED 数据集：${r.outputDatasetId}`), onError: (e: Error) => msg.error(e.message) });
+  const publish = useMutation({ mutationFn: dataApi.publishAnnotationDataset, onSuccess: (r) => msg.success(`已发布 ANNOTATED 数据集：${r.outputDatasetId}，标注文件：${r.annotationArtifactFileId ?? '待生成'}`), onError: (e: Error) => msg.error(e.message) });
   const importLs = useMutation({ mutationFn: dataApi.importLabelStudioResults, onSuccess: (r) => (r.lastSyncStatus === 'RESULT_IMPORTED' ? msg.success : msg.warning)(`Label Studio ${r.lastSyncStatus}: ${r.diagnosticMessage}`), onError: (e: Error) => msg.error(e.message) });
   const taskIds = Array.from(new Set((reviews.data ?? []).map((item) => item.taskId)));
   return (
@@ -266,7 +1272,7 @@ export function AnnotationReviewPage() {
           {taskIds[0] ? <Button type="primary" onClick={() => publish.mutate(taskIds[0])}>发布标注数据集</Button> : null}
         </Space>
       </div>
-      <Alert type="info" showIcon title="审核规则" description="审核人与标注员必须分离；通过后可执行质量检查并发布 ANNOTATED 数据集，同时写入 ANNOTATION 血缘。" style={{ marginBottom: 16 }} />
+      <Alert type="info" showIcon title="审核规则" description="审核人与标注员必须分离；通过后可执行质量检查并发布 ANNOTATED 数据集，同时生成 ANNOTATION_RESULT 标注文件并写入 ANNOTATION 血缘。" style={{ marginBottom: 16 }} />
       <Table<AnnotationReviewItem>
         rowKey="reviewItemId"
         dataSource={reviews.data ?? []}
@@ -583,15 +1589,15 @@ export function DataSourceManagementPage() {
         <div><Typography.Title level={3}>数据源管理</Typography.Title><Typography.Text type="secondary">管理文件、数据库、API、流、时序库与工业协议数据源连接和同步导入任务</Typography.Text></div>
         <Space><Button onClick={() => setSyncOpen(true)}>＋ 新建同步任务</Button><Button type="primary" onClick={() => setOpen(true)}>＋ 新建数据源</Button></Space>
       </div>
-      <Alert type="info" showIcon title="数据集导入方式" description="支持文件/对象存储登记导入，也支持关系型数据库、外部 API、流数据、时序库、工业协议通过已激活数据源 + 同步任务导入；本地 sandbox connector 会生成可追踪的数据集版本、文件元数据与血缘。" style={{ marginBottom: 16 }} />
+      <Alert type="info" showIcon title="数据集导入方式" description="当前仅支持导入与接口两种接入方式；导入生成图片数据集，API 生成图片或影音数据集版本、文件元数据与血缘。" style={{ marginBottom: 16 }} />
       <Tabs items={[
         { key: 'sources', label: '数据源列表', children: <div className="data-source-grid">{(sources.data ?? []).map((s) => <Card key={s.sourceId} title={<Space><Tag color="blue">{txt(s.sourceType)}</Tag>{s.name}</Space>} extra={<Tag color={color(s.status)}>{s.status}</Tag>}><Space direction="vertical" className="full-width"><Typography.Text className="mono">{s.endpoint}{s.port ? `:${s.port}` : ''}</Typography.Text><Typography.Text type="secondary">secretRef: {s.secretRefMasked}</Typography.Text><Typography.Text type="secondary">诊断：{s.diagnosticCode ?? 'NOT_TESTED'} · {s.diagnosticMessage}</Typography.Text><Space wrap><Button size="small" onClick={() => test.mutate(s.sourceId)}>测试连接</Button><Button size="small" onClick={() => setDetail(s)}>详情/编辑</Button><Button size="small" type="primary" onClick={() => activate.mutate(s.sourceId)}>激活</Button><Button size="small" danger onClick={() => disable.mutate(s.sourceId)}>禁用</Button></Space></Space></Card>)}</div> },
         { key: 'tasks', label: '同步任务', children: <Table<DataSourceSyncTask> rowKey="taskId" dataSource={tasks.data ?? []} pagination={false} columns={[{ title: '任务名称', dataIndex: 'name' }, { title: '数据源', dataIndex: 'sourceName' }, { title: '目标数据集', dataIndex: 'targetDatasetName', render: (v) => v ?? '待绑定' }, { title: '调度周期', dataIndex: 'scheduleMode' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '诊断', dataIndex: 'diagnosticMessage' }, { title: '操作', render: (_, r) => <Button size="small" onClick={() => runTask.mutate(r.taskId)}>立即同步</Button> }]} /> },
       ]} />
       <Modal title="新建数据源" open={open} onCancel={() => setOpen(false)} footer={null} destroyOnHidden>
-        <Form layout="vertical" onFinish={(v) => create.mutate({ tenantId: currentTenantId, ...v })} initialValues={{ sourceType: 'OBJECT_STORAGE', endpoint: 'TODO_CONFIRM_DATA_SOURCE_ENDPOINT', credentialMode: 'SECRET_REF', secretRef: 'secret://TODO_CONFIRM_DATA_SOURCE_SECRET', sharedScope: 'BU' }}>
+        <Form layout="vertical" onFinish={(v) => create.mutate({ tenantId: currentTenantId, ...v })} initialValues={{ sourceType: 'IMPORT', endpoint: 'TODO_CONFIRM_DATA_SOURCE_ENDPOINT', credentialMode: 'SECRET_REF', secretRef: 'secret://TODO_CONFIRM_DATA_SOURCE_SECRET', sharedScope: 'BU' }}>
           <Form.Item name="name" label="数据源名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="sourceType" label="类型"><Select options={['RELATIONAL_DB', 'FILE', 'OBJECT_STORAGE', 'STREAM', 'TIME_SERIES', 'INDUSTRIAL_PROTOCOL', 'API'].map((v) => ({ value: v, label: txt(v) }))} /></Form.Item>
+          <Form.Item name="sourceType" label="接入方式"><Select options={['IMPORT', 'API'].map((v) => ({ value: v, label: txt(v) }))} /></Form.Item>
           <Form.Item name="endpoint" label="Host / Endpoint" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="secretRef" label="secretRef（不填写明文凭据）"><Input /></Form.Item>
           <Alert type="warning" showIcon title="敏感字段不回显；Endpoint 包含 sandbox/internal 时启用本地可测 connector，生产外部系统未配置时仍返回 UNCONFIGURED / TODO_CONFIRM_*。" style={{ marginBottom: 16 }} />
@@ -643,7 +1649,7 @@ export function DatasetManagementPage() {
           <Typography.Title level={3}>数据集管理</Typography.Title>
           <Typography.Text type="secondary">共 {q.data?.stats.total ?? 0} 个数据集 · 合计 {fmtSize(q.data?.stats.totalSizeBytes)}</Typography.Text>
         </div>
-        <Space><Button>查看标注任务</Button><Button type="primary" onClick={() => nav('/up')}>＋ 新建数据集</Button></Space>
+        <Space><Button onClick={() => nav('/ann')}>查看标注任务</Button><Button type="primary" onClick={() => nav('/up')}>＋ 新建数据集</Button></Space>
       </div>
       <div className="summary-grid">
         {[
@@ -692,7 +1698,7 @@ export function DatasetManagementPage() {
           { title: '大小', render: (_, r) => fmtSize(r.sizeBytes) },
           { title: '权限', dataIndex: 'accessLevel', render: (v) => <Tag color={v === 'RESTRICTED' ? 'red' : 'blue'}>{v}</Tag> },
           { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> },
-          { title: '操作', render: (_, r) => <Space><a onClick={() => nav('/dsdetail', { state: { datasetId: r.datasetId } })}>详情</a><a onClick={() => setSelected(r)}>版本</a></Space> },
+          { title: '操作', render: (_, r) => <Space><a onClick={() => nav('/dsdetail', { state: { datasetId: r.datasetId } })}>详情</a><a onClick={() => nav('/ann', { state: { openCreateTask: true, datasetId: r.datasetId } })}>创建标注任务</a><a onClick={() => setSelected(r)}>版本</a></Space> },
         ]}
       />
       <Drawer title={`版本 · ${selected?.name}`} open={Boolean(selected)} onClose={() => setSelected(null)} size="default">
@@ -832,272 +1838,71 @@ function OperatorDetailView({ detail, onApprove, loading }: { detail?: OperatorD
   );
 }
 
-export function DatasetUploadPage() {
-  const nav = useNavigate();
-  const currentTenantId = useSessionStore((state) => state.user?.tenantId);
-  const [msg, holder] = message.useMessage();
-  const [creationMode, setCreationMode] = useState<'DATA_SOURCE_IMPORT' | 'LOCAL_UPLOAD'>('DATA_SOURCE_IMPORT');
-  const [step, setStep] = useState(0);
-  const [draft, setDraft] = useState<DatasetDetail | null>(null);
-  const [uploadSession, setUploadSession] = useState<DatasetUploadSession | null>(null);
-  const [selectedFileId, setSelectedFileId] = useState<string>();
-  const [selectedLocalFiles, setSelectedLocalFiles] = useState<File[]>([]);
-  const qc = useQueryClient();
-  const sources = useQuery({ queryKey: ['data-sources'], queryFn: dataApi.dataSources });
-  const activeSources = (sources.data ?? []).filter((s) => s.status === 'ACTIVE' && s.diagnosticCode === 'OK');
-  const effectiveCreationMode: 'DATA_SOURCE_IMPORT' | 'LOCAL_UPLOAD' = activeSources.length === 0 ? 'LOCAL_UPLOAD' : creationMode;
-  const files = useQuery({ queryKey: ['platform-files'], queryFn: platformApi.files, enabled: step >= 1 && effectiveCreationMode === 'DATA_SOURCE_IMPORT' });
-  const uploadSessionQuery = useQuery({
-    queryKey: ['dataset-upload-session', uploadSession?.sessionId],
-    queryFn: () => dataApi.datasetUploadSession(uploadSession!.sessionId),
-    enabled: Boolean(uploadSession?.sessionId) && uploadSession?.status === 'PROCESSING',
-    refetchInterval: (query) => {
-      const session = query.state.data as DatasetUploadSession | undefined;
-      return session && ['READY', 'SECURITY_PENDING', 'FAILED', 'CANCELLED'].includes(session.status) ? false : 400;
-    },
-  });
-  const activeUploadSession = uploadSessionQuery.data ?? uploadSession;
-  const isCommitPolling = activeUploadSession?.status === 'PROCESSING';
-  const handledTerminalSessionRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!uploadSessionQuery.data) return;
-    if (!['READY', 'SECURITY_PENDING', 'FAILED', 'CANCELLED'].includes(uploadSessionQuery.data.status)) return;
-    const handledKey = `${uploadSessionQuery.data.sessionId}:${uploadSessionQuery.data.status}`;
-    if (handledTerminalSessionRef.current === handledKey) return;
-    handledTerminalSessionRef.current = handledKey;
-    if (uploadSessionQuery.data.status === 'FAILED' || uploadSessionQuery.data.status === 'CANCELLED') {
-      msg.error(`本地上传处理失败：${uploadSessionQuery.data.diagnosticMessage}`);
-      return;
-    }
-    void qc.invalidateQueries({ queryKey: ['datasets'] });
-    msg.success(uploadSessionQuery.data.status === 'READY' ? '本地上传数据集已创建完成。' : '本地上传已完成文件绑定，内容安全仍待处理。');
-    if (uploadSessionQuery.data.datasetId) {
-      nav('/dsdetail', { state: { datasetId: uploadSessionQuery.data.datasetId } });
-    }
-  }, [msg, nav, qc, uploadSessionQuery.data]);
-  const resetFlow = (mode: 'DATA_SOURCE_IMPORT' | 'LOCAL_UPLOAD') => {
-    setCreationMode(mode);
-    setStep(0);
-    setDraft(null);
-    setUploadSession(null);
-    handledTerminalSessionRef.current = null;
-    setSelectedFileId(undefined);
-    setSelectedLocalFiles([]);
-  };
-  const create = useMutation({
-    mutationFn: dataApi.createDataset,
-    onSuccess: async (created) => {
-      setDraft(created);
-      await qc.invalidateQueries({ queryKey: ['datasets'] });
-      setStep(1);
-      msg.success('数据源导入草稿已创建，请继续登记文件事实。');
-    },
-    onError: (e: Error) => msg.error(e.message),
-  });
-  const createUploadSession = useMutation({
-    mutationFn: dataApi.createDatasetUploadSession,
-    onSuccess: (created) => {
-      setUploadSession(created);
-      setStep(1);
-      msg.success('本地上传会话已创建，请选择图片或 zip 包。');
-    },
-    onError: (e: Error) => msg.error(e.message),
-  });
-  const uploadFiles = useMutation({
-    mutationFn: ({ sessionId, uploadFiles }: { sessionId: string; uploadFiles: File[] }) => dataApi.uploadDatasetSessionFiles(sessionId, uploadFiles),
-    onSuccess: (session) => {
-      setUploadSession(session);
-      setStep(2);
-      msg.success('文件已上传并完成平台登记。');
-    },
-    onError: (e: Error) => msg.error(e.message),
-  });
-  const commitUploadSession = useMutation({
-    mutationFn: (sessionId: string) => dataApi.commitDatasetUploadSession(sessionId, { publishRequested: false }),
-    onSuccess: (session) => {
-      setUploadSession(session);
-      if (session.status === 'PROCESSING') {
-        msg.info('正在提交数据集，平台将持续刷新阶段进度。');
-        return;
-      }
-      void qc.invalidateQueries({ queryKey: ['datasets'] });
-      msg.success(session.status === 'READY' ? '本地上传数据集已创建完成。' : '本地上传已完成文件绑定，内容安全仍待处理。');
-      if (session.datasetId) {
-        nav('/dsdetail', { state: { datasetId: session.datasetId } });
-      }
-    },
-    onError: (e: Error) => msg.error(e.message),
-  });
-  const attach = useMutation({
-    mutationFn: ({ fileId }: { fileId: string }) => dataApi.attachFile(draft!.dataset.datasetId, draft!.versions[0].versionId, { fileId, fileRole: 'RAW' }),
-    onSuccess: async () => {
-      const refreshed = await dataApi.datasetDetail(draft!.dataset.datasetId);
-      setDraft(refreshed);
-      setStep(2);
-      msg.success('文件登记完成，hash/size 校验通过并已绑定版本草稿。');
-    },
-    onError: (e: Error) => msg.error(e.message),
-  });
-  const fileRows = files.data?.items ?? [];
-  return (
-    <div className="content-page">
-      {holder}
-      <div className="page-hero">
-        <div>
-          <Typography.Title level={3}>新建数据集 / 上传向导</Typography.Title>
-          <Typography.Text type="secondary">双路径创建 · 数据源导入保持兼容 · 无可用数据源时支持本地上传图片</Typography.Text>
-        </div>
-      </div>
-      <Card>
-        <Alert type="info" showIcon style={{ marginBottom: 16 }} title="复用 F007 文件元数据 seam" description="数据源导入路径继续复用 platform_file_object 文件事实；本地上传路径新增 upload session + 图片文件登记能力。" />
-        <Steps
-          current={step}
-          items={[
-            { title: '填写元数据' },
-            { title: effectiveCreationMode === 'LOCAL_UPLOAD' ? '上传文件' : '登记文件' },
-            { title: effectiveCreationMode === 'LOCAL_UPLOAD' ? '提交数据集' : '预览确认' },
-          ]}
-          style={{ marginBottom: 24 }}
-        />
-        {step === 0 && (
-          <Form
-            layout="vertical"
-            initialValues={{ name: '新建视觉数据集', dataType: 'IMAGE', accessLevel: 'TEAM', tags: '质检,工业视觉' }}
-            onFinish={(values) => {
-              const tags = String(values.tags ?? '').split(/[,，]/).map((item: string) => item.trim()).filter(Boolean);
-              if (effectiveCreationMode === 'DATA_SOURCE_IMPORT') {
-                if (!values.sourceId) {
-                  msg.error('请选择一个可用数据源后再继续。');
-                  return;
-                }
-                create.mutate({
-                  name: values.name,
-                  tenantId: currentTenantId!,
-                  datasetType: 'RAW',
-                  dataType: values.dataType,
-                  accessLevel: values.accessLevel,
-                  tags,
-                  description: values.description,
-                  recordCount: Number(values.recordCount ?? 0),
-                  sourceId: values.sourceId,
-                });
-                return;
-              }
-              createUploadSession.mutate({
-                name: values.name,
-                tenantId: currentTenantId,
-                datasetType: 'RAW',
-                dataType: 'IMAGE',
-                accessLevel: values.accessLevel,
-                tags,
-                description: values.description,
-                creationMode: 'LOCAL_UPLOAD',
-              });
-            }}
-          >
-            <Form.Item label="创建方式">
-              <Select
-                value={effectiveCreationMode}
-                onChange={(value) => resetFlow(value)}
-                options={[
-                  { value: 'DATA_SOURCE_IMPORT', label: '从数据源导入', disabled: activeSources.length === 0 },
-                  { value: 'LOCAL_UPLOAD', label: '本地上传图片' },
-                ]}
-              />
-            </Form.Item>
-            {activeSources.length === 0 ? (
-              <Alert
-                type="info"
-                showIcon
-                style={{ marginBottom: 16 }}
-                title="当前无可用数据源"
-                description={
-                  <Space wrap>
-                    <span>你可以直接上传图片创建数据集，或先去配置数据源。</span>
-                    <Button size="small" type="primary" onClick={() => resetFlow('LOCAL_UPLOAD')}>直接上传图片</Button>
-                    <Button size="small" onClick={() => nav('/datasrc')}>去创建数据源</Button>
-                  </Space>
-                }
-              />
-            ) : null}
-            <Form.Item name="name" label="数据集名称" rules={[{ required: true, message: '请输入数据集名称' }]}><Input /></Form.Item>
-            <Form.Item name="dataType" label="数据类型"><Select disabled={effectiveCreationMode === 'LOCAL_UPLOAD'} options={['IMAGE', 'TEXT', 'AUDIO', 'VIDEO', 'TABULAR'].map((v) => ({ value: v, label: txt(v) }))} /></Form.Item>
-            <Form.Item name="accessLevel" label="访问级别"><Select options={['PUBLIC', 'TEAM', 'PRIVATE', 'RESTRICTED'].map((v) => ({ value: v, label: v }))} /></Form.Item>
-            {effectiveCreationMode === 'DATA_SOURCE_IMPORT' && activeSources.length > 0 ? (
-              <Form.Item name="sourceId" label="来源数据源" rules={[{ required: true, message: '请选择来源数据源' }]}>
-                <Select options={activeSources.map((s) => ({ value: s.sourceId, label: `${s.name} · ${txt(s.sourceType)}` }))} />
-              </Form.Item>
-            ) : null}
-            <Form.Item name="tags" label="标签"><Input /></Form.Item>
-            <Form.Item name="description" label="描述"><Input.TextArea rows={3} /></Form.Item>
-            <Button type="primary" htmlType="submit" loading={create.isPending || createUploadSession.isPending}>
-              {effectiveCreationMode === 'LOCAL_UPLOAD' ? '下一步：创建上传会话' : '下一步：初始化数据集'}
-            </Button>
-          </Form>
-        )}
-        {step === 1 && effectiveCreationMode === 'DATA_SOURCE_IMPORT' && (
-          <Space direction="vertical" className="full-width">
-            <Alert type="info" showIcon title="文件登记 seam" description="选择 F007 platform_file_object，提交后后端执行 AVAILABLE、sha256 与 size 校验，并绑定到当前版本草稿。" />
-            <Table<FileObjectSummary> rowKey="fileId" dataSource={fileRows} pagination={false} rowSelection={{ type: 'radio', selectedRowKeys: selectedFileId ? [selectedFileId] : [], onChange: (keys) => setSelectedFileId(String(keys[0])) }} columns={[{ title: '文件 ID', dataIndex: 'fileId' }, { title: 'Object Key', dataIndex: 'objectKey' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: 'hash 校验', render: (_, r) => r.expectedSha256 === r.sha256 ? '通过' : '不一致' }, { title: '大小', render: (_, r) => fmtSize(r.sizeBytes) }]} />
-            <Button type="primary" disabled={!selectedFileId} loading={attach.isPending} onClick={() => selectedFileId && attach.mutate({ fileId: selectedFileId })}>完成文件登记并绑定版本</Button>
-          </Space>
-        )}
-        {step === 1 && effectiveCreationMode === 'LOCAL_UPLOAD' && uploadSession && (
-          <Space direction="vertical" className="full-width">
-            <Alert type="info" showIcon title={`上传会话 ${uploadSession.sessionId}`} description={`阶段：${uploadSession.progress.phase} · ${uploadSession.progress.percent}%`} />
-            <input type="file" multiple accept="image/*,.zip" onChange={(event) => setSelectedLocalFiles(Array.from(event.target.files ?? []))} />
-            <Table rowKey="name" dataSource={selectedLocalFiles.map((file) => ({ name: file.name, type: file.type || 'application/octet-stream', size: file.size }))} pagination={false} locale={{ emptyText: '请选择本地图片或 zip 包。' }} columns={[{ title: '文件名', dataIndex: 'name' }, { title: '类型', dataIndex: 'type' }, { title: '大小', dataIndex: 'size', render: (value: number) => fmtSize(value) }]} />
-            <Button type="primary" disabled={selectedLocalFiles.length === 0} loading={uploadFiles.isPending} onClick={() => uploadFiles.mutate({ sessionId: uploadSession.sessionId, uploadFiles: selectedLocalFiles })}>上传并登记到平台</Button>
-          </Space>
-        )}
-        {step === 2 && effectiveCreationMode === 'DATA_SOURCE_IMPORT' && (
-          <Space direction="vertical" className="full-width">
-            <Alert type="warning" showIcon title="文件上传 seam 已初始化" description="真实对象存储/内容安全服务未配置时保持 TODO_CONFIRM_MINIO_* / SECURITY_PENDING，不伪造发布成功。" />
-            <Table rowKey="id" dataSource={draft?.files ?? []} pagination={false} columns={[{ title: '文件', dataIndex: 'fileId' }, { title: '状态', dataIndex: 'status' }, { title: 'Object Key', dataIndex: 'objectKey' }, { title: '大小', render: (_, r: { sizeBytes?: number | null }) => fmtSize(r.sizeBytes) }]} />
-            <Button type="primary" onClick={() => draft?.dataset.datasetId && nav('/dsdetail', { state: { datasetId: draft.dataset.datasetId } })}>查看数据集详情</Button>
-          </Space>
-        )}
-        {step === 2 && effectiveCreationMode === 'LOCAL_UPLOAD' && activeUploadSession && (
-          <Space direction="vertical" className="full-width">
-            <Alert
-              type={['READY', 'SECURITY_PENDING'].includes(activeUploadSession.status) ? 'success' : activeUploadSession.status === 'FAILED' ? 'error' : 'info'}
-              showIcon
-              title={`阶段进度：${activeUploadSession.progress.phase} · ${activeUploadSession.progress.percent}%`}
-              description={isCommitPolling ? '平台正在执行内容安全校验、元数据索引和版本创建，请等待自动刷新。' : activeUploadSession.diagnosticMessage}
-            />
-            <Alert type={activeUploadSession.summary.rejectedFiles > 0 ? 'warning' : 'success'} showIcon title={`已接收 ${activeUploadSession.summary.acceptedFiles} 个文件，拒绝 ${activeUploadSession.summary.rejectedFiles} 个文件`} description={activeUploadSession.diagnosticMessage} />
-            <Table rowKey={(row) => `${row.fileName}-${row.fileId ?? 'rejected'}`} dataSource={activeUploadSession.files} pagination={false} columns={[{ title: '文件名', dataIndex: 'fileName' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '大小', dataIndex: 'sizeBytes', render: (value: number | null) => fmtSize(value) }, { title: '诊断', dataIndex: 'diagnosticMessage' }]} />
-            <Space wrap>
-              <Button onClick={() => setStep(1)}>继续追加文件</Button>
-              <Button type="primary" disabled={activeUploadSession.summary.acceptedFiles === 0 || isCommitPolling} loading={commitUploadSession.isPending || isCommitPolling} onClick={() => commitUploadSession.mutate(activeUploadSession.sessionId)}>{isCommitPolling ? '处理中...' : '提交并创建数据集'}</Button>
-            </Space>
-          </Space>
-        )}
-      </Card>
-    </div>
-  );
-}
+export { DatasetUploadPage } from './DatasetUploadPage';
 
 export function DatasetDetailPage() {
-  const nav = useNavigate();
   const loc = useLocation() as { state?: { datasetId?: string } };
+  const nav = useNavigate();
+  const [taskForm] = Form.useForm<{ name: string; scene: string; templateId?: string }>();
+  const [previewFile, setPreviewFile] = useState<{ fileId: string; name: string } | null>(null);
   const datasetId = loc.state?.datasetId ?? 'DATASET-WELD-DEFECT';
   const detail = useQuery({ queryKey: ['dataset-detail', datasetId], queryFn: () => dataApi.datasetDetail(datasetId) });
+  const candidate = useQuery({ queryKey: ['dataset-annotation-candidate', datasetId], queryFn: () => dataApi.datasetAnnotationCandidate(datasetId) });
+  const annTasks = useQuery({ queryKey: ['dataset-annotation-tasks', datasetId], queryFn: () => dataApi.datasetAnnotationTasks(datasetId) });
+  const qc = useQueryClient();
   const ref = useMutation({ mutationFn: () => dataApi.reference(datasetId), onError: () => undefined });
   const [msg, holder] = message.useMessage();
+  const [taskOpen, setTaskOpen] = useState(false);
+  const [exportTask, setExportTask] = useState<DatasetAnnotationTask | null>(null);
   const download = useMutation({
     mutationFn: platformApi.fileDownloadUrl,
     onSuccess: (result) => {
-      if (result.downloadUrl) {
-        window.open(result.downloadUrl, '_blank', 'noopener,noreferrer');
-        msg.success('已打开文件下载链接');
-        return;
-      }
+      if (result.downloadUrl) { window.open(result.downloadUrl, '_blank', 'noopener,noreferrer'); msg.success('已打开文件下载链接'); return; }
       msg.warning(`文件下载未配置：${result.diagnostic}`);
     },
     onError: (e: Error) => msg.error(e.message),
   });
+  const exportDownload = useMutation({
+    mutationFn: dataApi.annotationExportDownloadUrl,
+    onSuccess: (result) => {
+      if (result.downloadUrl) { window.open(result.downloadUrl, '_blank', 'noopener,noreferrer'); msg.success('已打开训练包下载链接'); return; }
+      msg.warning(`训练包下载未配置：${result.diagnosticCode} · ${result.diagnosticMessage}`);
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const createTask = useMutation({
+    mutationFn: (values: { name: string; templateId: string; scene: string }) => dataApi.createDatasetAnnotationTask(datasetId, { ...values, sourceDatasetId: datasetId, sourceVersionId: candidate.data?.currentVersionId, reviewEnabled: true, labelStudioEnabled: true, assigneeIds: ['USR-ANNOTATOR'], reviewerIds: ['USR-BU-CABIN'] }),
+    onSuccess: async () => { setTaskOpen(false); await qc.invalidateQueries({ queryKey: ['dataset-annotation-tasks', datasetId] }); msg.success('已从数据集创建标注任务'); },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const createExport = useMutation({
+    mutationFn: ({ taskId, format }: { taskId: string; format: string }) => dataApi.createAnnotationExport(taskId, { format }),
+    onSuccess: async (r) => { setExportTask(null); await qc.invalidateQueries({ queryKey: ['dataset-annotation-tasks', datasetId] }); msg.success(`导出请求已创建：${r.status}`); },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const openWorkbench = useCallback((taskId: string) => {
+    nav(`/annwork?taskId=${encodeURIComponent(taskId)}`, { state: { taskId } });
+  }, [nav]);
   const d = detail.data;
+  const taskScene = Form.useWatch('scene', taskForm) ?? 'IMAGE_TAGGING';
+  const sceneTemplates = useMemo(
+    () => (candidate.data?.templates ?? []).filter((template) => template.scene === taskScene),
+    [candidate.data?.templates, taskScene],
+  );
+  useEffect(() => {
+    if (!taskOpen) return;
+    const currentTemplateId = taskForm.getFieldValue('templateId');
+    if (sceneTemplates.some((template) => template.templateId === currentTemplateId)) return;
+    taskForm.setFieldsValue({ templateId: sceneTemplates[0]?.templateId });
+  }, [sceneTemplates, taskForm, taskOpen]);
+  useEffect(() => {
+    if (!taskOpen) return;
+    taskForm.setFieldsValue({
+      name: `${d?.dataset.name ?? '数据集'} 标注任务`,
+      scene: 'IMAGE_TAGGING',
+      templateId: (candidate.data?.templates ?? []).find((template) => template.scene === 'IMAGE_TAGGING')?.templateId,
+    });
+  }, [candidate.data?.templates, d?.dataset.name, taskForm, taskOpen]);
   const fileColumns = [
     { title: '文件 ID', dataIndex: 'fileId' },
     { title: '角色', dataIndex: 'fileRole', render: (v: string) => <Tag>{v}</Tag> },
@@ -1108,6 +1913,38 @@ export function DatasetDetailPage() {
     { title: 'SHA256', dataIndex: 'sha256', render: (v: string | null) => v ? <Typography.Text className="mono" copyable>{v}</Typography.Text> : '-' },
     { title: '下载', render: (_: unknown, r: { fileId: string; status: string }) => <Button size="small" disabled={r.status !== 'BOUND'} loading={download.isPending} onClick={() => download.mutate(r.fileId)}>获取下载链接</Button> },
   ];
-  const canCreateAnnotationTask = d?.dataset.status === 'ACTIVE';
-  return <div className="content-page">{holder}<div className="page-hero"><div><Typography.Title level={3}>{d?.dataset.name ?? '数据集详情'}</Typography.Title><Typography.Text type="secondary">概览 · 版本 · 文件 · 权限 · 血缘 · 样例预览</Typography.Text></div><Space wrap><Button onClick={() => ref.mutate()}>请求引用检查</Button><Button type="primary" disabled={!canCreateAnnotationTask} onClick={() => nav('/ann')}>创建标注任务</Button></Space></div>{!canCreateAnnotationTask ? <Alert type="warning" showIcon style={{ marginBottom: 16 }} title="当前数据集尚未达到可发起标注任务的状态" description="仅 ACTIVE / 可用状态的数据集可继续发起标注任务；如处于 SECURITY_PENDING，请等待内容安全结果。" /> : null}{ref.data ? <Alert type="success" showIcon title={`DatasetReference 可用：${ref.data.versionId}`} style={{ marginBottom: 16 }} /> : null}<Card loading={detail.isLoading}><Descriptions bordered column={2}><Descriptions.Item label="数据类型">{txt(d?.dataset.dataType)}</Descriptions.Item><Descriptions.Item label="状态"><Tag color={color(d?.dataset.status)}>{d?.dataset.status}</Tag></Descriptions.Item><Descriptions.Item label="权限"><Tag color={d?.dataset.accessLevel === 'RESTRICTED' ? 'red' : 'blue'}>{d?.dataset.accessLevel}</Tag></Descriptions.Item><Descriptions.Item label="样本数">{d?.dataset.recordCount.toLocaleString('zh-CN')}</Descriptions.Item><Descriptions.Item label="标签">{d?.dataset.tags.map((t) => <Tag key={t}>{t}</Tag>)}</Descriptions.Item><Descriptions.Item label="预览状态">{d?.previewStatus} · {d?.previewDiagnostic}</Descriptions.Item></Descriptions></Card><Card title={`文件信息（${d?.files.length ?? 0}）`} style={{ marginTop: 16 }} loading={detail.isLoading}><Table rowKey="id" dataSource={d?.files ?? []} pagination={false} columns={fileColumns} locale={{ emptyText: '暂无已绑定文件；请通过上传向导完成文件登记并绑定版本。' }} /></Card><Tabs items={[{ key: 'versions', label: '版本历史', children: <Table rowKey="versionId" dataSource={d?.versions ?? []} pagination={false} columns={[{ title: '版本', dataIndex: 'versionName' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '内容安全', dataIndex: 'contentSafetyStatus' }, { title: '诊断', dataIndex: 'diagnosticMessage' }]} /> }, { key: 'files', label: `文件元数据（${d?.files.length ?? 0}）`, children: <Table rowKey="id" dataSource={d?.files ?? []} pagination={false} columns={fileColumns} locale={{ emptyText: '暂无文件元数据' }} /> }, { key: 'lineage', label: '血缘', children: <Table rowKey="lineageId" dataSource={d?.lineage ?? []} pagination={false} columns={[{ title: '来源', dataIndex: 'sourceType' }, { title: 'Source ID', dataIndex: 'sourceId' }, { title: '目标', dataIndex: 'targetId' }, { title: '转换', dataIndex: 'transformType' }]} /> }, { key: 'access', label: '权限授权', children: <Table rowKey="grantId" dataSource={d?.grants ?? []} pagination={false} columns={[{ title: '用户', dataIndex: 'userName' }, { title: '状态', dataIndex: 'status' }, { title: '有效期', dataIndex: 'expiresAt' }]} /> }]} /></div>;
+  const exportColumns = [
+    { title: '格式', dataIndex: 'format' },
+    { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={color(v)}>{v}</Tag> },
+    { title: '图片副本', dataIndex: 'packageIncludesImages', render: (v: boolean) => v ? '包含' : '不包含' },
+    { title: '异步', dataIndex: 'asyncRequired', render: (v: boolean) => v ? '是' : '否' },
+    { title: '大小', render: (_: unknown, r: AnnotationTrainingExport) => fmtSize(r.sizeBytes) },
+    { title: '保留到', dataIndex: 'expiresAt', render: (v: string | null) => v ? v.slice(0, 10) : '-' },
+    { title: '诊断', render: (_: unknown, r: AnnotationTrainingExport) => `${r.diagnosticCode} · ${r.diagnosticMessage}` },
+    { title: '下载', render: (_: unknown, r: AnnotationTrainingExport) => <Button size="small" disabled={!r.exportId || r.status !== 'AVAILABLE'} loading={exportDownload.isPending} onClick={() => exportDownload.mutate(r.exportId)}>获取下载链接</Button> },
+  ];
+  const previewableFiles = (d?.files ?? []).filter((file) => file.contentType?.startsWith('image/'));
+  const annotationChildren = <Space direction="vertical" className="full-width">
+    <Alert type={candidate.data?.eligible ? 'success' : 'warning'} showIcon title="标注候选状态" description={`${candidate.data?.diagnosticCode ?? 'LOADING'} · ${candidate.data?.diagnosticMessage ?? '正在加载候选状态'}；训练环境默认采用自包含导出包，COCO/YOLO/VOC/Mask 均包含图片副本，超过 200MB 异步，保留 3 个月。`} />
+    <Space wrap><Button type="primary" disabled={!candidate.data?.eligible} onClick={() => setTaskOpen(true)}>从数据集创建标注任务</Button><Typography.Text type="secondary">当前版本：{candidate.data?.currentVersionId ?? '-'}</Typography.Text></Space>
+    <Table<DatasetAnnotationTask> rowKey={(r) => r.task.taskId} dataSource={annTasks.data ?? []} loading={annTasks.isLoading} expandable={{ expandedRowRender: (r) => <Table<AnnotationTrainingExport> rowKey="exportId" dataSource={r.exports} columns={exportColumns} pagination={false} locale={{ emptyText: '暂无训练格式导出' }} /> }} columns={[{ title: '任务', render: (_, r) => <Space direction="vertical" size={0}><Typography.Text strong>{r.task.name}</Typography.Text><Typography.Text type="secondary" className="mono">{r.task.taskId}</Typography.Text></Space> }, { title: '场景', render: (_, r) => txt(r.task.scene) }, { title: '状态', render: (_, r) => <Tag color={color(r.task.status)}>{annStatusText(r.task.status)}</Tag> }, { title: '进度', render: (_, r) => `${r.task.reviewedCount}/${r.task.totalCount}` }, { title: '质量分', render: (_, r) => r.task.qualityScore ?? '-' }, { title: '操作', render: (_, r) => <Space wrap><Button size="small" type="primary" onClick={() => openWorkbench(r.task.taskId)}>进入标注</Button><Button size="small" onClick={() => setExportTask(r)}>生成训练包</Button></Space> }]} />
+  </Space>;
+  return <div className="content-page">{holder}<div className="page-hero"><div><Typography.Title level={3}>{d?.dataset.name ?? '数据集详情'}</Typography.Title><Typography.Text type="secondary">概览 · 版本 · 文件 · 权限 · 血缘 · 标注任务/训练导出</Typography.Text></div><Space><Button onClick={() => ref.mutate()}>请求引用检查</Button><Button type="primary" disabled={!candidate.data?.eligible} onClick={() => setTaskOpen(true)}>创建标注任务</Button></Space></div>{ref.data ? <Alert type="success" showIcon title={`DatasetReference 可用：${ref.data.versionId}`} style={{ marginBottom: 16 }} /> : null}<Card loading={detail.isLoading}><Descriptions bordered column={2}><Descriptions.Item label="数据类型">{txt(d?.dataset.dataType)}</Descriptions.Item><Descriptions.Item label="状态"><Tag color={color(d?.dataset.status)}>{d?.dataset.status}</Tag></Descriptions.Item><Descriptions.Item label="权限"><Tag color={d?.dataset.accessLevel === 'RESTRICTED' ? 'red' : 'blue'}>{d?.dataset.accessLevel}</Tag></Descriptions.Item><Descriptions.Item label="样本数">{d?.dataset.recordCount.toLocaleString('zh-CN')}</Descriptions.Item><Descriptions.Item label="标签">{d?.dataset.tags.map((t) => <Tag key={t}>{t}</Tag>)}</Descriptions.Item><Descriptions.Item label="预览状态">{d?.previewStatus} · {d?.previewDiagnostic}</Descriptions.Item></Descriptions></Card>{previewableFiles.length > 0 ? <Card title={`图片预览（${previewableFiles.length}）`} style={{ marginTop: 16 }} loading={detail.isLoading}><Space wrap>{previewableFiles.map((file) => <Button key={file.id} onClick={() => setPreviewFile({ fileId: file.fileId, name: file.objectKey.split('/').slice(-1)[0] ?? file.fileId })}>预览 {file.objectKey.split('/').slice(-1)[0] ?? file.fileId}</Button>)}</Space><Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>当前仅对 `image/*` 文件展示预览入口；点击后使用 MinIO 预签名 URL 在弹窗中加载原图。</Typography.Paragraph></Card> : null}<Card title={`文件信息（${d?.files.length ?? 0}）`} style={{ marginTop: 16 }} loading={detail.isLoading}><Table rowKey="id" dataSource={d?.files ?? []} pagination={false} columns={fileColumns} locale={{ emptyText: '暂无已绑定文件；请通过上传向导完成文件登记并绑定版本。' }} /></Card><Tabs items={[{ key: 'annotation', label: '标注任务/训练导出', children: annotationChildren }, { key: 'versions', label: '版本历史', children: <Table rowKey="versionId" dataSource={d?.versions ?? []} pagination={false} columns={[{ title: '版本', dataIndex: 'versionName' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '内容安全', dataIndex: 'contentSafetyStatus' }, { title: '诊断', dataIndex: 'diagnosticMessage' }]} /> }, { key: 'files', label: `文件元数据（${d?.files.length ?? 0}）`, children: <Table rowKey="id" dataSource={d?.files ?? []} pagination={false} columns={fileColumns} locale={{ emptyText: '暂无文件元数据' }} /> }, { key: 'lineage', label: '血缘', children: <Table rowKey="lineageId" dataSource={d?.lineage ?? []} pagination={false} columns={[{ title: '来源', dataIndex: 'sourceType' }, { title: 'Source ID', dataIndex: 'sourceId' }, { title: '目标', dataIndex: 'targetId' }, { title: '转换', dataIndex: 'transformType' }]} /> }, { key: 'access', label: '权限授权', children: <Table rowKey="grantId" dataSource={d?.grants ?? []} pagination={false} columns={[{ title: '用户', dataIndex: 'userName' }, { title: '状态', dataIndex: 'status' }, { title: '有效期', dataIndex: 'expiresAt' }]} /> }]} /><Modal title="从数据集创建标注任务" open={taskOpen} onCancel={() => setTaskOpen(false)} footer={null} destroyOnHidden><Form form={taskForm} layout="vertical" onFinish={(v) => { if (!v.templateId) return; createTask.mutate({ ...v, templateId: v.templateId }); }}><Form.Item name="name" label="任务名称" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="scene" label="标注场景"><Select options={[{ value: 'IMAGE_TAGGING', label: '图片打标' }, { value: 'IMAGE_SEGMENTATION', label: '图片分割' }]} /></Form.Item><Form.Item name="templateId" label="标签模板" rules={[{ required: true, message: '当前场景暂无已发布模板' }]} extra={sceneTemplates.length === 0 ? '当前场景暂无已发布模板，请先创建并发布对应模板。' : undefined}><Select options={sceneTemplates.map((t) => ({ value: t.templateId, label: t.name }))} placeholder={sceneTemplates.length === 0 ? '当前场景暂无已发布模板' : '请选择标签模板'} /></Form.Item><Button type="primary" htmlType="submit" loading={createTask.isPending} disabled={sceneTemplates.length === 0}>创建任务</Button></Form></Modal><Modal title={`生成训练格式导出：${exportTask?.task.name ?? ''}`} open={!!exportTask} onCancel={() => setExportTask(null)} footer={null} destroyOnHidden><Form layout="vertical" initialValues={{ format: candidate.data?.supportedFormats?.[0] ?? 'SMP_JSONL' }} onFinish={(v) => exportTask && createExport.mutate({ taskId: exportTask.task.taskId, format: v.format })}><Alert type="info" showIcon title="导出策略" description="COCO/YOLO/VOC/Mask 包含 images/ 图片副本和 metadata；超过 200MB 进入异步生成；导出文件保留 3 个月。" style={{ marginBottom: 16 }} /><Form.Item name="format" label="训练格式"><Select options={(candidate.data?.supportedFormats ?? []).map((f) => ({ value: f, label: f }))} /></Form.Item><Button type="primary" htmlType="submit" loading={createExport.isPending}>生成训练包</Button></Form></Modal><Modal title={`图片预览：${previewFile?.name ?? ''}`} open={!!previewFile} footer={null} width={960} onCancel={() => setPreviewFile(null)} destroyOnHidden><ImagePreviewPanel fileId={previewFile?.fileId} /></Modal></div>;
+}
+
+function ImagePreviewPanel({ fileId }: { fileId?: string }) {
+  const previewUrl = fileId ? platformApi.fileContentUrl(fileId) : '';
+
+  if (!fileId) return null;
+
+  return (
+    <Space orientation="vertical" className="full-width" size={12}>
+      <Alert type="info" showIcon message="预览通过后端鉴权接口读取图片内容，避免浏览器直接访问 MinIO 遇到 403。" />
+      <img src={previewUrl} alt="dataset preview" style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain', borderRadius: 8, background: '#f5f5f5' }} />
+      <Space>
+        <Button onClick={() => window.open(previewUrl, '_blank', 'noopener,noreferrer')}>新窗口打开原图</Button>
+        <Typography.Text type="secondary" className="mono">{previewUrl}</Typography.Text>
+      </Space>
+    </Space>
+  );
 }

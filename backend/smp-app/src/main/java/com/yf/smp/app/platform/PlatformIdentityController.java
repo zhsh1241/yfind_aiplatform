@@ -67,6 +67,12 @@ public class PlatformIdentityController {
         return PlatformResponses.ok(service.toSummary(service.createUser(principal, request)));
     }
 
+    @PutMapping("/platform/users/{userId}")
+    ResponseEntity<ApiResponse<UserSummary>> updateUser(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String userId, @RequestBody UpdateUserRequest request) {
+        PlatformPrincipal principal = service.requirePrincipal(authorization);
+        return PlatformResponses.ok(service.toSummary(service.updateUser(principal, userId, request)));
+    }
+
     @PatchMapping("/platform/users/{userId}/status")
     ResponseEntity<ApiResponse<Void>> updateStatus(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String userId, @RequestBody UpdateStatusRequest request) {
         PlatformPrincipal principal = service.requirePrincipal(authorization);
@@ -84,7 +90,7 @@ public class PlatformIdentityController {
     @PutMapping("/platform/users/{userId}/roles")
     ResponseEntity<ApiResponse<Void>> setRoles(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String userId, @RequestBody UpdateRolesRequest request) {
         PlatformPrincipal principal = service.requirePrincipal(authorization);
-        service.setRoles(principal, userId, request.roleCodes());
+        service.setRoles(principal, userId, request.roleCodes(), request.expiresAt());
         return PlatformResponses.ok(null);
     }
 
@@ -92,14 +98,13 @@ public class PlatformIdentityController {
     ResponseEntity<ApiResponse<List<RoleSummary>>> roles(@RequestHeader(name = "Authorization", required = false) String authorization) {
         PlatformPrincipal principal = service.requirePrincipal(authorization);
         service.requirePermission(principal, "platform:role:read");
-        return PlatformResponses.ok(service.rolesSummary());
+        return PlatformResponses.ok(service.rolesSummary(principal));
     }
 
     @PostMapping("/platform/roles")
-    ResponseEntity<ApiResponse<RoleSummary>> createRole(@RequestHeader(name = "Authorization", required = false) String authorization) {
+    ResponseEntity<ApiResponse<RoleSummary>> createRole(@RequestHeader(name = "Authorization", required = false) String authorization, @RequestBody CreateRoleRequest request) {
         PlatformPrincipal principal = service.requirePrincipal(authorization);
-        service.requirePermission(principal, "platform:role:create");
-        throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "自定义角色创建 seam 已保留，生产策略待 F007/F017 确认");
+        return PlatformResponses.ok(service.createRole(principal, request));
     }
 
     @GetMapping("/platform/permissions")
@@ -113,14 +118,13 @@ public class PlatformIdentityController {
     ResponseEntity<ApiResponse<PermissionMatrix>> matrix(@RequestHeader(name = "Authorization", required = false) String authorization) {
         PlatformPrincipal principal = service.requirePrincipal(authorization);
         service.requirePermission(principal, "platform:permission:read");
-        return PlatformResponses.ok(service.permissionMatrix());
+        return PlatformResponses.ok(service.permissionMatrix(principal));
     }
 
     @PutMapping("/platform/roles/{roleCode}/permissions")
-    ResponseEntity<ApiResponse<Void>> updateRolePermissions(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String roleCode) {
+    ResponseEntity<ApiResponse<RoleSummary>> updateRolePermissions(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String roleCode, @RequestBody UpdateRolePermissionsRequest request) {
         PlatformPrincipal principal = service.requirePrincipal(authorization);
-        service.requirePermission(principal, "platform:permission:update");
-        throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "预设角色权限只读，自定义角色权限更新留给后续 feature");
+        return PlatformResponses.ok(service.updateRolePermissions(principal, roleCode, request.permissionCodes()));
     }
 
     @GetMapping("/platform/audit-logs")

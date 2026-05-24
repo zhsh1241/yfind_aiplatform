@@ -50,6 +50,27 @@ public class AnnotationController {
         return PlatformResponses.ok(service.taskDetail(principal(authorization), taskId));
     }
 
+
+    @GetMapping("/tasks/{taskId}/exports")
+    ResponseEntity<ApiResponse<List<AnnotationTrainingExportResponse>>> exports(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String taskId) {
+        return PlatformResponses.ok(service.exports(principal(authorization), taskId));
+    }
+
+    @PostMapping("/tasks/{taskId}/exports")
+    ResponseEntity<ApiResponse<AnnotationTrainingExportResponse>> createExport(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String taskId, @RequestBody AnnotationTrainingExportRequest request) {
+        return PlatformResponses.ok(service.createExport(principal(authorization), taskId, request));
+    }
+
+    @GetMapping("/exports/{exportId}")
+    ResponseEntity<ApiResponse<AnnotationTrainingExportResponse>> export(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String exportId) {
+        return PlatformResponses.ok(service.export(principal(authorization), exportId));
+    }
+
+    @GetMapping("/exports/{exportId}/download-url")
+    ResponseEntity<ApiResponse<AnnotationTrainingExportResponse>> exportDownloadUrl(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String exportId) {
+        return PlatformResponses.ok(service.exportDownloadUrl(principal(authorization), exportId));
+    }
+
     @PostMapping("/tasks/{taskId}/assign")
     ResponseEntity<ApiResponse<AnnotationTaskDetailResponse>> assign(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String taskId, @RequestBody AnnotationTaskAssignRequest request) {
         return PlatformResponses.ok(service.assign(principal(authorization), taskId, request));

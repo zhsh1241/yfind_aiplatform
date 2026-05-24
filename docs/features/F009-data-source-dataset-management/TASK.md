@@ -4,7 +4,7 @@ title: 数据源与数据集管理基础能力
 task_status: implemented
 owner: codex
 created_at: 2026-05-18
-updated_at: 2026-05-18
+updated_at: 2026-05-20
 ---
 
 # Task: 数据源与数据集管理基础能力
@@ -30,13 +30,15 @@ updated_at: 2026-05-18
 ### In Scope
 
 - 数据源列表、新建、连接测试、激活/禁用、详情与同步任务 seam；本地 sandbox connector 覆盖 `RELATIONAL_DB`、`API`、`STREAM`、`TIME_SERIES`、`INDUSTRIAL_PROTOCOL` 导入。
+- 2026-05-20 需求调整后，数据集接入方式收敛为 `IMPORT`（导入）与 `API`（接口）；数据库、对象存储、流、时序、工业协议等专用 connector 暂不进入本阶段范围。
+- 数据集内容类型收敛为 `IMAGE`（图片）与 `AUDIO_VIDEO`（影音）；其他类型暂不考虑。
 - 数据集列表、统计、搜索、版本抽屉、详情、文件、权限、血缘、引用检查。
 - 上传向导复用 F007 文件对象 seam，表达对象存储/内容安全未配置状态。
 - DATA 域 Flyway 表、权限码、审计事件和后续引用 seam。
 
 ### Out of Scope
 
-- 真实 DB/OSS/Kafka/OPC-UA/API connector 生产联调；生产外部系统参数仍以 `TODO_CONFIRM_*` 管理。
+- 真实 DB/OSS/Kafka/OPC-UA 等专用 connector 生产联调；生产外部系统参数仍以 `TODO_CONFIRM_*` 管理。
 - 完整数据资产门户审批中心、Pipeline 执行、标注任务与训练任务实现。
 - 真实内容安全第三方服务；F009 冻结 `SECURITY_PENDING` / `UNCONFIGURED` 阻断行为。
 
@@ -60,7 +62,9 @@ updated_at: 2026-05-18
 - [x] AC-08：数据集查询、详情、下载遵循 BU 隔离；跨 BU 无授权不暴露资源存在性。
 - [x] AC-09：数据源、数据集、版本、文件、授权、删除、跨 BU 拒绝等关键事件均写审计。
 - [x] AC-10：F009 不实现完整 Pipeline、标注、数据增强、生产采集调度和真实外部 connector；仅提供后续引用 seam。
-- [x] AC-11：`RELATIONAL_DB`、`API`、`STREAM`、`TIME_SERIES`、`INDUSTRIAL_PROTOCOL` 在本地 sandbox connector 下可通过同步任务自动生成数据集、已发布版本、文件元数据、血缘与审计，未配置生产 connector 时仍返回 `UNCONFIGURED` / `TODO_CONFIRM_*`。
+- [ ] AC-11：需求确认后，数据集接入方式和 sandbox connector 验收口径应收敛为 `IMPORT` 与 `API`；旧的数据库、对象存储、流、时序、工业协议入口需从业务设计中移出或降级为后续扩展/未支持诊断。
+- [ ] AC-12：需求确认后，数据集内容类型应调整为仅支持图片和影音；其他类型在创建/导入/筛选中暂不展示或返回未支持诊断。
+- [ ] AC-13：需求确认后，F009 应为后续标注任务产物保留 `ANNOTATION_RESULT` 标注文件角色，确保 `ANNOTATED` 数据集版本可绑定标注文件。
 
 ## 5. Definition of Done
 
@@ -72,3 +76,7 @@ updated_at: 2026-05-18
 - [x] 前端 DATA 页面与 E2E 覆盖完成。
 - [x] sandbox connector 扩展已完成并纳入后端测试与前端 E2E。
 - [x] 最终 gate、review、QA 报告归档。
+
+## 8. 需求调整记录
+
+- 2026-05-20：用户确认“当前数据集主要有 2 种，图片或者影音，其他暂时先不考虑；数据集接入方式还是导入或者接口；使用数据集做标注任务后应该产生对应的标注文件保存”。本 TASK 先记录文档调整，代码实现待用户确认后再改。

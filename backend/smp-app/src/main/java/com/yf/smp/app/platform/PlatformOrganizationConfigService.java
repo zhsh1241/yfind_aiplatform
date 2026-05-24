@@ -1,8 +1,16 @@
 package com.yf.smp.app.platform;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.DigestInputStream;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -15,9 +23,11 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class PlatformOrganizationConfigService {
@@ -25,10 +35,16 @@ public class PlatformOrganizationConfigService {
 
     private final JdbcTemplate jdbc;
     private final PlatformIdentityService identityService;
+    private final ObjectStorageService objectStorageService;
 
-    public PlatformOrganizationConfigService(JdbcTemplate jdbc, PlatformIdentityService identityService) {
+    public PlatformOrganizationConfigService(
+        JdbcTemplate jdbc,
+        PlatformIdentityService identityService,
+        ObjectStorageService objectStorageService
+    ) {
         this.jdbc = jdbc;
         this.identityService = identityService;
+        this.objectStorageService = objectStorageService;
     }
 
     public OrganizationTreeResponse organizationTree(PlatformPrincipal principal) {
@@ -247,10 +263,7 @@ public class PlatformOrganizationConfigService {
         String tenantId = blankToDefault(request.tenantId(), principal.user().tenantId());
         ensureScopeAccess(principal, "BU", tenantId, true);
         String fileId = "FILE-" + randomHex(8).toUpperCase(Locale.ROOT);
-        String bucket = effectiveConfig(configDefinition("storage.bucket"), "BU", tenantId).value();
-        if (bucket == null || bucket.startsWith("TODO_CONFIRM")) {
-            bucket = "TODO_CONFIRM_MINIO_BUCKET";
-        }
+        String bucket = objectStorageService.datasetBucket(tenantId);
         String filename = blankToDefault(request.filename(), fileId + ".bin").replaceAll("[^A-Za-z0-9._-]", "_");
         String objectKey = tenantId + "/" + blankToDefault(request.assetType(), "GENERIC").toLowerCase(Locale.ROOT) + "/" + fileId + "/" + filename;
         OffsetDateTime now = now();
@@ -263,11 +276,49 @@ public class PlatformOrganizationConfigService {
     }
 
     @Transactional(noRollbackFor = PlatformException.class)
+    public FileObjectResponse uploadFileContent(PlatformPrincipal principal, String fileId, MultipartFile fileContent) {
+        identityService.requirePermission(principal, "platform:file:complete");
+        FileObjectResponse file = file(fileId);
+        ensureScopeAccess(principal, "BU", file.tenantId(), true);
+        if (!"INITIATED".equals(file.status()) && !"UPLOADED".equals(file.status())) {
+            throw new PlatformException(PlatformError.CONFLICT, "文件不是可上传状态");
+        }
+        if (fileContent == null || fileContent.isEmpty()) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "上传文件不能为空");
+        }
+        Path storedPath = fileStoragePath(file);
+        try {
+            Files.createDirectories(storedPath.getParent());
+            try (InputStream inputStream = fileContent.getInputStream()) {
+                Files.copy(inputStream, storedPath, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException exception) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "文件内容写入失败: " + exception.getMessage());
+        }
+        String sha = sha256(storedPath);
+        long size;
+        try {
+            size = Files.size(storedPath);
+        } catch (IOException exception) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "文件内容读取失败: " + exception.getMessage());
+        }
+        String contentType = detectContentType(file, fileContent);
+        try {
+            objectStorageService.uploadObjectIfConfigured(file.bucket(), file.objectKey(), Files.readAllBytes(storedPath), contentType);
+        } catch (IOException exception) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "文件内容读取失败: " + exception.getMessage());
+        }
+        jdbc.update("UPDATE platform_file_object SET status='UPLOADED', sha256=?, size_bytes=?, content_type=?, updated_at=? WHERE file_id=?", sha, size, contentType, now(), fileId);
+        recordAudit(principal, file.tenantId(), "FILE_CONTENT_UPLOADED", "FileObject", fileId, "SUCCESS", "INFO", file.status(), "UPLOADED", "bytes=" + size + ";sha256=" + sha);
+        return file(fileId);
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
     public FileObjectResponse completeFile(PlatformPrincipal principal, String fileId, FileCompleteRequest request) {
         identityService.requirePermission(principal, "platform:file:complete");
         FileObjectResponse file = file(fileId);
         ensureScopeAccess(principal, "BU", file.tenantId(), true);
-        if (!"INITIATED".equals(file.status())) {
+        if (!"INITIATED".equals(file.status()) && !"UPLOADED".equals(file.status())) {
             throw new PlatformException(PlatformError.CONFLICT, "文件不是可完成状态");
         }
         String sha = requireText(request.sha256(), "sha256 不能为空");
@@ -281,6 +332,9 @@ public class PlatformOrganizationConfigService {
             jdbc.update("UPDATE platform_file_object SET status='FAILED', sha256=?, size_bytes=?, updated_at=? WHERE file_id=?", sha, size, now(), fileId);
             recordAudit(principal, file.tenantId(), "FILE_HASH_MISMATCH", "FileObject", fileId, "FAILURE", "WARNING", file.expectedSha256() + ":" + file.expectedSizeBytes(), sha + ":" + size, "hashMismatch=" + hashMismatch + ";sizeMismatch=" + sizeMismatch);
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "文件 hash 或大小与初始化元数据不一致");
+        }
+        if ("SIGNED_URL_READY".equals(objectStorageService.downloadDiagnostic())) {
+            objectStorageService.assertObjectExistsIfConfigured(file.bucket(), file.objectKey());
         }
         jdbc.update("UPDATE platform_file_object SET status='AVAILABLE', sha256=?, size_bytes=?, updated_at=? WHERE file_id=?", sha, size, now(), fileId);
         recordAudit(principal, file.tenantId(), "FILE_UPLOAD_COMPLETED", "FileObject", fileId, "SUCCESS", "INFO", null, sha, "size=" + size);
@@ -314,12 +368,27 @@ public class PlatformOrganizationConfigService {
         if (!"AVAILABLE".equals(file.status())) {
             throw new PlatformException(PlatformError.CONFLICT, "文件当前不可下载");
         }
-        String endpoint = effectiveConfig(configDefinition("storage.endpoint"), "GLOBAL", "TENANT-YF").value();
-        String diagnostic = endpoint == null || endpoint.startsWith("TODO_CONFIRM") ? "TODO_CONFIRM_MINIO_ENDPOINT" : "SIGNED_URL_READY";
+        String diagnostic = objectStorageService.downloadDiagnostic();
         String status = diagnostic.startsWith("TODO_CONFIRM") ? "UNCONFIGURED" : "READY";
-        String url = diagnostic.startsWith("TODO_CONFIRM") ? null : endpoint + "/" + file.bucket() + "/" + file.objectKey() + "?TODO_CONFIRM_MINIO_SIGNATURE";
+        String url = null;
+        if (!diagnostic.startsWith("TODO_CONFIRM")) {
+            url = objectStorageService.publicObjectUrl(file.bucket(), file.objectKey());
+        }
         recordAudit(principal, file.tenantId(), "FILE_DOWNLOAD_REQUESTED", "FileObject", fileId, "SUCCESS", "INFO", null, null, diagnostic);
         return new FileDownloadResponse(fileId, status, url, diagnostic);
+    }
+
+    public FileContentResponse fileContent(PlatformPrincipal principal, String fileId) {
+        identityService.requirePermission(principal, "platform:file:download");
+        FileObjectResponse file = file(fileId);
+        ensureScopeAccess(principal, "BU", file.tenantId(), false);
+        if (!"AVAILABLE".equals(file.status())) {
+            throw new PlatformException(PlatformError.CONFLICT, "文件当前不可读取");
+        }
+        byte[] content = objectStorageService.readObject(file.bucket(), file.objectKey());
+        String filename = file.objectKey().contains("/") ? file.objectKey().substring(file.objectKey().lastIndexOf('/') + 1) : file.objectKey();
+        recordAudit(principal, file.tenantId(), "FILE_CONTENT_VIEWED", "FileObject", fileId, "SUCCESS", "INFO", null, file.contentType(), "inline-preview");
+        return new FileContentResponse(fileId, filename, blankToDefault(file.contentType(), "application/octet-stream"), content);
     }
 
     public List<NotificationChannelResponse> notificationChannels(PlatformPrincipal principal) {
@@ -617,6 +686,62 @@ public class PlatformOrganizationConfigService {
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException(exception);
         }
+    }
+
+    private String sha256(Path path) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (InputStream inputStream = Files.newInputStream(path); DigestInputStream digestInputStream = new DigestInputStream(inputStream, digest)) {
+                digestInputStream.transferTo(OutputStream.nullOutputStream());
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (IOException exception) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "文件内容读取失败: " + exception.getMessage());
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private Path fileStorageRoot() {
+        return Paths.get(System.getProperty("java.io.tmpdir"), "yfind-aiplatform-file-store");
+    }
+
+    private Path fileStoragePath(FileObjectResponse file) {
+        Path base = fileStorageRoot().resolve(safePathSegment(file.bucket()));
+        Path resolved = base.resolve(Paths.get(file.objectKey())).normalize();
+        if (!resolved.startsWith(base.normalize())) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "文件存储路径非法");
+        }
+        return resolved;
+    }
+
+    private String safePathSegment(String value) {
+        return blankToDefault(value, "default").replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private String detectContentType(FileObjectResponse file, MultipartFile fileContent) {
+        String candidate = blankToDefault(fileContent.getContentType(), file.contentType());
+        if (!candidate.isBlank() && !"application/octet-stream".equalsIgnoreCase(candidate)) {
+            return candidate;
+        }
+        String name = file.objectKey().contains("/") ? file.objectKey().substring(file.objectKey().lastIndexOf('/') + 1) : file.objectKey();
+        String lower = blankToDefault(name, "").toLowerCase(Locale.ROOT);
+        return switch (extension(lower)) {
+            case "jpg", "jpeg", "jepg" -> "image/jpeg";
+            case "png" -> "image/png";
+            case "bmp" -> "image/bmp";
+            case "webp" -> "image/webp";
+            case "gif" -> "image/gif";
+            case "tif", "tiff" -> "image/tiff";
+            case "heic" -> "image/heic";
+            case "avif" -> "image/avif";
+            default -> blankToDefault(candidate, "application/octet-stream");
+        };
+    }
+
+    private String extension(String filename) {
+        int index = filename.lastIndexOf('.');
+        return index < 0 ? "" : filename.substring(index + 1);
     }
 
     private String nullToEmpty(String value) {

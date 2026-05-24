@@ -3,7 +3,6 @@ import { Navigate, Route, Routes, useLocation } from 'react-router';
 import { useEffect } from 'react';
 import { AppNavigation, prototypePages } from './components/AppNavigation';
 import { PrototypePage } from './components/PrototypePage';
-import { FoundationStatusCard } from './features/foundation/FoundationStatusCard';
 import { LoginPage } from './features/platform/LoginPage';
 import { PermissionManagementPage } from './features/platform/PermissionManagementPage';
 import { ResourceManagementPage } from './features/platform/ResourceManagementPage';
@@ -52,7 +51,6 @@ export default function App() {
           <div className="session-chip">{user.displayName} · {user.tenantName}</div>
         </Header>
         <Content className="app-content">
-          <FoundationStatusCard />
           <Routes>
             <Route path="/" element={<Navigate to="/dash" replace />} />
             <Route path="/login" element={<LoginPage />} />

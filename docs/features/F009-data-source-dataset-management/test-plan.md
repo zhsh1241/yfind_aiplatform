@@ -8,12 +8,14 @@
 | T-P0-02 | AC-03/04/05/06/09 | 数据集列表统计、创建草稿、文件绑定、内容安全未配置发布阻断、已发布版本不可变、详情血缘/预览退化 | `DataManagementControllerTest.datasetLifecycleBlocksUnconfiguredSafetyAndImmutablePublishedVersion` |
 | T-P0-03 | AC-07/08/10 | 受限数据集无授权拒绝、申请/审批授权、引用检查、跨 BU 404 | `DataManagementControllerTest.restrictedDatasetRequiresGrantAndReferenceUsesBuIsolation` |
 | T-P0-04 | AC-01/03/04/06 | 前端 datasrc/ds/up/dsdetail 原型信息架构与 API 接入 | Vitest + Playwright `data-source-dataset-management.spec.ts` |
+| T-P0-05 | AC-11/12 | 数据集类型与接入方式范围收敛 | 创建/导入入口仅展示图片、影音和导入/API；其他类型返回未支持诊断或不展示 |
+| T-P0-06 | AC-13 | 标注文件角色 seam | `dataset_file` 支持 `ANNOTATION_RESULT` 文件角色，`ANNOTATED` 数据集版本可绑定标注文件 |
 
 ## 2. Cross-cutting
 
 - 权限：后端所有入口调用 `PlatformIdentityService.requirePermission` 或认证主体检查。
 - 审计：关键 mutation 与拒绝路径写入 `platform_audit_log`。
-- NFR：不调用真实外部 connector；未配置状态以 `TODO_CONFIRM_*` 诊断呈现。
+- NFR：不调用真实外部 connector；未配置状态以 `TODO_CONFIRM_*` 诊断呈现；当前数据源接入只验收导入/API，不验收数据库、对象存储、流、时序、工业协议 connector。
 - 原型一致：保留 `datasrc` 双 Tab、`ds` 统计/Tab/表格/版本抽屉、`up` 三步向导、`dsdetail` 多 Tab 信息结构。
 
 ## 3. Traceability
@@ -28,4 +30,6 @@
 - AC-08 -> T-P0-03
 - AC-09 -> T-P0-01/02/03
 - AC-10 -> T-P0-03
-- AC-11 -> T-P0-05, ?? E2E 1
+- AC-11 -> T-P0-05
+- AC-12 -> T-P0-05
+- AC-13 -> T-P0-06

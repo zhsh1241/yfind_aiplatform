@@ -29,10 +29,12 @@ public class PipelineService {
     private static final Pattern REQUIRED_PATTERN = Pattern.compile("\\\"required\\\"\\s*:\\s*\\[(.*?)]");
     private final JdbcTemplate jdbc;
     private final PlatformIdentityService identityService;
+    private final ObjectStorageService objectStorageService;
 
-    public PipelineService(JdbcTemplate jdbc, PlatformIdentityService identityService) {
+    public PipelineService(JdbcTemplate jdbc, PlatformIdentityService identityService, ObjectStorageService objectStorageService) {
         this.jdbc = jdbc;
         this.identityService = identityService;
+        this.objectStorageService = objectStorageService;
     }
 
     public PipelineListResponse pipelines(PlatformPrincipal principal, String keyword, String status, int page, int pageSize) {
@@ -372,10 +374,14 @@ public class PipelineService {
         String datasetFileId = "DF-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
         long outputRecords = Math.max(1, sample.recordCount());
         long outputSize = Math.max(1024, sample.sizeBytes());
+        String outputBucket = objectStorageService.datasetBucket(pipeline.tenantId());
+        String outputObjectKey = pipeline.tenantId() + "/pipeline/" + runId + "/output.parquet";
+        String outputPayload = "pipeline=" + pipeline.pipelineId() + "\nrun=" + runId + "\nsampleDataset=" + sample.datasetId();
+        objectStorageService.uploadObjectIfConfigured(outputBucket, outputObjectKey, outputPayload.getBytes(StandardCharsets.UTF_8), "application/x-parquet");
         jdbc.update("INSERT INTO dataset (dataset_id, name, dataset_type, data_type, tenant_id, project_id, current_version_id, status, access_level, tags, record_count, size_bytes, owner_id, description, created_at, updated_at) VALUES (?, ?, 'PREPROCESSED', ?, ?, ?, NULL, 'ACTIVE', 'TEAM', ?, ?, ?, ?, ?, ?, ?)", datasetId, pipeline.name() + " 输出", sample.dataType(), pipeline.tenantId(), pipeline.projectId(), "pipeline,F011,PREPROCESSED", outputRecords, outputSize, principal.user().id(), "由 Pipeline 沙箱运行 " + runId + " 生成的输出数据集", at, at);
         jdbc.update("INSERT INTO dataset_version (version_id, dataset_id, version_name, status, record_count, size_bytes, content_safety_status, diagnostic_code, diagnostic_message, created_by, created_at, published_at) VALUES (?, ?, 'v1.0.0', 'PUBLISHED', ?, ?, 'PASSED', 'OK', 'SANDBOX_PIPELINE_OUTPUT_PASSED', ?, ?, ?)", versionId, datasetId, outputRecords, outputSize, principal.user().id(), at, at);
         jdbc.update("UPDATE dataset SET current_version_id=?, updated_at=? WHERE dataset_id=?", versionId, at, datasetId);
-        jdbc.update("INSERT INTO platform_file_object (file_id, asset_type, tenant_id, project_id, bucket, object_key, expected_sha256, sha256, expected_size_bytes, size_bytes, content_type, storage_tier, status, owner_id, created_at, updated_at) VALUES (?, 'DATASET', ?, ?, 'TODO_CONFIRM_MINIO_BUCKET', ?, ?, ?, ?, ?, 'application/x-parquet', 'STANDARD', 'AVAILABLE', ?, ?, ?)", fileId, pipeline.tenantId(), pipeline.projectId(), pipeline.tenantId() + "/pipeline/" + runId + "/output.parquet", "sha256-" + fileId.toLowerCase(Locale.ROOT), "sha256-" + fileId.toLowerCase(Locale.ROOT), outputSize, outputSize, principal.user().id(), at, at);
+        jdbc.update("INSERT INTO platform_file_object (file_id, asset_type, tenant_id, project_id, bucket, object_key, expected_sha256, sha256, expected_size_bytes, size_bytes, content_type, storage_tier, status, owner_id, created_at, updated_at) VALUES (?, 'DATASET', ?, ?, ?, ?, ?, ?, ?, ?, 'application/x-parquet', 'STANDARD', 'AVAILABLE', ?, ?, ?)", fileId, pipeline.tenantId(), pipeline.projectId(), outputBucket, outputObjectKey, "sha256-" + fileId.toLowerCase(Locale.ROOT), "sha256-" + fileId.toLowerCase(Locale.ROOT), outputSize, outputSize, principal.user().id(), at, at);
         jdbc.update("INSERT INTO dataset_file (id, dataset_id, version_id, file_id, file_role, status, created_at) VALUES (?, ?, ?, ?, 'PIPELINE_OUTPUT', 'BOUND', ?)", datasetFileId, datasetId, versionId, fileId, at);
         jdbc.update("INSERT INTO data_lineage (lineage_id, source_type, source_id, target_type, target_id, transform_type, created_at) VALUES (?, 'PIPELINE', ?, 'DATASET_VERSION', ?, 'PIPELINE', ?)", "LIN-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT), pipeline.pipelineId(), versionId, at);
         if (!blank(sample.versionId())) {

@@ -1,7 +1,8 @@
 import { Button, Card, Col, Form, Input, InputNumber, Modal, Progress, Row, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
-import { platformApi, type ConfigItem, type OrganizationMember, type OrganizationNode } from './platformApi';
+import { useNavigate } from 'react-router';
+import { displayRoleName, platformApi, type ConfigItem, type OrganizationMember, type OrganizationNode } from './platformApi';
 
 function flattenOrganizations(nodes: OrganizationNode[]): OrganizationNode[] {
   return nodes.flatMap((node) => [node, ...flattenOrganizations(node.children ?? [])]);
@@ -64,6 +65,7 @@ function configsByGroup(items: ConfigItem[], groupName: string) {
 
 export function OrganizationManagementPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [tenantOpen, setTenantOpen] = useState(false);
   const [memberOpen, setMemberOpen] = useState(false);
   const [quotaOpen, setQuotaOpen] = useState(false);
@@ -137,6 +139,10 @@ export function OrganizationManagementPage() {
     setSelectedOrg(node);
     setConfigOpen(true);
   };
+  const openPermissions = (node?: OrganizationNode | null) => {
+    const target = node ?? selectedOrg ?? organizations.find((item) => item.tenantType === 'BU') ?? organizations[0];
+    navigate(target ? `/perm?scopeId=${encodeURIComponent(target.id)}` : '/perm');
+  };
 
   return (
     <div className="content-page">
@@ -162,7 +168,7 @@ export function OrganizationManagementPage() {
                 <Card title="花叔工业智能 · 组织架构图" extra={<Tag color="blue">CORP / BU / PROJECT</Tag>} loading={tree.isLoading}>
                   {tree.data?.nodes.map((node) => <OrganizationCard key={node.id} node={node} onEditQuota={openQuota} onOpenConfig={openConfig} onAddMember={openMember} />)}
                 </Card>
-                <Card title="租户列表" extra={<Button onClick={() => selectedOrg && openConfig(selectedOrg)}>权限跳转</Button>}>
+                <Card title="租户列表" extra={<Button onClick={() => openPermissions()}>权限跳转</Button>}>
                   <Table
                     rowKey="id"
                     size="small"
@@ -174,7 +180,7 @@ export function OrganizationManagementPage() {
                       { title: '类型', dataIndex: 'tenantType', render: (value: string) => <Tag color={typeColor(value)}>{typeLabel(value)}</Tag> },
                       { title: '配额', render: (_: unknown, row: OrganizationNode) => <span>GPU {row.quotaGpu} · {row.quotaStorageTb}TB · API {row.apiRateLimitPerDay}/日</span> },
                       { title: '状态', dataIndex: 'status', render: statusTag },
-                      { title: '操作', render: (_: unknown, row: OrganizationNode) => <Space><Button size="small" onClick={() => openQuota(row)}>编辑配额</Button><Button size="small" onClick={() => openConfig(row)}>BU配置</Button><Button size="small">权限跳转</Button></Space> },
+                      { title: '操作', render: (_: unknown, row: OrganizationNode) => <Space><Button size="small" onClick={() => openQuota(row)}>编辑配额</Button><Button size="small" onClick={() => openConfig(row)}>BU配置</Button><Button size="small" onClick={() => openPermissions(row)}>权限跳转</Button></Space> },
                     ]}
                   />
                 </Card>
@@ -213,7 +219,7 @@ export function OrganizationManagementPage() {
                   columns={[
                     { title: '成员', dataIndex: 'displayName', render: (_: string, row) => <strong>{row.displayName}<br /><span className="muted">{row.username}</span></strong> },
                     { title: '组织', dataIndex: 'organizationName' },
-                    { title: '角色', dataIndex: 'roleCode', render: (role: string) => <Tag color={role === 'SUPER_ADMIN' ? 'red' : 'blue'}>{role}</Tag> },
+                    { title: '角色', dataIndex: 'roleCode', render: (role: string) => <Tag color={role === 'SUPER_ADMIN' ? 'red' : 'blue'}>{displayRoleName(role, roles.data ?? [])}</Tag> },
                     { title: '作用域', render: (_: unknown, row) => <span>{row.scopeType}:{row.scopeId}</span> },
                     { title: '状态', dataIndex: 'status', render: statusTag },
                   ]}

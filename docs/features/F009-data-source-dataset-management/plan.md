@@ -5,7 +5,7 @@ plan_status: approved
 approved_at: 2026-05-18
 owner: codex
 created_at: 2026-05-18
-updated_at: 2026-05-18
+updated_at: 2026-05-20
 ---
 
 # Plan: 数据源与数据集管理基础能力
@@ -44,7 +44,7 @@ F006 已完成身份、权限、BU 边界与审计底座；F007 已完成组织�
 
 F009 完成后，平台应具备：
 
-1. `datasrc` 数据源管理页面接入真实 API，支持数据源列表、新建、连接测试、激活/禁用、详情/编辑、同步任务 seam 和状态诊断。
+1. `datasrc` 数据源管理页面接入真实 API，支持数据源列表、新建、连接测试、激活/禁用、详情/编辑、同步任务 seam 和状态诊断；本轮需求收敛为“导入 / 接口”两类数据集接入方式。
 2. `ds` 数据集管理页面接入真实 API，支持统计卡、分类 Tab、搜索/筛选、分页、权限/状态 badge、版本抽屉、批量操作入口。
 3. `up` 新建数据集/上传向导复用 F007 文件元数据 seam，支持数据集元数据、文件初始化、完成登记、hash/size 校验和版本草稿生成。
 4. `dsdetail` 数据集详情展示概览、版本、文件、权限、血缘摘要、样例预览和不可预览退化状态。
@@ -57,8 +57,9 @@ F009 完成后，平台应具备：
 
 #### 3.1 数据源管理
 
-- 数据源类型：`RELATIONAL_DB`、`FILE`、`OBJECT_STORAGE`、`STREAM`、`TIME_SERIES`、`INDUSTRIAL_PROTOCOL`、`API`。
-- 数据源配置摘要：名称、类型、Host/Endpoint、端口、数据库/Bucket/Topic、凭据模式、`secretRef`、共享范围、描述。
+- 数据集接入方式：`IMPORT`、`API`。
+- 数据内容类型：`IMAGE`（图片）、`AUDIO_VIDEO`（影音）。
+- 数据源/接入配置摘要：名称、接入方式、接口 Endpoint 或导入批次、凭据模式、`secretRef`、共享范围、描述。
 - 敏感字段脱敏：密码、AccessKey、Token、连接串 secret 不回显。
 - 连接测试：记录 `lastTestAt`、`diagnosticCode`、`diagnosticMessage`、`latencyMs`、`traceId`。
 - DAT-001：连接测试未通过的数据源不得激活，不得被后续同步任务或数据集导入引用。
@@ -66,23 +67,25 @@ F009 完成后，平台应具备：
 
 #### 3.2 数据源同步任务 seam
 
-- 支持保存同步任务配置：数据源、目标数据集、调度方式、采集范围、状态、最近执行结果。
+- 支持保存同步任务配置：接口数据源、目标数据集、调度方式、采集范围、状态、最近执行结果。
 - 支持手动触发、暂停、删除的 API seam。
-- 不实现生产级采集调度器，不真实联调 DB/OSS/Kafka/OPC-UA；未配置 connector 返回 `UNCONFIGURED`。本地 sandbox connector 覆盖 `RELATIONAL_DB` / `API` / `STREAM` / `TIME_SERIES` / `INDUSTRIAL_PROTOCOL` 的一次性导入快照，用于联调和验收。
+- 不实现生产级采集调度器，不真实联调 DB/OSS/Kafka/OPC-UA 等专用连接器；未配置 connector 返回 `UNCONFIGURED`。本地 sandbox connector 仅保留 `IMPORT` / `API` 的一次性导入快照，用于联调和验收。
 
 #### 3.3 数据集管理
 
 - 数据集创建、查询、详情、更新、归档、回收。
-- 数据集字段：名称、类型、数据类型、当前版本、状态、访问级别、标签、recordCount、sizeBytes、owner、tenantId、projectId。
+- 数据集字段：名称、类型、数据内容类型、接入方式、当前版本、状态、访问级别、标签、recordCount、sizeBytes、owner、tenantId、projectId。
 - 查询能力：关键词、类型、状态、访问级别、标签、创建时间、大小范围、分页。
 - 分类 Tab：全部数据集、原始数据、预处理后、已标注。
 - 数据集类型：`RAW`、`PREPROCESSED`、`ANNOTATED`、`AUGMENTED`；F009 主要创建 `RAW`，其余类型作为后续产物 seam。
+- 数据内容类型仅考虑 `IMAGE` 与 `AUDIO_VIDEO`；文本、结构化、多模态等其他类型暂不纳入本阶段。
 
 #### 3.4 上传与文件引用
 
 - 复用 F007 `platform_file_object` 的 object key、初始化、完成登记、hash/size 校验、下载 URL seam。
 - 新增 `dataset_file` 或等价绑定，关联 `datasetId`、`versionId` 与 `fileId`。
 - 文件角色：原始文件、样例文件、元数据文件、标注文件、派生产物。
+- 标注文件作为后续 F012 标注任务完成后的强制产物，由 `ANNOTATED` 数据集版本绑定。
 - hash/size 校验失败不得进入可发布版本。
 - 对象存储未配置时展示 `TODO_CONFIRM_MINIO_*` / `UNCONFIGURED`，不伪造上传到真实对象存储成功。
 
@@ -119,7 +122,7 @@ F009 完成后，平台应具备：
 - 不实现完整 Pipeline 编辑器、算子执行、格式转换、内容清洗、数据增强执行。
 - 不实现标注任务、标注工作台、标注审核、AI 预标注或标注质量检查完整业务。
 - 不实现数据资产门户完整推荐、排行榜、复杂审批中心和通知闭环；仅提供搜索/申请/授权 seam。
-- 不实现真实 DB/OSS/Kafka/OPC-UA/REST API connector 生产联调；仅实现本地 sandbox connector，生产参数继续以 `TODO_CONFIRM_*` 留痕。
+- 不实现真实 DB/OSS/Kafka/OPC-UA 等专用 connector 生产联调；本阶段仅保留导入与接口接入，生产参数继续以 `TODO_CONFIRM_*` 留痕。
 - 不实现真实分片上传、对象存储签名、MinIO/OSS/KMS 生产接入。
 - 不实现训练任务、模型版本、推理服务的真实引用业务，只提供后续引用检查 seam。
 - 不复制原型 JSX 或已删除旧 backend/frontend 代码作为生产实现。
@@ -136,7 +139,7 @@ Codex 可在 `/build-feature` 中直接决定：
 
 必须保留待确认或后续 contract 冻结：
 
-- 真实数据源 Host、网络、账号、凭据、VPC、白名单、OPC-UA/Kafka 等协议细节。
+- 真实接口接入 Host、网络、账号、凭据、VPC、白名单等协议细节。
 - 真实对象存储/MinIO/OSS endpoint、bucket、KMS、签名策略和分片上传协议。
 - 内容安全检测服务供应商、API、风险等级阈值和人工处置队列。
 - 门户完整审批工单、通知闭环和跨 BU 数据共享最终组织规则。
@@ -145,7 +148,7 @@ Codex 可在 `/build-feature` 中直接决定：
 
 - 数据源连接测试失败：保持 `INACTIVE` / `FAILED`，不得激活，返回明确诊断并写审计。
 - 数据源凭据明文回显：拒绝；响应只返回脱敏摘要或 `secretRef`。
-- 外部 connector 未配置：返回 `UNCONFIGURED` 与 `TODO_CONFIRM_*`，前端显示未配置引导。
+- 外部 API connector 未配置：返回 `UNCONFIGURED` 与 `TODO_CONFIRM_*`，前端显示未配置引导。
 - 文件 hash/size 与初始化元数据不一致：复用 F007 逻辑标记失败，阻断版本发布。
 - 内容安全服务未配置：不得伪造通过；数据集可处于 `SECURITY_PENDING` / `NEEDS_REVIEW` 或阻断发布，contract 阶段冻结。
 - 已发布版本被修改/删除：返回 409/422，提示新建版本，写审计。
@@ -193,7 +196,7 @@ Codex 可在 `/build-feature` 中直接决定：
 
 - `DataSourceController` / `DataSourceService` / `DataSourceDtos`：当前仓库没有数据源事实模型。
 - `DatasetController` / `DatasetService` / `DatasetDtos`：当前仓库没有数据集、版本、血缘、访问授权事实模型。
-- `DataSourceConnectionTester` / `DataSourceClient` seam：隔离 DB/OSS/Kafka/OPC-UA/API 等外部 connector，便于未配置诊断与后续真实接入。
+- `DataSourceConnectionTester` / `DataSourceClient` seam：隔离导入与 API 接入配置，便于未配置诊断与后续真实接入。
 - `DatasetReferenceService` seam：供后续标注、Pipeline、训练、模型和推理引用有效数据集版本。
 - `dataset_*` / `data_source_*` Flyway 表：承载 DATA 域事实源，不与 F006/F007 平台表冲突。
 - 前端 DATA 页面组件：替换 `PrototypePage` 占位，但保持原型信息架构和文案语义。
@@ -289,6 +292,7 @@ Codex 可在 `/build-feature` 中直接决定：
 - `Dataset`
 - `DatasetVersion`
 - `DatasetFile`
+- `AnnotationArtifactFile`（作为 `DatasetFile` 的标注文件角色，不新增平行文件事实源）
 - `DataLineage`
 - `DatasetAccessRequest`
 - `DatasetAccessGrant`
@@ -365,14 +369,16 @@ Codex 可在 `/build-feature` 中直接决定：
 - AC-08：数据集查询、详情、下载遵循 BU 隔离；跨 BU 无授权不暴露资源存在性。
 - AC-09：数据源、数据集、版本、文件、授权、删除、跨 BU 拒绝等关键事件均写审计。
 - AC-10：F009 不实现完整 Pipeline、标注、数据增强、生产采集调度和真实外部 connector；仅提供后续引用 seam。
-- AC-11：`RELATIONAL_DB`、`API`、`STREAM`、`TIME_SERIES`、`INDUSTRIAL_PROTOCOL` 在本地 sandbox connector 下可通过同步任务生成数据集版本、文件、血缘和审计；生产 connector 未配置仍不得伪造成功。
+- AC-11：`IMPORT` 与 `API` 在本地 sandbox connector 下可通过导入/同步任务生成图片或影音数据集版本、文件、血缘和审计；生产 connector 未配置仍不得伪造成功。
+- AC-12：数据集内容类型仅允许图片或影音；其他类型在需求和前端入口中暂不展示，后端契约保留明确拒绝或未支持诊断。
+- AC-13：后续标注产生的标注文件可作为 `dataset_file` 的 `ANNOTATION_RESULT` 角色绑定到 `ANNOTATED` 数据集版本，F009 不实现标注流程但需保留文件角色与血缘 seam。
 
 ## 10. 验证策略
 
 后续 `/build-feature` 阶段测试计划应覆盖：
 
 - 后端：
-  - 数据源连接测试、激活门禁、敏感字段脱敏、未配置 connector 诊断。
+  - 数据源连接测试、激活门禁、敏感字段脱敏、未配置 connector 诊断；接入方式仅覆盖导入与接口。
   - 数据集 CRUD、列表筛选、版本发布、版本不可变、文件绑定、hash/size 失败。
   - 受限数据集申请/授权/过期、BU 隔离、跨 BU 404/403、删除前引用阻断。
   - 审计查询与 traceId。
@@ -411,7 +417,14 @@ Codex 可在 `/build-feature` 中直接决定：
 
 - 内容安全服务未配置时，F009 版本发布应阻断到 `SECURITY_PENDING`，还是允许 dev/test sandbox 下通过？建议 contract 阶段冻结为：生产/未配置阻断，显式 sandbox 可通过测试替身。
 - `portal` 与 `lineage` 是否在 F009 完整替换占位页，还是仅提供后端 seam 与 `dsdetail` 内联展示？建议 F009 优先接 `dsdetail` 血缘摘要，`portal` 完整体验后续 F011。
-- 数据源同步任务是否需要定时调度执行？建议 F009 只保存配置和手动触发 seam，不接生产调度器。
+- 数据源同步任务是否需要定时调度执行？建议 F009 只保存接口接入配置和手动触发 seam，不接生产调度器。
+
+## 14. 2026-05-20 需求调整待确认
+
+- 用户确认当前数据集主要只有两类：图片、影音；文本、结构化、多模态等其他类型先不考虑。
+- 用户确认数据集接入方式只有两类：导入、接口；数据库、对象存储、流、时序、工业协议等专用连接器先不考虑。
+- 标注任务完成后必须产生对应标注文件并保存；F009 只保留标注文件角色、文件绑定和血缘 seam，实际标注流程由 F012 调整。
+- 本节为文档需求调整，代码尚未同步修改；待用户确认后再进入代码改造。
 - 数据集版本发布是否需要强制内容安全检测通过？建议纳入状态机，但真实第三方集成后续确认。
 
 ## 13. 审批记录

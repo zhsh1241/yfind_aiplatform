@@ -11,7 +11,9 @@
 
 ## 1. Requirement Summary
 
-F012 实现 DATA 域标注闭环控制面：前端按原型 `ann`、`annwork`、`annreview` 信息架构提供任务管理、标注工作台和审核；后端提供可持久化、可审计、可校验、可生成 `ANNOTATED` 数据集和 `ANNOTATION` 血缘的 Annotation API；Label Studio 和 AI 预标注均以 seam 落地，未知生产参数必须以 `TODO_CONFIRM_*` 暴露。
+F012 实现 DATA 域标注闭环控制面：前端按原型 `ann`、`annwork`、`annreview` 信息架构提供任务管理、标注工作台和审核；后端提供可持久化、可审计、可校验、可生成标注文件、`ANNOTATED` 数据集和 `ANNOTATION` 血缘的 Annotation API；Label Studio 和 AI 预标注均以 seam 落地，未知生产参数必须以 `TODO_CONFIRM_*` 暴露。
+
+> **2026-05-20 变更说明**：本契约已按最新口径追加待确认调整：标注场景仅支持图片打标/图片分割，任务完成后必须生成并保存标注文件。代码已按用户确认口径同步改造，本契约重新冻结。
 
 ### Business references
 - `docs/business/bizdocs/02-01-业务流程-数据管理.md`：DATA-003、DATA-006。
@@ -174,7 +176,7 @@ F012 实现 DATA 域标注闭环控制面：前端按原型 `ann`、`annwork`、
 - Response: `AnnotationPublicationResponse`。
 
 #### `POST /api/v1/annotation/tasks/{taskId}/publish-dataset`
-- Description: 质量检查通过后生成 `ANNOTATED` 数据集、版本、结果文件和血缘。
+- Description: 质量检查通过后生成并保存标注文件，再生成 `ANNOTATED` 数据集、版本、结果文件绑定和血缘。
 - Permission: `data:annotation:publish`。
 - Audit: `ANNOTATION_DATASET_PUBLISHED`；失败时 `ANNOTATION_QUALITY_CHECK_FAILED`。
 - Response: `AnnotationPublicationResponse`。
@@ -211,7 +213,7 @@ F012 实现 DATA 域标注闭环控制面：前端按原型 `ann`、`annwork`、
   "sourceDatasetId": "DATASET-WELD-DEFECT",
   "sourceVersionId": "DVER-WELD-001",
   "templateId": "LT-WELD-BBOX",
-  "scene": "OBJECT_DETECTION",
+  "scene": "IMAGE_TAGGING",
   "reviewEnabled": true,
   "prelabelEnabled": true,
   "labelStudioEnabled": true,
@@ -229,8 +231,8 @@ F012 实现 DATA 域标注闭环控制面：前端按原型 `ann`、`annwork`、
 {
   "taskId": "ANN-WELD-Q2",
   "name": "Q2焊缝检测图像标注",
-  "scene": "OBJECT_DETECTION",
-  "sceneLabel": "目标检测",
+  "scene": "IMAGE_TAGGING",
+  "sceneLabel": "图片打标",
   "sourceDatasetId": "DATASET-WELD-DEFECT",
   "sourceDatasetName": "焊缝缺陷检测数据集",
   "templateId": "LT-WELD-BBOX",
@@ -255,7 +257,7 @@ F012 实现 DATA 域标注闭环控制面：前端按原型 `ann`、`annwork`、
 {
   "templateId": "LT-WELD-BBOX",
   "name": "焊缝缺陷 BBox 模板",
-  "scene": "OBJECT_DETECTION",
+  "scene": "IMAGE_TAGGING",
   "labelType": "BOUNDING_BOX",
   "labelSchemaJson": "{\"labels\":[\"裂纹\",\"气孔\"]}",
   "labelStudioConfigXml": "<View>...</View>",
@@ -310,6 +312,8 @@ F012 实现 DATA 域标注闭环控制面：前端按原型 `ann`、`annwork`、
   "formatStatus": "PASSED",
   "diagnosticCode": "OK",
   "diagnosticMessage": "ANNOTATION_QUALITY_CHECK_PASSED",
+  "annotationArtifactFileId": "FILE-ANN-WELD-Q2-RESULT",
+  "annotationArtifactRole": "ANNOTATION_RESULT",
   "outputDatasetId": "DATASET-ANN-WELD-Q2",
   "outputVersionId": "DVER-ANN-WELD-Q2-001",
   "publishedAt": "2026-05-19T00:00:00Z"
@@ -342,7 +346,7 @@ F012 实现 DATA 域标注闭环控制面：前端按原型 `ann`、`annwork`、
 | 403 | 40300 | 缺少 annotation/label-template 权限或跨 BU 写操作 | PLT-001 / PLT-009 |
 | 404 | 40400 | 资源不存在或跨 BU 读不可见 | DAT-012 |
 | 409 | 40900 | 非法状态流转、已完成任务再次提交/审核 | Annotation 状态机 |
-| 422 | 42200 | 非 ACTIVE 数据集、未发布模板、自审、质量检查失败、Label Studio 未配置 | DAT-003/004/009/010 |
+| 422 | 42200 | 非 ACTIVE 数据集、非图片数据集、未发布模板、自审、质量检查失败、标注文件生成失败、Label Studio 未配置 | DAT-003/004/009/010/013 |
 
 ## 5. Domain / State / Rules
 
@@ -370,9 +374,11 @@ External binding:
 ### 5.2 MUST rules
 
 - MUST-ANN-001 / DAT-009: `sourceDataset.status` 必须为 `ACTIVE`，且当前用户可见。
+- MUST-ANN-001A: `sourceDataset.dataType` 必须为 `IMAGE`；影音数据集本阶段可纳管但不得创建图片标注任务。
 - MUST-ANN-002 / DAT-003: `template.status` 必须为 `PUBLISHED` 才能创建/启动任务。
 - MUST-ANN-003 / DAT-004: `reviewerId != annotatorId`，自审必须拒绝。
 - MUST-ANN-004 / DAT-010: 发布 `ANNOTATED` 数据集前必须通过完整性、格式和覆盖率检查。
+- MUST-ANN-004A / DAT-013: 发布 `ANNOTATED` 数据集前必须生成并保存标注文件，且标注文件必须作为 `ANNOTATION_RESULT` 绑定到输出版本。
 - MUST-ANN-005 / DAT-012 / PLT-001: 所有查询与写操作按 tenantId/BU 隔离；跨 BU 读不可见或写 403。
 - MUST-ANN-006 / PLT-011: 跨租户拒绝、数据集发布、Label Studio 同步失败等必须写审计。
 - MUST-ANN-007: Label Studio token 只能以 `secretRef` 表示，响应不得泄露明文凭据。
@@ -417,3 +423,4 @@ External binding:
 - Versioning: 本期仍使用 `/api/v1`；新增字段向后兼容，前端允许忽略未知字段。
 - Security: 不新增依赖，不保存明文 secret，不真实调用未配置 Label Studio。
 - Data compatibility: 标注输出必须复用 `dataset`、`dataset_version`、`dataset_file`、`platform_file_object`、`data_lineage`。
+- Scope compatibility: 本阶段 `scene` 仅验收 `IMAGE_TAGGING` 和 `IMAGE_SEGMENTATION`；历史 `OBJECT_DETECTION` 可在实现中映射到图片打标语义，但不再作为业务主口径。

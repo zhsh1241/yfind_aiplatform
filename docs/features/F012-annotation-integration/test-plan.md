@@ -18,14 +18,16 @@
 | T-P0-01 | AC-01 | 标注任务管理原型结构可见 | 登录后进入 `/ann` | 标题 `标注任务管理`、统计卡、Tab、任务列表、标签模板按钮和 `＋ 新建标注任务` 可见 |
 | T-P0-02 | AC-02 | 创建任务成功 | 调用 `POST /annotation/tasks`，传 ACTIVE 数据集、PUBLISHED 模板、标注员、审核员 | 返回任务 `ASSIGNED`/`IN_PROGRESS`，生成 assignment、work item、external binding，并写创建/分配审计 |
 | T-P0-03 | AC-02 | DAT-009 非 ACTIVE 数据集失败 | 用非 ACTIVE 数据集创建任务 | API 返回 422，消息包含“所选数据集状态不可用”，任务不落库 |
+| T-P0-03A | AC-02/09 | 非图片数据集创建标注任务失败 | 用影音或其他非图片数据集创建图片打标/图片分割任务 | API 返回 422，消息包含“仅支持图片数据集”，任务不落库 |
 | T-P0-04 | AC-02 AC-03 | DAT-003 未发布模板失败 | 用 DRAFT 模板创建任务或启动任务 | API 返回 422，消息包含“任务尚未配置标签模板” |
 | T-P0-05 | AC-03 | 标签模板发布和 Label Studio config | 创建模板、发布、获取 label-studio-config | 状态 `PUBLISHED`，返回 `<View>` XML seam，写 `ANNOTATION_TEMPLATE_PUBLISHED` 审计 |
-| T-P0-06 | AC-04 | 工作台提交标注结果 | 查询 work-items，保存草稿，提交 annotationJson | 工作项进入 `REVIEW_PENDING`，生成 review item，写 `ANNOTATION_RESULT_SUBMITTED` |
+| T-P0-06 | AC-04/09 | 工作台提交图片打标/图片分割结果 | 查询 work-items，保存草稿，提交图片打标或图片分割 annotationJson | 工作项进入 `REVIEW_PENDING`，生成 review item，写 `ANNOTATION_RESULT_SUBMITTED` |
 | T-P0-07 | AC-05 | 审核通过/驳回 | 审核员 approve 一个项，reject 另一个项并填写原因 | 通过项 `APPROVED`，驳回项 `REJECTED`，任务统计更新，审计存在 |
 | T-P0-08 | AC-05 | DAT-004 自审阻断 | 标注提交人调用 approve 自己的 review item | API 返回 422，消息“不允许审核自己提交的标注结果”，写 `ANNOTATION_REVIEW_SELF_REJECTED` |
 | T-P0-09 | AC-06 | Label Studio 未配置 | 调用 status/sync-project/import-results | 返回 `UNCONFIGURED`、`TODO_CONFIRM_LABEL_STUDIO_*`，同步失败写审计，不返回成功同步 |
-| T-P0-10 | AC-07 | 发布标注数据集成功 | 所有工作项已通过后调用 `quality-check` 与 `publish-dataset` | 生成 `ANNOTATED` dataset/version/file 和 `ANNOTATION` lineage，返回 `PASSED` |
+| T-P0-10 | AC-07 | 发布标注数据集成功 | 所有工作项已通过后调用 `quality-check` 与 `publish-dataset` | 先生成并保存 `ANNOTATION_RESULT` 标注文件，再生成 `ANNOTATED` dataset/version/file 和 `ANNOTATION` lineage，返回 `PASSED` |
 | T-P0-11 | AC-07 | DAT-010 质量检查失败 | 覆盖率不足或存在未通过工作项时发布 | API 返回 422 或 `FAILED` 诊断，阻断发布，写 `ANNOTATION_QUALITY_CHECK_FAILED` |
+| T-P0-11A | AC-07 | DAT-013 标注文件生成失败 | 模拟标注文件对象保存或绑定失败后发布 | API 返回 422 或 `FAILED` 诊断，阻断 `ANNOTATED` 数据集发布，写审计 |
 | T-P0-12 | AC-08 | 权限与 BU 隔离 | QE 用户访问 CABIN 任务；无 review 权限审核 | 跨 BU 读 404 或写 403，权限不足 403，并有审计 |
 
 ## 3. P1 - Important
@@ -46,6 +48,7 @@
 | T-P2-01 | AC-01 | 原型语义文案完整性 | 检查 `/ann` 文案 | `标注任务管理`、`标签模板`、`新建标注任务`、`AI 预标注`、`质量评分` 等文案完整 |
 | T-P2-02 | AC-06 | Label Studio 导出格式 seam | 查看任务详情/发布区域 | 明示 `TODO_CONFIRM_ANNOTATION_EXPORT_FORMATS`，不伪造支持清单 |
 | T-P2-03 | AC-04 | AI 预标注未配置 | 启用 AI 预标注但模型来源未知 | 状态为 `UNCONFIGURED`，人工标注仍可继续 |
+| T-P2-04 | AC-09 | 非本期标注类型不展示 | 查看任务创建场景下拉 | 仅展示图片打标、图片分割；不展示文本/音频/视频逐帧/多模态 |
 
 ## 5. Cross-cutting Verification
 
@@ -55,7 +58,7 @@
 - Audit:
   - 后端测试查询 `platform_audit_log`，断言 `ANNOTATION_TASK_CREATED`、`ANNOTATION_RESULT_SUBMITTED`、`ANNOTATION_REVIEW_APPROVED`、`ANNOTATION_DATASET_PUBLISHED`、`ANNOTATION_LABEL_STUDIO_SYNC_FAILED`。
 - Business rules:
-  - DAT-003、DAT-004、DAT-009、DAT-010、DAT-012、PLT-001、PLT-011。
+  - DAT-003、DAT-004、DAT-009、DAT-010、DAT-012、DAT-013、PLT-001、PLT-011。
 - NFR:
   - 无新增依赖；API 保持 `/api/v1` envelope；错误信息不泄露 token/secret。
 - Frontend visual/prototype parity:
@@ -65,12 +68,15 @@
 
 - AC-01 -> T-P0-01, T-P1-01, T-P2-01
 - AC-02 -> T-P0-02, T-P0-03, T-P0-04
+- AC-02 -> T-P0-03A
 - AC-03 -> T-P0-05, T-P1-02
 - AC-04 -> T-P0-06, T-P1-03, T-P2-03
 - AC-05 -> T-P0-07, T-P0-08, T-P1-04
 - AC-06 -> T-P0-09, T-P2-02
 - AC-07 -> T-P0-10, T-P0-11, T-P1-05
+- AC-07 -> T-P0-11A
 - AC-08 -> T-P0-12, T-P1-06
+- AC-09 -> T-P0-03A, T-P0-06, T-P2-04
 
 ## 7. Required commands
 

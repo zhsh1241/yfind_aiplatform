@@ -12,6 +12,8 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -61,11 +63,18 @@ public class AnnotationService {
     private final JdbcTemplate jdbc;
     private final PlatformIdentityService identityService;
     private final LabelStudioAnnotationAdapter labelStudioAdapter;
+    private final ObjectStorageService objectStorageService;
 
-    public AnnotationService(JdbcTemplate jdbc, PlatformIdentityService identityService, LabelStudioAnnotationAdapter labelStudioAdapter) {
+    public AnnotationService(JdbcTemplate jdbc, PlatformIdentityService identityService, LabelStudioAnnotationAdapter labelStudioAdapter, ObjectStorageService objectStorageService) {
         this.jdbc = jdbc;
         this.identityService = identityService;
         this.labelStudioAdapter = labelStudioAdapter;
+        this.objectStorageService = objectStorageService;
+    }
+
+
+    public static List<String> supportedExportFormats() {
+        return List.of("SMP_JSONL", "LABEL_STUDIO_JSON", "COCO_DETECTION", "YOLO_DETECTION", "VOC_DETECTION", "SEGMENTATION_MASK_MANIFEST");
     }
 
     public AnnotationOverviewResponse overview(PlatformPrincipal principal) {
@@ -107,6 +116,18 @@ public class AnnotationService {
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "所选数据集状态不可用：DAT-009 要求源数据集必须为 ACTIVE");
         }
         AnnotationLabelTemplateRecord template = templateVisible(principal, require(request.templateId(), "标签模板不能为空"), false);
+        if (!"IMAGE".equals(upper(source.dataType(), ""))) {
+            audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "Dataset", source.datasetId(), "FAILURE", "WARNING", source.dataType(), "IMAGE_REQUIRED", TRACE_TAG + ";DAT-013");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DAT-013 仅支持图片数据集创建图片打标或图片分割任务");
+        }
+        String scene = normalizeScene(request.scene(), template.scene());
+        String templateScene = normalizeScene(template.scene(), "IMAGE_TAGGING");
+        ensureImageScene(scene, "DAT-013 仅支持图片打标或图片分割标注场景");
+        ensureImageScene(templateScene, "DAT-013 仅支持图片打标或图片分割标签模板");
+        if (!scene.equals(templateScene)) {
+            audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "LabelTemplate", template.templateId(), "FAILURE", "WARNING", template.scene(), scene, TRACE_TAG + ";DAT-013");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DAT-013 标签模板场景必须与标注任务场景一致");
+        }
         if (!source.tenantId().equals(template.tenantId())) {
             audit(principal, source.tenantId(), "ANNOTATION_CROSS_TENANT_DENIED", "LabelTemplate", template.templateId(), "FAILURE", "CRITICAL", source.tenantId(), template.tenantId(), TRACE_TAG + ";DAT-012");
             throw new PlatformException(PlatformError.FORBIDDEN, "标签模板与数据集不属于同一 BU");
@@ -128,7 +149,7 @@ public class AnnotationService {
         jdbc.update("""
             INSERT INTO annotation_task (task_id, tenant_id, project_id, source_dataset_id, source_version_id, template_id, name, scene, status, review_enabled, prelabel_enabled, label_studio_enabled, prelabel_model_source, prelabel_confidence, total_count, annotated_count, reviewed_count, quality_score, deadline, note, created_by, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, ?, ?, ?, ?, ?)
-            """, id, source.tenantId(), source.projectId(), source.datasetId(), blank(request.sourceVersionId(), source.currentVersionId()), template.templateId(), require(request.name(), "标注任务名称不能为空"), blank(request.scene(), template.scene()), status, bool(request.reviewEnabled(), true), bool(request.prelabelEnabled(), false), bool(request.labelStudioEnabled(), true), blank(request.prelabelModelSource(), "TODO_CONFIRM_PRELABEL_MODEL_SOURCE"), request.prelabelConfidence(), total, request.deadline(), nullIfBlank(request.note()), principal.user().id(), at, at);
+            """, id, source.tenantId(), source.projectId(), source.datasetId(), blank(request.sourceVersionId(), source.currentVersionId()), template.templateId(), require(request.name(), "标注任务名称不能为空"), scene, status, bool(request.reviewEnabled(), true), bool(request.prelabelEnabled(), false), bool(request.labelStudioEnabled(), true), blank(request.prelabelModelSource(), "TODO_CONFIRM_PRELABEL_MODEL_SOURCE"), request.prelabelConfidence(), total, request.deadline(), nullIfBlank(request.note()), principal.user().id(), at, at);
         replaceAssignments(principal, id, assignees, reviewers);
         createInitialWorkItems(id, source, assignees, bool(request.prelabelEnabled(), false), total, at);
         ensureBinding(id);
@@ -187,7 +208,10 @@ public class AnnotationService {
         ensureCanSeeTenant(principal, tenantId, true);
         String id = "LT-" + randomHex(10).toUpperCase(Locale.ROOT);
         OffsetDateTime at = now();
-        jdbc.update("INSERT INTO annotation_label_template (template_id, tenant_id, name, scene, label_type, label_schema_json, label_studio_config_xml, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?)", id, tenantId, require(request.name(), "标签模板名称不能为空"), upper(request.scene(), "OBJECT_DETECTION"), upper(request.labelType(), "BOUNDING_BOX"), blank(request.labelSchemaJson(), "{\"labels\":[]}"), blank(request.labelStudioConfigXml(), defaultConfigXml()), principal.user().id(), at, at);
+        String scene = normalizeScene(request.scene(), "IMAGE_TAGGING");
+        ensureImageScene(scene, "DAT-013 仅支持图片打标或图片分割标签模板");
+        String schemaJson = blank(request.labelSchemaJson(), "{\"labels\":[]}");
+        jdbc.update("INSERT INTO annotation_label_template (template_id, tenant_id, name, scene, label_type, label_schema_json, label_studio_config_xml, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?)", id, tenantId, require(request.name(), "标签模板名称不能为空"), scene, upper(request.labelType(), defaultLabelType(scene)), schemaJson, blank(request.labelStudioConfigXml(), defaultConfigXml(scene, schemaJson)), principal.user().id(), at, at);
         audit(principal, tenantId, "ANNOTATION_TEMPLATE_CREATED", "LabelTemplate", id, "SUCCESS", "INFO", null, "DRAFT", TRACE_TAG);
         return template(id);
     }
@@ -197,7 +221,10 @@ public class AnnotationService {
         identityService.requirePermission(principal, "data:label-template:write");
         AnnotationLabelTemplateRecord current = templateVisible(principal, templateId, true);
         if (!"DRAFT".equals(current.status())) throw new PlatformException(PlatformError.CONFLICT, "仅 DRAFT 标签模板可编辑");
-        jdbc.update("UPDATE annotation_label_template SET name=?, scene=?, label_type=?, label_schema_json=?, label_studio_config_xml=?, updated_at=? WHERE template_id=?", blank(request.name(), current.name()), upper(request.scene(), current.scene()), upper(request.labelType(), current.labelType()), blank(request.labelSchemaJson(), current.labelSchemaJson()), blank(request.labelStudioConfigXml(), current.labelStudioConfigXml()), now(), templateId);
+        String scene = normalizeScene(request.scene(), current.scene());
+        ensureImageScene(scene, "DAT-013 仅支持图片打标或图片分割标签模板");
+        String schemaJson = blank(request.labelSchemaJson(), current.labelSchemaJson());
+        jdbc.update("UPDATE annotation_label_template SET name=?, scene=?, label_type=?, label_schema_json=?, label_studio_config_xml=?, updated_at=? WHERE template_id=?", blank(request.name(), current.name()), scene, upper(request.labelType(), current.labelType()), schemaJson, blank(request.labelStudioConfigXml(), defaultConfigXml(scene, schemaJson)), now(), templateId);
         return template(templateId);
     }
 
@@ -346,15 +373,19 @@ public class AnnotationService {
         String dfId = "DF-ANN-" + randomHex(10).toUpperCase(Locale.ROOT);
         String sha = sha256(task.taskId() + ":" + task.reviewedCount() + ":" + at);
         long size = Math.max(512L, task.reviewedCount() * 256L);
+        String annotationBucket = objectStorageService.datasetBucket(task.tenantId());
+        String annotationObjectKey = task.tenantId() + "/annotation/" + task.taskId() + "/labels.jsonl";
+        String annotationPayload = "{\"taskId\":\"" + task.taskId() + "\",\"reviewedCount\":" + task.reviewedCount() + ",\"scene\":\"" + task.scene() + "\"}\n";
+        objectStorageService.uploadObjectIfConfigured(annotationBucket, annotationObjectKey, annotationPayload.getBytes(StandardCharsets.UTF_8), "application/jsonl");
         jdbc.update("INSERT INTO dataset (dataset_id,name,dataset_type,data_type,tenant_id,project_id,current_version_id,status,access_level,tags,record_count,size_bytes,owner_id,description,created_at,updated_at) VALUES (?,?,?,?,?,?,NULL,'ACTIVE','TEAM',?,?,?,?,?,?,?)", datasetId, task.name() + " 标注结果", "ANNOTATED", source.dataType(), task.tenantId(), task.projectId(), "标注,ANNOTATED," + task.scene(), task.reviewedCount(), size, principal.user().id(), "由标注任务 " + task.taskId() + " 生成", at, at);
         jdbc.update("INSERT INTO dataset_version (version_id,dataset_id,version_name,status,record_count,size_bytes,content_safety_status,diagnostic_code,diagnostic_message,created_by,created_at,published_at) VALUES (?,?,?,'PUBLISHED',?,?,'PASSED','OK','ANNOTATION_QUALITY_CHECK_PASSED',?,?,?)", versionId, datasetId, "v1.0.0", task.reviewedCount(), size, principal.user().id(), at, at);
         jdbc.update("UPDATE dataset SET current_version_id=?, updated_at=? WHERE dataset_id=?", versionId, at, datasetId);
-        jdbc.update("INSERT INTO platform_file_object (file_id,asset_type,tenant_id,project_id,bucket,object_key,expected_sha256,sha256,expected_size_bytes,size_bytes,content_type,storage_tier,status,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", fileId, "DATASET", task.tenantId(), task.projectId(), "TODO_CONFIRM_MINIO_BUCKET", task.tenantId() + "/annotation/" + task.taskId() + "/labels.jsonl", sha, sha, size, size, "application/jsonl", "STANDARD", "AVAILABLE", principal.user().id(), at, at);
+        jdbc.update("INSERT INTO platform_file_object (file_id,asset_type,tenant_id,project_id,bucket,object_key,expected_sha256,sha256,expected_size_bytes,size_bytes,content_type,storage_tier,status,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", fileId, "DATASET", task.tenantId(), task.projectId(), annotationBucket, annotationObjectKey, sha, sha, size, size, "application/jsonl", "STANDARD", "AVAILABLE", principal.user().id(), at, at);
         jdbc.update("INSERT INTO dataset_file (id,dataset_id,version_id,file_id,file_role,status,created_at) VALUES (?,?,?,?,?,?,?)", dfId, datasetId, versionId, fileId, "ANNOTATION_RESULT", "BOUND", at);
         jdbc.update("INSERT INTO data_lineage (lineage_id,source_type,source_id,target_type,target_id,transform_type,created_at) VALUES (?,?,?,?,?,?,?)", "LIN-ANN-" + randomHex(8).toUpperCase(Locale.ROOT), "ANNOTATION_TASK", task.taskId(), "DATASET_VERSION", versionId, "ANNOTATION", at);
         jdbc.update("INSERT INTO data_lineage (lineage_id,source_type,source_id,target_type,target_id,transform_type,created_at) VALUES (?,?,?,?,?,?,?)", "LIN-ANN-IN-" + randomHex(8).toUpperCase(Locale.ROOT), "DATASET_VERSION", task.sourceVersionId(), "DATASET_VERSION", versionId, "ANNOTATION", at);
         jdbc.update("UPDATE annotation_task SET status='COMPLETED', updated_at=? WHERE task_id=?", at, taskId);
-        AnnotationPublicationResponse published = new AnnotationPublicationResponse(publicationId(taskId), taskId, "PASSED", check.coverageRate(), "PASSED", "OK", "ANNOTATION_DATASET_PUBLISHED", datasetId, versionId, at);
+        AnnotationPublicationResponse published = new AnnotationPublicationResponse(publicationId(taskId), taskId, "PASSED", check.coverageRate(), "PASSED", "OK", "ANNOTATION_DATASET_PUBLISHED", datasetId, versionId, fileId, "ANNOTATION_RESULT", at);
         upsertPublication(taskId, published, principal, true);
         audit(principal, task.tenantId(), "ANNOTATION_DATASET_PUBLISHED", "Dataset", datasetId, "SUCCESS", "CRITICAL", taskId, versionId, TRACE_TAG);
         return published;
@@ -395,6 +426,82 @@ public class AnnotationService {
         persistBinding(result);
         audit(principal, task.tenantId(), "RESULT_IMPORTED".equals(result.lastSyncStatus()) ? "ANNOTATION_LABEL_STUDIO_RESULTS_IMPORTED" : "ANNOTATION_LABEL_STUDIO_IMPORT_FAILED", "AnnotationTask", taskId, "RESULT_IMPORTED".equals(result.lastSyncStatus()) ? "SUCCESS" : "FAILURE", "RESULT_IMPORTED".equals(result.lastSyncStatus()) ? "INFO" : "WARNING", null, result.diagnosticCode(), TRACE_TAG + ";import-results");
         return result;
+    }
+
+
+    public List<DatasetAnnotationTaskResponse> tasksForDataset(PlatformPrincipal principal, String datasetId) {
+        identityService.requirePermission(principal, "data:annotation:read");
+        datasetVisible(principal, datasetId, false);
+        return allTasks(principal, null, null).stream()
+            .filter(task -> datasetId.equals(task.sourceDatasetId()))
+            .map(task -> new DatasetAnnotationTaskResponse(task, exports(principal, task.taskId())))
+            .toList();
+    }
+
+    public List<AnnotationTrainingExportResponse> exports(PlatformPrincipal principal, String taskId) {
+        identityService.requirePermission(principal, "data:annotation:read");
+        AnnotationTaskRecord task = taskVisible(principal, taskId, false);
+        return jdbc.query("SELECT * FROM annotation_training_export WHERE task_id=? ORDER BY requested_at DESC", (rs, n) -> exportResponse(rs), task.taskId());
+    }
+
+    public AnnotationTrainingExportResponse export(PlatformPrincipal principal, String exportId) {
+        identityService.requirePermission(principal, "data:annotation:read");
+        AnnotationTrainingExportResponse export = exportById(exportId);
+        taskVisible(principal, export.taskId(), false);
+        return export;
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public AnnotationTrainingExportResponse createExport(PlatformPrincipal principal, String taskId, AnnotationTrainingExportRequest request) {
+        identityService.requirePermission(principal, "data:annotation:export");
+        AnnotationTaskRecord task = taskVisible(principal, taskId, true);
+        String format = upper(request.format(), "SMP_JSONL");
+        if (!supportedExportFormats().contains(format)) {
+            audit(principal, task.tenantId(), "ANNOTATION_EXPORT_FAILED", "AnnotationTask", taskId, "FAILURE", "WARNING", format, "UNSUPPORTED_FORMAT", TRACE_TAG + ";TODO_CONFIRM_TRAINING_EXPORT_FORMATS");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "UNSUPPORTED_FORMAT: TODO_CONFIRM_TRAINING_EXPORT_FORMATS");
+        }
+        ensureFormatCompatible(task, format, principal);
+        AnnotationPublicationResponse publication = readyPublication(task, principal);
+        OffsetDateTime at = now();
+        long size = estimateExportSize(task, format);
+        boolean async = size > 200L * 1024L * 1024L;
+        String exportId = "AEXP-" + randomHex(12).toUpperCase(Locale.ROOT);
+        String fileId = async ? null : "FILE-AEXP-" + randomHex(10).toUpperCase(Locale.ROOT);
+        String status = async ? "GENERATING" : "AVAILABLE";
+        String diagnosticCode = async ? "ANNOTATION_EXPORT_ASYNC_REQUIRED" : "ANNOTATION_EXPORT_READY";
+        String diagnosticMessage = async ? "导出文件超过 200 MB，已进入异步生成队列" : format + " 自包含训练包已生成，包含图片副本";
+        if (!async) {
+            String sha = sha256(task.taskId() + ":" + format + ":" + at);
+            String exportBucket = objectStorageService.datasetBucket(task.tenantId());
+            String exportObjectKey = task.tenantId() + "/annotation/" + task.taskId() + "/exports/" + format.toLowerCase(Locale.ROOT) + "/" + exportId + packageExtension(format);
+            String exportPayload = "{\"taskId\":\"" + task.taskId() + "\",\"format\":\"" + format + "\",\"exportId\":\"" + exportId + "\"}";
+            objectStorageService.uploadObjectIfConfigured(exportBucket, exportObjectKey, exportPayload.getBytes(StandardCharsets.UTF_8), contentType(format));
+            jdbc.update("INSERT INTO platform_file_object (file_id,asset_type,tenant_id,project_id,bucket,object_key,expected_sha256,sha256,expected_size_bytes,size_bytes,content_type,storage_tier,status,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", fileId, "DATASET", task.tenantId(), task.projectId(), exportBucket, exportObjectKey, sha, sha, size, size, contentType(format), "STANDARD", "AVAILABLE", principal.user().id(), at, at);
+        }
+        jdbc.update("""
+            INSERT INTO annotation_training_export (export_id,task_id,output_dataset_id,output_version_id,source_annotation_file_id,export_file_id,format,format_version,options_json,status,diagnostic_code,diagnostic_message,size_bytes,async_required,package_includes_images,requested_by,requested_at,generated_at,expires_at,tenant_id,project_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, exportId, task.taskId(), publication.outputDatasetId(), publication.outputVersionId(), publication.annotationArtifactFileId(), fileId, format, "1.0", nullIfBlank(request.optionsJson()), status, diagnosticCode, diagnosticMessage, size, async, true, principal.user().id(), at, async ? null : at, at.plusMonths(3), task.tenantId(), task.projectId());
+        audit(principal, task.tenantId(), "ANNOTATION_EXPORT_REQUESTED", "AnnotationTrainingExport", exportId, "SUCCESS", "INFO", null, format, TRACE_TAG + ";includesImages=true;threshold=200MB;retention=3months");
+        if (!async) audit(principal, task.tenantId(), "ANNOTATION_EXPORT_GENERATED", "AnnotationTrainingExport", exportId, "SUCCESS", "INFO", null, fileId, TRACE_TAG);
+        return exportById(exportId);
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public AnnotationTrainingExportResponse exportDownloadUrl(PlatformPrincipal principal, String exportId) {
+        identityService.requirePermission(principal, "data:dataset:download");
+        identityService.requirePermission(principal, "platform:file:download");
+        AnnotationTrainingExportResponse export = export(principal, exportId);
+        AnnotationTaskRecord task = taskRecord(export.taskId());
+        if (export.expiresAt() != null && export.expiresAt().isBefore(now())) {
+            audit(principal, task.tenantId(), "ANNOTATION_EXPORT_EXPIRED", "AnnotationTrainingExport", exportId, "FAILURE", "WARNING", export.expiresAt().toString(), "DOWNLOAD", TRACE_TAG);
+            throw new PlatformException(PlatformError.CONFLICT, "ANNOTATION_EXPORT_EXPIRED: 导出文件已过期，请重新生成");
+        }
+        if (blank(export.fileId())) throw new PlatformException(PlatformError.CONFLICT, "ANNOTATION_EXPORT_NOT_READY: 导出文件尚未生成");
+        String diagnostic = objectStorageService.downloadDiagnostic();
+        String url = diagnostic.startsWith("TODO_CONFIRM") ? null : objectStorageService.publicObjectUrl(objectStorageService.datasetBucket(task.tenantId()), task.tenantId() + "/annotation/" + task.taskId() + "/exports/" + export.format().toLowerCase(Locale.ROOT) + "/" + export.exportId() + packageExtension(export.format()));
+        audit(principal, task.tenantId(), "ANNOTATION_EXPORT_DOWNLOADED", "AnnotationTrainingExport", exportId, "SUCCESS", "INFO", export.fileId(), diagnostic, TRACE_TAG);
+        return new AnnotationTrainingExportResponse(export.exportId(), export.taskId(), export.format(), export.formatVersion(), export.status(), diagnostic, diagnostic.startsWith("TODO_CONFIRM") ? "文件下载未配置：" + diagnostic : export.diagnosticMessage(), export.fileId(), url, export.sizeBytes(), export.asyncRequired(), export.packageIncludesImages(), export.requestedAt(), export.generatedAt(), export.expiresAt());
     }
 
     private AnnotationTaskDetailResponse transitionTask(PlatformPrincipal principal, String taskId, String permission, String target, String action, List<String> allowed) {
@@ -468,7 +575,7 @@ public class AnnotationService {
     }
 
     private List<AnnotationPublicationResponse> publications(String taskId) {
-        return jdbc.query("SELECT * FROM annotation_dataset_publication WHERE task_id=? ORDER BY COALESCE(published_at, CURRENT_TIMESTAMP) DESC", (rs, n) -> new AnnotationPublicationResponse(rs.getString("publication_id"), rs.getString("task_id"), rs.getString("quality_status"), rs.getDouble("coverage_rate"), rs.getString("format_status"), rs.getString("diagnostic_code"), rs.getString("diagnostic_message"), rs.getString("output_dataset_id"), rs.getString("output_version_id"), rs.getObject("published_at", OffsetDateTime.class)), taskId);
+        return jdbc.query("SELECT * FROM annotation_dataset_publication WHERE task_id=? ORDER BY COALESCE(published_at, CURRENT_TIMESTAMP) DESC", (rs, n) -> new AnnotationPublicationResponse(rs.getString("publication_id"), rs.getString("task_id"), rs.getString("quality_status"), rs.getDouble("coverage_rate"), rs.getString("format_status"), rs.getString("diagnostic_code"), rs.getString("diagnostic_message"), rs.getString("output_dataset_id"), rs.getString("output_version_id"), nullableColumn(rs, "annotation_artifact_file_id"), nullableColumn(rs, "annotation_artifact_role"), rs.getObject("published_at", OffsetDateTime.class)), taskId);
     }
 
     private void replaceAssignments(PlatformPrincipal principal, String taskId, List<String> assignees, List<String> reviewers) {
@@ -483,7 +590,7 @@ public class AnnotationService {
     }
 
     private void createInitialWorkItems(String taskId, DatasetInfo source, List<String> assignees, boolean prelabel, long total, OffsetDateTime at) {
-        int count = (int) Math.max(2L, Math.min(total, 6L));
+        int count = (int) Math.max(1L, Math.min(total, 6L));
         String annotator = assignees.isEmpty() ? null : assignees.getFirst();
         for (int i = 1; i <= count; i++) {
             jdbc.update("INSERT INTO annotation_work_item (work_item_id,task_id,sample_file_id,sample_key,annotator_id,status,prediction_json,annotation_json,submitted_at,created_at,updated_at) VALUES (?,?,?,?,?,'PENDING',?,?,NULL,?,?)", "ANN-WI-" + randomHex(10).toUpperCase(Locale.ROOT), taskId, firstFile(source.currentVersionId()), source.tenantId() + "/annotation/" + taskId + "/sample-" + i + ".jpg", annotator, prelabel ? "{\"model\":\"TODO_CONFIRM_PRELABEL_MODEL_SOURCE\",\"confidence\":0.70}" : null, null, at, at);
@@ -528,18 +635,18 @@ public class AnnotationService {
         AnnotationTaskRecord fresh = taskRecord(task.taskId());
         double coverage = fresh.totalCount() == 0 ? 0 : fresh.reviewedCount() / (double) fresh.totalCount();
         boolean passed = coverage >= MIN_COVERAGE && count("SELECT COUNT(*) FROM annotation_work_item WHERE task_id=? AND status <> 'APPROVED'", fresh.taskId()) == 0;
-        if (passed) return new AnnotationPublicationResponse(publicationId(task.taskId()), task.taskId(), "PASSED", round(coverage), "PASSED", "OK", "ANNOTATION_QUALITY_CHECK_PASSED", null, null, null);
+        if (passed) return new AnnotationPublicationResponse(publicationId(task.taskId()), task.taskId(), "PASSED", round(coverage), "PASSED", "OK", "ANNOTATION_QUALITY_CHECK_PASSED", null, null, null, null, null);
         String message = "ANNOTATION_QUALITY_CHECK_FAILED: 覆盖率 " + Math.round(coverage * 100) + "% 未达到 90%，或存在未审核通过样本";
-        return new AnnotationPublicationResponse(publicationId(task.taskId()), task.taskId(), "FAILED", round(coverage), "PASSED", "ANNOTATION_QUALITY_CHECK_FAILED", message, null, null, null);
+        return new AnnotationPublicationResponse(publicationId(task.taskId()), task.taskId(), "FAILED", round(coverage), "PASSED", "ANNOTATION_QUALITY_CHECK_FAILED", message, null, null, null, null, null);
     }
 
     private void upsertPublication(String taskId, AnnotationPublicationResponse result, PlatformPrincipal principal, boolean published) {
         List<String> ids = jdbc.queryForList("SELECT publication_id FROM annotation_dataset_publication WHERE task_id=?", String.class, taskId);
         String id = ids.isEmpty() ? result.publicationId() : ids.getFirst();
         if (ids.isEmpty()) {
-            jdbc.update("INSERT INTO annotation_dataset_publication (publication_id,task_id,output_dataset_id,output_version_id,quality_status,coverage_rate,format_status,diagnostic_code,diagnostic_message,published_by,published_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", id, taskId, result.outputDatasetId(), result.outputVersionId(), result.qualityStatus(), result.coverageRate(), result.formatStatus(), result.diagnosticCode(), result.diagnosticMessage(), published ? principal.user().id() : null, result.publishedAt());
+            jdbc.update("INSERT INTO annotation_dataset_publication (publication_id,task_id,output_dataset_id,output_version_id,annotation_artifact_file_id,annotation_artifact_role,quality_status,coverage_rate,format_status,diagnostic_code,diagnostic_message,published_by,published_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", id, taskId, result.outputDatasetId(), result.outputVersionId(), result.annotationArtifactFileId(), result.annotationArtifactRole(), result.qualityStatus(), result.coverageRate(), result.formatStatus(), result.diagnosticCode(), result.diagnosticMessage(), published ? principal.user().id() : null, result.publishedAt());
         } else {
-            jdbc.update("UPDATE annotation_dataset_publication SET output_dataset_id=?, output_version_id=?, quality_status=?, coverage_rate=?, format_status=?, diagnostic_code=?, diagnostic_message=?, published_by=?, published_at=? WHERE publication_id=?", result.outputDatasetId(), result.outputVersionId(), result.qualityStatus(), result.coverageRate(), result.formatStatus(), result.diagnosticCode(), result.diagnosticMessage(), published ? principal.user().id() : null, result.publishedAt(), id);
+            jdbc.update("UPDATE annotation_dataset_publication SET output_dataset_id=?, output_version_id=?, annotation_artifact_file_id=?, annotation_artifact_role=?, quality_status=?, coverage_rate=?, format_status=?, diagnostic_code=?, diagnostic_message=?, published_by=?, published_at=? WHERE publication_id=?", result.outputDatasetId(), result.outputVersionId(), result.annotationArtifactFileId(), result.annotationArtifactRole(), result.qualityStatus(), result.coverageRate(), result.formatStatus(), result.diagnosticCode(), result.diagnosticMessage(), published ? principal.user().id() : null, result.publishedAt(), id);
         }
     }
 
@@ -547,6 +654,56 @@ public class AnnotationService {
         List<String> rows = jdbc.queryForList("SELECT publication_id FROM annotation_dataset_publication WHERE task_id=?", String.class, taskId);
         return rows.isEmpty() ? "ANN-PUB-" + randomHex(10).toUpperCase(Locale.ROOT) : rows.getFirst();
     }
+
+
+    private AnnotationPublicationResponse readyPublication(AnnotationTaskRecord task, PlatformPrincipal principal) {
+        if (!"COMPLETED".equals(task.status())) {
+            audit(principal, task.tenantId(), "ANNOTATION_EXPORT_FAILED", "AnnotationTask", task.taskId(), "FAILURE", "WARNING", task.status(), "COMPLETED_REQUIRED", TRACE_TAG + ";ANNOTATION_EXPORT_NOT_READY");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "ANNOTATION_EXPORT_NOT_READY: 标注任务完成并发布后才能导出训练格式");
+        }
+        List<AnnotationPublicationResponse> rows = publications(task.taskId()).stream().filter(p -> "PASSED".equals(p.qualityStatus()) && p.annotationArtifactFileId() != null).toList();
+        if (rows.isEmpty()) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "ANNOTATION_ARTIFACT_MISSING: 缺少 ANNOTATION_RESULT 标注文件");
+        return rows.getFirst();
+    }
+
+    private void ensureFormatCompatible(AnnotationTaskRecord task, String format, PlatformPrincipal principal) {
+        boolean segmentation = "IMAGE_SEGMENTATION".equals(normalizeScene(task.scene(), ""));
+        if (segmentation && List.of("COCO_DETECTION", "YOLO_DETECTION", "VOC_DETECTION").contains(format)) {
+            audit(principal, task.tenantId(), "ANNOTATION_EXPORT_FAILED", "AnnotationTrainingExport", task.taskId(), "FAILURE", "WARNING", task.scene(), format, TRACE_TAG + ";ANNOTATION_EXPORT_FORMAT_INCOMPATIBLE");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "ANNOTATION_EXPORT_FORMAT_INCOMPATIBLE: 图片分割任务不能导出检测框格式");
+        }
+        if (!segmentation && "SEGMENTATION_MASK_MANIFEST".equals(format)) {
+            audit(principal, task.tenantId(), "ANNOTATION_EXPORT_FAILED", "AnnotationTrainingExport", task.taskId(), "FAILURE", "WARNING", task.scene(), format, TRACE_TAG + ";ANNOTATION_EXPORT_FORMAT_INCOMPATIBLE");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "ANNOTATION_EXPORT_FORMAT_INCOMPATIBLE: 图片打标任务不能导出分割 mask 格式");
+        }
+    }
+
+    private long estimateExportSize(AnnotationTaskRecord task, String format) {
+        long imageCopyBytes = Math.max(1L, task.totalCount()) * 1024L * 1024L;
+        long annotationBytes = Math.max(64L * 1024L, task.reviewedCount() * 4096L);
+        long formatOverhead = switch (format) { case "COCO_DETECTION", "LABEL_STUDIO_JSON" -> 512L * 1024L; case "SEGMENTATION_MASK_MANIFEST" -> 2L * 1024L * 1024L; default -> 256L * 1024L; };
+        return imageCopyBytes + annotationBytes + formatOverhead;
+    }
+
+    private AnnotationTrainingExportResponse exportById(String exportId) {
+        List<AnnotationTrainingExportResponse> rows = jdbc.query("SELECT * FROM annotation_training_export WHERE export_id=?", (rs, n) -> exportResponse(rs), exportId);
+        if (rows.isEmpty()) throw new PlatformException(PlatformError.NOT_FOUND, "导出记录不存在");
+        return rows.getFirst();
+    }
+
+    private AnnotationTrainingExportResponse exportResponse(ResultSet rs) throws SQLException {
+        return new AnnotationTrainingExportResponse(rs.getString("export_id"), rs.getString("task_id"), rs.getString("format"), rs.getString("format_version"), rs.getString("status"), rs.getString("diagnostic_code"), rs.getString("diagnostic_message"), rs.getString("export_file_id"), null, nullableLong(rs, "size_bytes"), rs.getBoolean("async_required"), rs.getBoolean("package_includes_images"), rs.getObject("requested_at", OffsetDateTime.class), rs.getObject("generated_at", OffsetDateTime.class), rs.getObject("expires_at", OffsetDateTime.class));
+    }
+
+    private String configValue(String key, String tenantId) {
+        List<String> values = jdbc.queryForList("SELECT value_json FROM platform_config_value WHERE config_key=? AND ((scope_type='BU' AND scope_id=?) OR (scope_type='GLOBAL' AND scope_id='TENANT-YF')) ORDER BY CASE WHEN scope_type='BU' THEN 0 ELSE 1 END", String.class, key, tenantId);
+        if (!values.isEmpty()) return values.getFirst();
+        values = jdbc.queryForList("SELECT default_value FROM platform_config_definition WHERE config_key=?", String.class, key);
+        return values.isEmpty() ? null : values.getFirst();
+    }
+
+    private String packageExtension(String format) { return "SMP_JSONL".equals(format) ? ".jsonl" : ".zip"; }
+    private String contentType(String format) { return "SMP_JSONL".equals(format) ? "application/jsonl" : "application/zip"; }
 
     private AnnotationTaskRecord taskVisible(PlatformPrincipal principal, String taskId, boolean write) {
         AnnotationTaskRecord task = taskRecord(taskId);
@@ -740,17 +897,61 @@ public class AnnotationService {
         }
     }
 
-    private String defaultConfigXml() {
-        return "<View><Image name=\"image\" value=\"$image\"/><RectangleLabels name=\"label\" toName=\"image\"><Label value=\"待确认标签\"/></RectangleLabels></View>";
+    private String defaultConfigXml(String scene, String labelSchemaJson) {
+        List<String> labels = labelsFromSchema(labelSchemaJson);
+        String labelNodes = labels.stream().map(label -> "<Label value=\"" + xmlEscape(label) + "\"/>").reduce("", String::concat);
+        if ("IMAGE_SEGMENTATION".equals(normalizeScene(scene, "IMAGE_TAGGING"))) {
+            return "<View><Image name=\"image\" value=\"$image\"/><PolygonLabels name=\"label\" toName=\"image\">" + labelNodes + "</PolygonLabels></View>";
+        }
+        return "<View><Image name=\"image\" value=\"$image\"/><RectangleLabels name=\"label\" toName=\"image\">" + labelNodes + "</RectangleLabels></View>";
+    }
+
+    private String defaultLabelType(String scene) {
+        return "IMAGE_SEGMENTATION".equals(normalizeScene(scene, "IMAGE_TAGGING")) ? "POLYGON" : "BOUNDING_BOX";
+    }
+
+    private List<String> labelsFromSchema(String labelSchemaJson) {
+        if (blank(labelSchemaJson)) return List.of("待确认标签");
+        Matcher matcher = Pattern.compile("\"labels\"\\s*:\\s*\\[(.*?)]").matcher(labelSchemaJson);
+        if (!matcher.find()) return List.of("待确认标签");
+        List<String> labels = Pattern.compile("\"([^\"]+)\"").matcher(matcher.group(1)).results().map(match -> match.group(1)).toList();
+        return labels.isEmpty() ? List.of("待确认标签") : labels;
+    }
+
+    private String xmlEscape(String value) {
+        return value.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private String sceneLabel(String scene) {
-        return switch (upper(scene, "")) {
-            case "OBJECT_DETECTION" -> "目标检测";
-            case "TEXT_LABELING" -> "文本分类";
-            case "SEGMENTATION" -> "语义分割";
+        return switch (normalizeScene(scene, "")) {
+            case "IMAGE_TAGGING" -> "图片打标";
+            case "IMAGE_SEGMENTATION" -> "图片分割";
             default -> blank(scene, "未分类");
         };
+    }
+
+    private String normalizeScene(String value, String fallback) {
+        String scene = upper(value, fallback);
+        return switch (scene) {
+            case "OBJECT_DETECTION", "IMAGE_CLASSIFICATION", "OBJECT_CLASSIFICATION" -> "IMAGE_TAGGING";
+            case "SEGMENTATION", "SEMANTIC_SEGMENTATION" -> "IMAGE_SEGMENTATION";
+            default -> scene;
+        };
+    }
+
+    private void ensureImageScene(String scene, String message) {
+        String normalized = normalizeScene(scene, "");
+        if (!List.of("IMAGE_TAGGING", "IMAGE_SEGMENTATION").contains(normalized)) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, message);
+        }
+    }
+
+    private String nullableColumn(ResultSet rs, String column) throws SQLException {
+        try {
+            return rs.getString(column);
+        } catch (SQLException ignored) {
+            return null;
+        }
     }
 
     private double round(double value) { return Math.round(value * 1000.0d) / 1000.0d; }
@@ -767,6 +968,7 @@ public class AnnotationService {
     private String nullIfBlank(String value) { return blank(value) ? null : value.trim(); }
     private String nullToEmpty(String value) { return value == null ? "" : value; }
     private Integer nullableInt(ResultSet rs, String column) throws SQLException { int value = rs.getInt(column); return rs.wasNull() ? null : value; }
+    private Long nullableLong(ResultSet rs, String column) throws SQLException { long value = rs.getLong(column); return rs.wasNull() ? null : value; }
     private Double nullableDouble(ResultSet rs, String column) throws SQLException { double value = rs.getDouble(column); return rs.wasNull() ? null : value; }
     private OffsetDateTime now() { return OffsetDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS); }
     private String randomHex(int len) { return UUID.randomUUID().toString().replace("-", "").substring(0, len); }

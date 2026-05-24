@@ -34,6 +34,42 @@ powershell -ExecutionPolicy Bypass -File deploy/scripts/prepare-data-source-lab.
 
 脚本会启动/准备 PostgreSQL、Redis、MySQL、MinIO、RabbitMQ、InfluxDB、本地 API、HTTP 文件源和工业协议仿真网关；使用 `-WithKafka` 时额外启动 Kafka。脚本会把数据源与手工同步任务写入 `smp_platform`。
 
+## 数据集文件存储（已接通 Docker MinIO）
+
+当前后端已接通本地 Docker MinIO，以下数据文件默认写入 `smp-platform-minio` / `smp-datasets`：
+
+- 上传向导 `POST /api/v1/platform/files/*`
+- 数据源同步导入生成的数据集文件
+- 数据标准化输出文件
+- Pipeline 输出文件
+- 标注结果文件
+- 标注训练导出包
+
+默认环境变量如下（`deploy/local/docker-compose.yml` 已内置）：
+
+```env
+SMP_STORAGE_ENDPOINT=http://minio:9000
+SMP_STORAGE_PUBLIC_ENDPOINT=http://localhost:9000
+SMP_STORAGE_BUCKET=smp-datasets
+SMP_STORAGE_ACCESS_KEY=smpminio
+SMP_STORAGE_SECRET_KEY=smpminio_local_password
+```
+
+若在宿主机直接启动 backend，可改为：
+
+```env
+SMP_STORAGE_ENDPOINT=http://localhost:9000
+SMP_STORAGE_PUBLIC_ENDPOINT=http://localhost:9000
+SMP_STORAGE_BUCKET=smp-datasets
+SMP_STORAGE_ACCESS_KEY=smpminio
+SMP_STORAGE_SECRET_KEY=smpminio_local_password
+```
+
+文件下载接口现在返回 MinIO 预签名 URL，不再停留在 `TODO_CONFIRM_MINIO_ENDPOINT` 占位；其中：
+
+- `SMP_STORAGE_ENDPOINT`：容器内 backend 访问 MinIO 的地址
+- `SMP_STORAGE_PUBLIC_ENDPOINT`：返回给浏览器的可访问地址（本地默认 `http://localhost:9000`）
+
 ## 服务清单
 
 | 类型 | 容器 | 端口 | 账号/说明 |
@@ -41,7 +77,7 @@ powershell -ExecutionPolicy Bypass -File deploy/scripts/prepare-data-source-lab.
 | 平台元数据库 / PostgreSQL 源库 | `smp-platform-postgres` | 5432 | `smp/smp_local_password`，库：`smp_platform`、`smp_source_mes` |
 | Redis 缓存 | `smp-platform-redis` | 6379 | 样例 key：`smp:line:*`、`smp:dataset:hot` |
 | MySQL 关系源库 | `smp-platform-mysql` | 3306 | `root/<MYSQL_ROOT_PASSWORD>`；新建 compose 默认为 `smp_root_password`，复用旧容器时以 `docker exec smp-platform-mysql printenv MYSQL_ROOT_PASSWORD` 为准 |
-| MinIO 对象存储 | `smp-platform-minio` | 9000/9001 | `smpminio/smpminio_local_password`，bucket：`smp-datasets` |
+| MinIO 对象存储 | `smp-platform-minio` | 9000/9001 | `smpminio/smpminio_local_password`，bucket：`smp-datasets`；backend compose 默认直连 `http://minio:9000` |
 | RabbitMQ 事件流 | `smp-platform-rabbitmq` | 5672/15672 | `smp/<RABBITMQ_DEFAULT_PASS>`；新建 compose 默认为 `smp_rabbit_password`，复用旧容器时以 `docker exec smp-platform-rabbitmq printenv RABBITMQ_DEFAULT_PASS` 为准 |
 | Kafka 事件流（可选） | `smp-platform-kafka` | 9092 | topic：`smp.weld.events` |
 | InfluxDB 时序库 | `smp-platform-influxdb` | 8086 | org：`yanfeng`，bucket：`smp_timeseries`，token：`smp_influx_token` |
@@ -74,4 +110,5 @@ docker exec smp-platform-postgres psql -U smp -d smp_source_mes -c "select count
 docker exec smp-platform-mysql sh -lc "mysql -uroot -p`$MYSQL_ROOT_PASSWORD -e 'select count(*) from smp_source_mes.mes_station_event;'"
 curl http://localhost:8081/health
 curl http://localhost:8082/weld_quality_snapshot.csv
+docker exec smp-platform-minio mc ls local/smp-datasets --recursive
 ```
