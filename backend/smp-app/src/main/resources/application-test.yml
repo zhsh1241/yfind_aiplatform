@@ -9,6 +9,11 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+  servlet:
+    multipart:
+      max-file-size: 16MB
+      max-request-size: 32MB
+
 smp:
   storage:
     endpoint: "${SMP_STORAGE_ENDPOINT:http://localhost:9000}"

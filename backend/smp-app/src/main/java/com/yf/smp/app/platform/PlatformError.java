@@ -5,6 +5,7 @@ public enum PlatformError {
     FORBIDDEN(40300, 403),
     NOT_FOUND(40400, 404),
     CONFLICT(40900, 409),
+    PAYLOAD_TOO_LARGE(41300, 413),
     BUSINESS_RULE_FAILED(42200, 422);
 
     private final int businessCode;

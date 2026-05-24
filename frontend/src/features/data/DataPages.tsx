@@ -16,8 +16,11 @@ import {
   type DataSourceSyncTask,
   type DataStandardProfile,
   type DataStandardTask,
+  type DatasetDetail,
   type DatasetSummary,
+  type DatasetUploadSession,
   type DatasetVersion,
+  type FileObjectSummary,
   type OperatorDetail,
   type OperatorSummary,
   type PipelineDetail,
@@ -32,7 +35,7 @@ const color = (status?: string) => ['ACTIVE', 'PUBLISHED', 'TESTED', 'OK', 'AVAI
   ? 'green'
   : ['UNCONFIGURED', 'DRAFT', 'PAUSED'].includes(status ?? '') ? 'orange' : ['FAILED', 'DISABLED', 'ARCHIVED'].includes(status ?? '') ? 'red' : 'blue';
 const fmtSize = (n?: number | null) => !n ? '0 B' : n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : n > 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${n} B`;
-const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', AUDIO_VIDEO: '影音', TEXT: '文本', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', TIME_SERIES: '时序库', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
+const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', AUDIO_VIDEO: '影音', TEXT: '文本', TABULAR: '表格', EVENT: '事件', TIME_SERIES: '时序库', TELEMETRY: '遥测', FILE: '文件', OBJECT: '对象', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '外部接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
 
 const safeJson = (value?: string | null) => {
   try {
@@ -368,7 +371,6 @@ export function AnnotationTasksPage() {
   const [templateForm] = Form.useForm<AnnotationLabelTemplateInput>();
   const taskScene = Form.useWatch('scene', taskForm) ?? 'IMAGE_TAGGING';
   const selectedTaskDatasetId = Form.useWatch('sourceDatasetId', taskForm);
-  const selectedTaskTemplateId = Form.useWatch('templateId', taskForm);
   const templateScene = Form.useWatch('scene', templateForm);
   const templateSchema = Form.useWatch('labelSchemaJson', templateForm);
   const overview = useQuery({ queryKey: ['annotation-overview'], queryFn: dataApi.annotationOverview });
@@ -415,21 +417,28 @@ export function AnnotationTasksPage() {
     }
   }, [inv, msg, openWorkbench]);
   const openTaskWizard = useCallback((datasetId?: string) => {
-    const selectedDataset = annotationDatasets.find((item) => item.datasetId === datasetId);
+    const selectedDataset = annotationDatasets.find((item) => item.datasetId === datasetId) ?? annotationDatasets[0];
+    const defaultScene = annotationTaskDefaults.scene;
+    const defaultTemplateId = publishedTemplates.find((item) => item.scene === defaultScene)?.templateId;
     setWizardOpen(true);
     taskForm.resetFields();
     taskForm.setFieldsValue({
       ...annotationTaskDefaults,
       sourceDatasetId: selectedDataset?.datasetId,
       sourceVersionId: selectedDataset?.currentVersionId ?? undefined,
+      templateId: defaultTemplateId,
     });
-  }, [annotationDatasets, taskForm]);
+  }, [annotationDatasets, publishedTemplates, taskForm]);
 
   useEffect(() => {
     if (!wizardOpen) return;
     const currentTemplateId = taskForm.getFieldValue('templateId');
     if (currentTemplateId && !selectableTaskTemplates.some((item) => item.templateId === currentTemplateId)) {
-      taskForm.setFieldValue('templateId', undefined);
+      taskForm.setFieldValue('templateId', selectableTaskTemplates[0]?.templateId);
+      return;
+    }
+    if (!currentTemplateId && selectableTaskTemplates.length) {
+      taskForm.setFieldValue('templateId', selectableTaskTemplates[0]?.templateId);
     }
   }, [taskForm, selectableTaskTemplates, wizardOpen]);
 
@@ -504,7 +513,7 @@ export function AnnotationTasksPage() {
       />
       <Modal title="＋ 新建标注任务" open={wizardOpen} onCancel={() => setWizardOpen(false)} footer={null} destroyOnHidden width={760}>
         <Steps size="small" current={1} items={[{ title: '选择数据集' }, { title: '配置模板' }, { title: '分派审核' }]} style={{ marginBottom: 16 }} />
-        <Alert type="info" showIcon title="数据集范围说明" description="这里不是数据集总览页；仅展示可用于创建标注任务的 ACTIVE 图片数据集。为避免误选，创建前必须手动确认源数据集。" style={{ marginBottom: 12 }} />
+        <Alert type="info" showIcon title="数据集范围说明" description="这里不是数据集总览页；仅展示可用于创建标注任务的 ACTIVE 图片数据集。默认自动选中首个可用数据集与模板，仍可手动改选。" style={{ marginBottom: 12 }} />
         <Form form={taskForm} layout="vertical" onFinish={(v) => {
           if (!v.sourceDatasetId || !v.templateId) return;
           createTask.mutate({ ...v, sourceDatasetId: v.sourceDatasetId, templateId: v.templateId, assigneeIds: ['USR-ANNOTATOR'], reviewerIds: ['USR-BU-CABIN'], prelabelModelSource: 'TODO_CONFIRM_PRELABEL_MODEL_SOURCE', prelabelConfidence: 0.7 });
@@ -516,7 +525,7 @@ export function AnnotationTasksPage() {
             />
           </Form.Item>
           <Form.Item name="sourceVersionId" label="数据版本"><Input placeholder="选择数据集后自动带出 currentVersionId" /></Form.Item>
-          <Form.Item name="templateId" label="标签模板（按标注场景过滤，必须 PUBLISHED）" rules={[{ required: true, message: '请选择标签模板' }]}>
+          <Form.Item name="templateId" label="标签模板（按场景过滤，必须 PUBLISHED）" rules={[{ required: true, message: '请选择标签模板' }]}>
             <Select
               placeholder={selectableTaskTemplates.length ? '请选择标签模板' : '当前场景无可用模板'}
               disabled={!selectableTaskTemplates.length}
@@ -531,7 +540,7 @@ export function AnnotationTasksPage() {
           </Space>
           <Form.Item name="note" label="备注"><Input.TextArea rows={2} /></Form.Item>
           <Alert type="info" showIcon title="分派策略" description="示例任务默认分派给 USR-ANNOTATOR 标注、USR-BU-CABIN 审核；DAT-004 阻断自审。" style={{ marginBottom: 12 }} />
-          <Button type="primary" htmlType="submit" loading={createTask.isPending} disabled={!selectedTaskDatasetId || !selectedTaskTemplateId || !selectableTaskTemplates.length}>创建任务</Button>
+          <Button type="primary" htmlType="submit" loading={createTask.isPending}>创建任务</Button>
         </Form>
       </Modal>
       <Drawer title={<Typography.Title level={4} style={{ margin: 0 }}>标签模板</Typography.Title>} open={templateOpen} onClose={() => setTemplateOpen(false)} size="large">
@@ -750,7 +759,7 @@ export function AnnotationWorkbenchPage() {
     commitBoxes((items) => items.filter((box) => box.id !== selectedShapeId), boxes.find((box) => box.id !== selectedShapeId)?.id ?? '');
   }, [boxes, commitBoxes, commitPolygons, deleteSelectedVertex, isSegmentation, polygons, selectedShapeId]);
   const createManualShape = useCallback((shape: AnnotationShape) => {
-    if (isSegmentation || shape === 'polygon') {
+    if (isSegmentation) {
       setActiveShape('polygon');
       setPolygonDraftPoints([]);
       setSelectedPolygonEdgeIndex(null);
@@ -1589,15 +1598,15 @@ export function DataSourceManagementPage() {
         <div><Typography.Title level={3}>数据源管理</Typography.Title><Typography.Text type="secondary">管理文件、数据库、API、流、时序库与工业协议数据源连接和同步导入任务</Typography.Text></div>
         <Space><Button onClick={() => setSyncOpen(true)}>＋ 新建同步任务</Button><Button type="primary" onClick={() => setOpen(true)}>＋ 新建数据源</Button></Space>
       </div>
-      <Alert type="info" showIcon title="数据集导入方式" description="当前仅支持导入与接口两种接入方式；导入生成图片数据集，API 生成图片或影音数据集版本、文件元数据与血缘。" style={{ marginBottom: 16 }} />
+      <Alert type="info" showIcon title="数据集导入方式" description="支持文件/对象存储登记导入，也支持关系型数据库、外部 API、流数据、时序库、工业协议通过已激活数据源 + 同步任务导入；本地 sandbox connector 会生成可追踪的数据集版本、文件元数据与血缘。" style={{ marginBottom: 16 }} />
       <Tabs items={[
         { key: 'sources', label: '数据源列表', children: <div className="data-source-grid">{(sources.data ?? []).map((s) => <Card key={s.sourceId} title={<Space><Tag color="blue">{txt(s.sourceType)}</Tag>{s.name}</Space>} extra={<Tag color={color(s.status)}>{s.status}</Tag>}><Space direction="vertical" className="full-width"><Typography.Text className="mono">{s.endpoint}{s.port ? `:${s.port}` : ''}</Typography.Text><Typography.Text type="secondary">secretRef: {s.secretRefMasked}</Typography.Text><Typography.Text type="secondary">诊断：{s.diagnosticCode ?? 'NOT_TESTED'} · {s.diagnosticMessage}</Typography.Text><Space wrap><Button size="small" onClick={() => test.mutate(s.sourceId)}>测试连接</Button><Button size="small" onClick={() => setDetail(s)}>详情/编辑</Button><Button size="small" type="primary" onClick={() => activate.mutate(s.sourceId)}>激活</Button><Button size="small" danger onClick={() => disable.mutate(s.sourceId)}>禁用</Button></Space></Space></Card>)}</div> },
         { key: 'tasks', label: '同步任务', children: <Table<DataSourceSyncTask> rowKey="taskId" dataSource={tasks.data ?? []} pagination={false} columns={[{ title: '任务名称', dataIndex: 'name' }, { title: '数据源', dataIndex: 'sourceName' }, { title: '目标数据集', dataIndex: 'targetDatasetName', render: (v) => v ?? '待绑定' }, { title: '调度周期', dataIndex: 'scheduleMode' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '诊断', dataIndex: 'diagnosticMessage' }, { title: '操作', render: (_, r) => <Button size="small" onClick={() => runTask.mutate(r.taskId)}>立即同步</Button> }]} /> },
       ]} />
       <Modal title="新建数据源" open={open} onCancel={() => setOpen(false)} footer={null} destroyOnHidden>
-        <Form layout="vertical" onFinish={(v) => create.mutate({ tenantId: currentTenantId, ...v })} initialValues={{ sourceType: 'IMPORT', endpoint: 'TODO_CONFIRM_DATA_SOURCE_ENDPOINT', credentialMode: 'SECRET_REF', secretRef: 'secret://TODO_CONFIRM_DATA_SOURCE_SECRET', sharedScope: 'BU' }}>
+        <Form layout="vertical" onFinish={(v) => create.mutate({ tenantId: currentTenantId, ...v })} initialValues={{ sourceType: 'OBJECT_STORAGE', endpoint: 'TODO_CONFIRM_DATA_SOURCE_ENDPOINT', credentialMode: 'SECRET_REF', secretRef: 'secret://TODO_CONFIRM_DATA_SOURCE_SECRET', sharedScope: 'BU' }}>
           <Form.Item name="name" label="数据源名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="sourceType" label="接入方式"><Select options={['IMPORT', 'API'].map((v) => ({ value: v, label: txt(v) }))} /></Form.Item>
+          <Form.Item name="sourceType" label="类型"><Select options={['RELATIONAL_DB', 'FILE', 'OBJECT_STORAGE', 'STREAM', 'TIME_SERIES', 'INDUSTRIAL_PROTOCOL', 'API'].map((v) => ({ value: v, label: txt(v) }))} /></Form.Item>
           <Form.Item name="endpoint" label="Host / Endpoint" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="secretRef" label="secretRef（不填写明文凭据）"><Input /></Form.Item>
           <Alert type="warning" showIcon title="敏感字段不回显；Endpoint 包含 sandbox/internal 时启用本地可测 connector，生产外部系统未配置时仍返回 UNCONFIGURED / TODO_CONFIRM_*。" style={{ marginBottom: 16 }} />
@@ -1621,13 +1630,47 @@ export function DataSourceManagementPage() {
 
 export function DatasetManagementPage() {
   const nav = useNavigate();
+  const qc = useQueryClient();
+  const user = useSessionStore((state) => state.user);
+  const [msg, holder] = message.useMessage();
   const [keyword, setKeyword] = useState('');
   const [datasetType, setDatasetType] = useState<string>();
   const [accessLevel, setAccessLevel] = useState<string>();
   const [selected, setSelected] = useState<DatasetSummary | null>(null);
+  const [editing, setEditing] = useState<DatasetSummary | null>(null);
   const q = useQuery({
     queryKey: ['datasets', keyword, datasetType, accessLevel],
     queryFn: () => dataApi.datasets({ keyword, datasetType, accessLevel }),
+  });
+  const isSuperAdmin = user?.roles?.includes('SUPER_ADMIN') ?? false;
+  const refresh = () => Promise.all([
+    qc.invalidateQueries({ queryKey: ['datasets'] }),
+    qc.invalidateQueries({ queryKey: ['dataset-detail'] }),
+  ]);
+  const updateDataset = useMutation({
+    mutationFn: ({ datasetId, input }: { datasetId: string; input: { name?: string; accessLevel?: string; tags?: string[]; description?: string } }) => dataApi.updateDataset(datasetId, input),
+    onSuccess: async () => {
+      setEditing(null);
+      await refresh();
+      msg.success('数据集元信息已更新');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const archiveDataset = useMutation({
+    mutationFn: (datasetId: string) => dataApi.archiveDataset(datasetId),
+    onSuccess: async () => {
+      await refresh();
+      msg.success('数据集已归档，后续仅可只读查看');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const hardDeleteDataset = useMutation({
+    mutationFn: (datasetId: string) => dataApi.deleteDataset(datasetId),
+    onSuccess: async () => {
+      await refresh();
+      msg.success('数据集已彻底删除');
+    },
+    onError: (e: Error) => msg.error(e.message),
   });
   const rows = q.data?.items ?? [];
   const tabs = [
@@ -1644,6 +1687,7 @@ export function DatasetManagementPage() {
 
   return (
     <div className="content-page">
+      {holder}
       <div className="page-hero">
         <div>
           <Typography.Title level={3}>数据集管理</Typography.Title>
@@ -1693,24 +1737,73 @@ export function DatasetManagementPage() {
         columns={[
           { title: '数据集名称', render: (_, r) => <a onClick={() => nav('/dsdetail', { state: { datasetId: r.datasetId } })}>{r.name}</a> },
           { title: '类型', render: (_, r) => <Tag>{txt(r.datasetType)} / {txt(r.dataType)}</Tag> },
-          { title: '版本', dataIndex: 'currentVersionName' },
+          { title: '当前版本', dataIndex: 'currentVersionName' },
+          { title: '版本数', dataIndex: 'versionCount', render: (value) => <Tag color="purple">{value}</Tag> },
           { title: '样本', dataIndex: 'recordCount' },
           { title: '大小', render: (_, r) => fmtSize(r.sizeBytes) },
           { title: '权限', dataIndex: 'accessLevel', render: (v) => <Tag color={v === 'RESTRICTED' ? 'red' : 'blue'}>{v}</Tag> },
           { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> },
-          { title: '操作', render: (_, r) => <Space><a onClick={() => nav('/dsdetail', { state: { datasetId: r.datasetId } })}>详情</a><a onClick={() => nav('/ann', { state: { openCreateTask: true, datasetId: r.datasetId } })}>创建标注任务</a><a onClick={() => setSelected(r)}>版本</a></Space> },
+          {
+            title: '操作',
+            render: (_, r) => (
+              <Space wrap>
+                <a onClick={() => nav('/dsdetail', { state: { datasetId: r.datasetId } })}>详情</a>
+                <a onClick={() => setSelected(r)}>版本</a>
+                <a onClick={() => nav('/ann', { state: { openCreateTask: true, datasetId: r.datasetId } })}>创建标注任务</a>
+                {r.mutable ? <a onClick={() => setEditing(r)}>编辑</a> : null}
+                {r.status !== 'ARCHIVED' && r.mutable ? (
+                  <a onClick={() => Modal.confirm({ title: `归档 ${r.name}？`, content: '归档后仅可只读查看，不能再编辑、建版本、追加或解绑文件。', okText: '确认归档', onOk: () => archiveDataset.mutateAsync(r.datasetId) })}>归档</a>
+                ) : null}
+                {isSuperAdmin ? (
+                  <a
+                    style={{ color: r.hardDeletable ? '#cf1322' : undefined }}
+                    onClick={() => Modal.confirm({
+                      title: `彻底删除 ${r.name}？`,
+                      content: r.hardDeletable ? '该操作不可恢复，仅用于已归档且无引用的数据集。' : '当前数据集暂不满足彻底删除条件，请先归档并确保无引用。',
+                      okButtonProps: { danger: true, disabled: !r.hardDeletable },
+                      okText: '确认删除',
+                      onOk: () => hardDeleteDataset.mutateAsync(r.datasetId),
+                    })}
+                  >
+                    彻底删除
+                  </a>
+                ) : null}
+              </Space>
+            ),
+          },
         ]}
       />
       <Drawer title={`版本 · ${selected?.name}`} open={Boolean(selected)} onClose={() => setSelected(null)} size="default">
         <DatasetVersionList datasetId={selected?.datasetId} />
       </Drawer>
+      <Modal title={`编辑元信息 · ${editing?.name ?? ''}`} open={Boolean(editing)} onCancel={() => setEditing(null)} footer={null} destroyOnHidden>
+        <Form
+          layout="vertical"
+          initialValues={editing ? { name: editing.name, accessLevel: editing.accessLevel, tags: editing.tags.join('，'), description: editing.description ?? '' } : undefined}
+          onFinish={(values) => editing && updateDataset.mutate({
+            datasetId: editing.datasetId,
+            input: {
+              name: values.name,
+              accessLevel: values.accessLevel,
+              tags: String(values.tags ?? '').split(/[,，]/).map((item: string) => item.trim()).filter(Boolean),
+              description: values.description,
+            },
+          })}
+        >
+          <Form.Item name="name" label="数据集名称" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="accessLevel" label="访问级别" rules={[{ required: true }]}><Select options={['PUBLIC', 'TEAM', 'PRIVATE', 'RESTRICTED'].map((v) => ({ value: v, label: v }))} /></Form.Item>
+          <Form.Item name="tags" label="标签"><Input /></Form.Item>
+          <Form.Item name="description" label="描述"><Input.TextArea rows={3} /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={updateDataset.isPending}>保存元信息</Button>
+        </Form>
+      </Modal>
     </div>
   );
 }
 
 function DatasetVersionList({ datasetId }: { datasetId?: string }) {
   const q = useQuery({ queryKey: ['dataset-detail', datasetId], queryFn: () => dataApi.datasetDetail(datasetId!), enabled: Boolean(datasetId) });
-  return <Table<DatasetVersion> rowKey="versionId" dataSource={q.data?.versions ?? []} pagination={false} columns={[{ title: '版本', dataIndex: 'versionName' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '安全', dataIndex: 'contentSafetyStatus' }, { title: '文件大小', render: (_, r) => fmtSize(r.sizeBytes) }]} />;
+  return <Table<DatasetVersion> rowKey="versionId" dataSource={q.data?.versions ?? []} pagination={false} columns={[{ title: '版本', render: (_, r) => <Space><span>{r.versionName}</span>{r.isCurrent ? <Tag color="blue">当前</Tag> : null}</Space> }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '来源版本', dataIndex: 'sourceVersionId', render: (v) => v ?? '首版本' }, { title: '文件数', dataIndex: 'fileCount' }, { title: '安全', dataIndex: 'contentSafetyStatus' }, { title: '可删除', render: (_, r) => r.deletable ? '是' : r.deleteBlockedReason ?? '否' }, { title: '文件大小', render: (_, r) => fmtSize(r.sizeBytes) }]} />;
 }
 
 function PipelineCanvas({ nodes, edges, selectedNodeId, onSelect, onMove }: { nodes: PipelineNode[]; edges: PipelineEdge[]; selectedNodeId?: string; onSelect: (nodeId: string) => void; onMove: (nodeId: string, dx: number, dy: number) => void }) {
@@ -1838,35 +1931,406 @@ function OperatorDetailView({ detail, onApprove, loading }: { detail?: OperatorD
   );
 }
 
-export { DatasetUploadPage } from './DatasetUploadPage';
+export function DatasetUploadPage() {
+  const nav = useNavigate();
+  const loc = useLocation() as { state?: { appendTarget?: { datasetId: string; versionId: string } } };
+  const currentTenantId = useSessionStore((state) => state.user?.tenantId);
+  const [msg, holder] = message.useMessage();
+  const [creationMode, setCreationMode] = useState<'DATA_SOURCE_IMPORT' | 'LOCAL_UPLOAD'>(loc.state?.appendTarget ? 'LOCAL_UPLOAD' : 'DATA_SOURCE_IMPORT');
+  const [targetAction, setTargetAction] = useState<'CREATE_DATASET' | 'APPEND_VERSION'>(loc.state?.appendTarget ? 'APPEND_VERSION' : 'CREATE_DATASET');
+  const [targetDatasetId, setTargetDatasetId] = useState<string | undefined>(loc.state?.appendTarget?.datasetId);
+  const [step, setStep] = useState(0);
+  const [draft, setDraft] = useState<DatasetDetail | null>(null);
+  const [uploadSession, setUploadSession] = useState<DatasetUploadSession | null>(null);
+  const [selectedFileId, setSelectedFileId] = useState<string>();
+  const [selectedLocalFiles, setSelectedLocalFiles] = useState<File[]>([]);
+  const qc = useQueryClient();
+  const sources = useQuery({ queryKey: ['data-sources'], queryFn: dataApi.dataSources });
+  const datasetsQuery = useQuery({ queryKey: ['upload-target-datasets'], queryFn: () => dataApi.datasets() });
+  const activeSources = (sources.data ?? []).filter((s) => s.status === 'ACTIVE' && s.diagnosticCode === 'OK');
+  const appendTargets = (datasetsQuery.data?.items ?? []).filter((item) => item.status === 'ACTIVE' && item.mutable && Boolean(item.currentVersionId));
+  const selectedAppendDataset = appendTargets.find((item) => item.datasetId === targetDatasetId);
+  const effectiveCreationMode: 'DATA_SOURCE_IMPORT' | 'LOCAL_UPLOAD' = activeSources.length === 0 ? 'LOCAL_UPLOAD' : creationMode;
+  const files = useQuery({ queryKey: ['platform-files'], queryFn: platformApi.files, enabled: step >= 1 && effectiveCreationMode === 'DATA_SOURCE_IMPORT' });
+  const uploadSessionQuery = useQuery({
+    queryKey: ['dataset-upload-session', uploadSession?.sessionId],
+    queryFn: () => dataApi.datasetUploadSession(uploadSession!.sessionId),
+    enabled: Boolean(uploadSession?.sessionId) && uploadSession?.status === 'PROCESSING',
+    refetchInterval: (query) => {
+      const session = query.state.data as DatasetUploadSession | undefined;
+      return session && ['READY', 'SECURITY_PENDING', 'FAILED', 'CANCELLED'].includes(session.status) ? false : 400;
+    },
+  });
+  const activeUploadSession = uploadSessionQuery.data ?? uploadSession;
+  const isCommitPolling = activeUploadSession?.status === 'PROCESSING';
+  const handledTerminalSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!uploadSessionQuery.data) return;
+    if (!['READY', 'SECURITY_PENDING', 'FAILED', 'CANCELLED'].includes(uploadSessionQuery.data.status)) return;
+    const handledKey = `${uploadSessionQuery.data.sessionId}:${uploadSessionQuery.data.status}`;
+    if (handledTerminalSessionRef.current === handledKey) return;
+    handledTerminalSessionRef.current = handledKey;
+    if (uploadSessionQuery.data.status === 'FAILED' || uploadSessionQuery.data.status === 'CANCELLED') {
+      msg.error(`本地上传处理失败：${uploadSessionQuery.data.diagnosticMessage}`);
+      return;
+    }
+    void qc.invalidateQueries({ queryKey: ['datasets'] });
+    msg.success(uploadSessionQuery.data.targetAction === 'APPEND_VERSION'
+      ? (uploadSessionQuery.data.status === 'READY' ? '文件已追加到既有版本。' : '文件已追加到既有版本，内容安全仍待处理。')
+      : (uploadSessionQuery.data.status === 'READY' ? '本地上传数据集已创建完成。' : '本地上传已完成文件绑定，内容安全仍待处理。'));
+    if (uploadSessionQuery.data.datasetId) {
+      nav('/dsdetail', { state: { datasetId: uploadSessionQuery.data.datasetId, selectedVersionId: uploadSessionQuery.data.versionId ?? uploadSessionQuery.data.targetVersionId, versionStatus: uploadSessionQuery.data.versionStatus, targetAction: uploadSessionQuery.data.targetAction, fromLocalUpload: true } });
+    }
+  }, [msg, nav, qc, uploadSessionQuery.data]);
+  const resetFlow = (mode: 'DATA_SOURCE_IMPORT' | 'LOCAL_UPLOAD') => {
+    setCreationMode(mode);
+    setStep(0);
+    setDraft(null);
+    setUploadSession(null);
+    handledTerminalSessionRef.current = null;
+    setSelectedFileId(undefined);
+    setSelectedLocalFiles([]);
+    if (mode !== 'LOCAL_UPLOAD') {
+      setTargetAction('CREATE_DATASET');
+      setTargetDatasetId(undefined);
+    }
+  };
+  const create = useMutation({
+    mutationFn: dataApi.createDataset,
+    onSuccess: async (created) => {
+      setDraft(created);
+      await qc.invalidateQueries({ queryKey: ['datasets'] });
+      setStep(1);
+      msg.success('数据源导入草稿已创建，请继续登记文件事实。');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const createUploadSession = useMutation({
+    mutationFn: dataApi.createDatasetUploadSession,
+    onSuccess: (created) => {
+      setUploadSession(created);
+      setStep(1);
+      msg.success('本地上传会话已创建，请选择图片或 zip 包。');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const uploadFiles = useMutation({
+    mutationFn: ({ sessionId, uploadFiles }: { sessionId: string; uploadFiles: File[] }) => dataApi.uploadDatasetSessionFiles(sessionId, uploadFiles),
+    onSuccess: (session) => {
+      setUploadSession(session);
+      setStep(2);
+      msg.success('文件已上传并完成平台登记。');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const commitUploadSession = useMutation({
+    mutationFn: (sessionId: string) => dataApi.commitDatasetUploadSession(sessionId, { publishRequested: false }),
+    onSuccess: (session) => {
+      setUploadSession(session);
+      if (session.status === 'PROCESSING') {
+        msg.info('正在提交数据集，平台将持续刷新阶段进度。');
+        return;
+      }
+      void qc.invalidateQueries({ queryKey: ['datasets'] });
+      msg.success(session.targetAction === 'APPEND_VERSION'
+        ? (session.status === 'READY' ? '文件已追加到既有版本。' : '文件已追加到既有版本，内容安全仍待处理。')
+        : (session.status === 'READY' ? '本地上传数据集已创建完成。' : '本地上传已完成文件绑定，内容安全仍待处理。'));
+      if (session.datasetId) {
+        nav('/dsdetail', { state: { datasetId: session.datasetId, selectedVersionId: session.versionId ?? session.targetVersionId, versionStatus: session.versionStatus, targetAction: session.targetAction } });
+      }
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const attach = useMutation({
+    mutationFn: ({ fileId }: { fileId: string }) => dataApi.attachFile(draft!.dataset.datasetId, draft!.versions[0].versionId, { fileId, fileRole: 'RAW' }),
+    onSuccess: async () => {
+      const refreshed = await dataApi.datasetDetail(draft!.dataset.datasetId);
+      setDraft(refreshed);
+      setStep(2);
+      msg.success('文件登记完成，hash/size 校验通过并已绑定版本草稿。');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const fileRows = files.data?.items ?? [];
+  return (
+    <div className="content-page">
+      {holder}
+      <div className="page-hero">
+        <div>
+          <Typography.Title level={3}>新建数据集 / 上传向导</Typography.Title>
+          <Typography.Text type="secondary">双路径创建 · Ant Design Upload.Dragger · 数据源导入保持兼容 · 无可用数据源时支持本地上传图片</Typography.Text>
+        </div>
+      </div>
+      <Card>
+        <Alert type="info" showIcon style={{ marginBottom: 16 }} title="复用 F007 文件元数据 seam" description="数据源导入路径继续复用 platform_file_object 文件事实；本地上传路径新增 upload session + 图片文件登记能力。" />
+        <Steps
+          current={step}
+          items={[
+            { title: '填写元数据' },
+            { title: effectiveCreationMode === 'LOCAL_UPLOAD' ? '上传文件' : '登记文件' },
+            { title: effectiveCreationMode === 'LOCAL_UPLOAD' ? '提交数据集' : '预览确认' },
+          ]}
+          style={{ marginBottom: 24 }}
+        />
+        {step === 0 && (
+          <Form
+            layout="vertical"
+            initialValues={{ name: '新建视觉数据集', dataType: 'IMAGE', accessLevel: 'TEAM', tags: '质检,工业视觉' }}
+            onFinish={(values) => {
+              const tags = String(values.tags ?? '').split(/[,，]/).map((item: string) => item.trim()).filter(Boolean);
+              if (effectiveCreationMode === 'DATA_SOURCE_IMPORT') {
+                if (!values.sourceId) {
+                  msg.error('请选择一个可用数据源后再继续。');
+                  return;
+                }
+                create.mutate({
+                  name: values.name,
+                  tenantId: currentTenantId!,
+                  datasetType: 'RAW',
+                  dataType: values.dataType,
+                  accessLevel: values.accessLevel,
+                  tags,
+                  description: values.description,
+                  recordCount: Number(values.recordCount ?? 0),
+                  sourceId: values.sourceId,
+                });
+                return;
+              }
+              if (targetAction === 'APPEND_VERSION' && (!targetDatasetId || !selectedAppendDataset?.currentVersionId)) {
+                msg.error('请选择一个可追加的目标数据集。');
+                return;
+              }
+              createUploadSession.mutate({
+                name: targetAction === 'APPEND_VERSION' ? (selectedAppendDataset?.name ?? values.name) : values.name,
+                tenantId: currentTenantId,
+                datasetType: 'RAW',
+                dataType: 'IMAGE',
+                accessLevel: values.accessLevel,
+                tags,
+                description: values.description,
+                creationMode: 'LOCAL_UPLOAD',
+                targetAction,
+                targetDatasetId: targetAction === 'APPEND_VERSION' ? targetDatasetId : undefined,
+                targetVersionId: targetAction === 'APPEND_VERSION' ? selectedAppendDataset?.currentVersionId ?? undefined : undefined,
+              });
+            }}
+          >
+            <Form.Item label="创建方式">
+              <Select
+                value={effectiveCreationMode}
+                onChange={(value) => resetFlow(value)}
+                options={[
+                  { value: 'DATA_SOURCE_IMPORT', label: '从数据源导入', disabled: activeSources.length === 0 },
+                  { value: 'LOCAL_UPLOAD', label: '本地上传图片' },
+                ]}
+              />
+            </Form.Item>
+            {activeSources.length === 0 ? (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                title="当前无可用数据源"
+                description={
+                  <Space wrap>
+                    <span>你可以直接上传图片创建数据集，或先去配置数据源。</span>
+                    <Button size="small" type="primary" onClick={() => resetFlow('LOCAL_UPLOAD')}>直接上传图片</Button>
+                    <Button size="small" onClick={() => nav('/datasrc')}>去创建数据源</Button>
+                  </Space>
+                }
+              />
+            ) : null}
+            <Form.Item name="name" label="数据集名称" rules={[{ required: true, message: '请输入数据集名称' }]}><Input /></Form.Item>
+            <Form.Item name="dataType" label="数据类型"><Select disabled={effectiveCreationMode === 'LOCAL_UPLOAD'} options={['IMAGE', 'TEXT', 'AUDIO', 'VIDEO', 'TABULAR'].map((v) => ({ value: v, label: txt(v) }))} /></Form.Item>
+            <Form.Item name="accessLevel" label="访问级别"><Select options={['PUBLIC', 'TEAM', 'PRIVATE', 'RESTRICTED'].map((v) => ({ value: v, label: v }))} /></Form.Item>
+            {effectiveCreationMode === 'LOCAL_UPLOAD' ? (
+              <>
+                <Form.Item label="上传目标">
+                  <Select
+                    value={targetAction}
+                    onChange={(value) => setTargetAction(value)}
+                    options={[
+                      { value: 'CREATE_DATASET', label: '创建新数据集' },
+                      { value: 'APPEND_VERSION', label: '追加到既有当前版本' },
+                    ]}
+                  />
+                </Form.Item>
+                {targetAction === 'APPEND_VERSION' ? (
+                  <>
+                    <Form.Item label="目标数据集" required>
+                      <Select
+                        value={targetDatasetId}
+                        onChange={setTargetDatasetId}
+                        options={appendTargets.map((item) => ({ value: item.datasetId, label: `${item.name} · ${item.currentVersionName ?? item.currentVersionId}` }))}
+                      />
+                    </Form.Item>
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                      title="追加模式说明"
+                      description={`仅允许追加到当前版本。当前目标版本：${selectedAppendDataset?.currentVersionName ?? selectedAppendDataset?.currentVersionId ?? '未选择'}。提交后不会创建影子数据集。`}
+                    />
+                  </>
+                ) : null}
+              </>
+            ) : null}
+            {effectiveCreationMode === 'DATA_SOURCE_IMPORT' && activeSources.length > 0 ? (
+              <Form.Item name="sourceId" label="来源数据源" rules={[{ required: true, message: '请选择来源数据源' }]}>
+                <Select options={activeSources.map((s) => ({ value: s.sourceId, label: `${s.name} · ${txt(s.sourceType)}` }))} />
+              </Form.Item>
+            ) : null}
+            <Form.Item name="tags" label="标签"><Input /></Form.Item>
+            <Form.Item name="description" label="描述"><Input.TextArea rows={3} /></Form.Item>
+            <Button type="primary" htmlType="submit" loading={create.isPending || createUploadSession.isPending}>
+              {effectiveCreationMode === 'LOCAL_UPLOAD' ? '下一步：创建上传会话' : '下一步：初始化数据集'}
+            </Button>
+          </Form>
+        )}
+        {step === 1 && effectiveCreationMode === 'DATA_SOURCE_IMPORT' && (
+          <Space direction="vertical" className="full-width">
+            <Alert type="info" showIcon title="文件登记 seam" description="选择 F007 platform_file_object，提交后后端执行 AVAILABLE、sha256 与 size 校验，并绑定到当前版本草稿。" />
+            <Typography.Text>拖拽文件或文件夹</Typography.Text>
+            <div className="ant-upload ant-upload-drag"><div className="ant-upload-btn"><span>拖拽文件或文件夹</span><input type="file" multiple accept="image/*,.zip" /></div></div>
+            <Table<FileObjectSummary> rowKey="fileId" dataSource={fileRows} pagination={false} rowSelection={{ type: 'radio', selectedRowKeys: selectedFileId ? [selectedFileId] : [], onChange: (keys) => setSelectedFileId(String(keys[0])) }} columns={[{ title: '文件 ID', dataIndex: 'fileId' }, { title: 'Object Key', dataIndex: 'objectKey' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: 'hash 校验', render: (_, r) => r.expectedSha256 === r.sha256 ? '通过' : '不一致' }, { title: '大小', render: (_, r) => fmtSize(r.sizeBytes) }]} />
+            <Button type="primary" disabled={!selectedFileId} loading={attach.isPending} onClick={() => selectedFileId && attach.mutate({ fileId: selectedFileId })}>完成文件登记并绑定版本</Button>
+          </Space>
+        )}
+        {step === 1 && effectiveCreationMode === 'LOCAL_UPLOAD' && uploadSession && (
+          <Space direction="vertical" className="full-width">
+            <Alert type="info" showIcon title={`上传会话 ${uploadSession.sessionId}`} description={`阶段：${uploadSession.progress.phase} · ${uploadSession.progress.percent}%`} />
+            {uploadSession.targetAction === 'APPEND_VERSION' ? <Alert type="warning" showIcon title="本次将追加到既有版本" description={`${uploadSession.targetDatasetId ?? '-'} / ${uploadSession.targetVersionId ?? '-'}`} /> : null}
+            <Typography.Text>拖拽文件或文件夹</Typography.Text>
+            <div className="ant-upload ant-upload-drag"><div className="ant-upload-btn"><span>拖拽文件或文件夹</span><input type="file" multiple accept="image/*,.zip" onChange={(event) => setSelectedLocalFiles(Array.from(event.target.files ?? []))} /></div></div>
+            <Table rowKey="name" dataSource={selectedLocalFiles.map((file) => ({ name: file.name, type: file.type || 'application/octet-stream', size: file.size }))} pagination={false} locale={{ emptyText: '请选择本地图片或 zip 包。' }} columns={[{ title: '文件名', dataIndex: 'name' }, { title: '类型', dataIndex: 'type' }, { title: '大小', dataIndex: 'size', render: (value: number) => fmtSize(value) }]} />
+            <Button type="primary" disabled={selectedLocalFiles.length === 0} loading={uploadFiles.isPending} onClick={() => uploadFiles.mutate({ sessionId: uploadSession.sessionId, uploadFiles: selectedLocalFiles })}>上传并登记到平台</Button>
+          </Space>
+        )}
+        {step === 2 && effectiveCreationMode === 'DATA_SOURCE_IMPORT' && (
+          <Space direction="vertical" className="full-width">
+            <Alert type="warning" showIcon title="文件上传 seam 已初始化" description="真实对象存储/内容安全服务未配置时保持 TODO_CONFIRM_MINIO_* / SECURITY_PENDING，不伪造发布成功。" />
+            <Table rowKey="bindingId" dataSource={draft?.files ?? []} pagination={false} columns={[{ title: '文件', dataIndex: 'fileId' }, { title: '状态', dataIndex: 'status' }, { title: 'Object Key', dataIndex: 'objectKey' }, { title: '大小', render: (_, r: { sizeBytes?: number | null }) => fmtSize(r.sizeBytes) }]} />
+            <Button type="primary" onClick={() => draft?.dataset.datasetId && nav('/dsdetail', { state: { datasetId: draft.dataset.datasetId } })}>查看数据集详情</Button>
+          </Space>
+        )}
+        {step === 2 && effectiveCreationMode === 'LOCAL_UPLOAD' && activeUploadSession && (
+          <Space direction="vertical" className="full-width">
+            <Alert
+              type={['READY', 'SECURITY_PENDING'].includes(activeUploadSession.status) ? 'success' : activeUploadSession.status === 'FAILED' ? 'error' : 'info'}
+              showIcon
+              title={`阶段进度：${activeUploadSession.progress.phase} · ${activeUploadSession.progress.percent}%`}
+              description={isCommitPolling ? '平台正在执行内容安全校验、元数据索引和版本写入，请等待自动刷新。' : activeUploadSession.diagnosticMessage}
+            />
+            {activeUploadSession.targetAction === 'APPEND_VERSION' ? <Alert type="warning" showIcon title="追加结果" description={`目标 dataset/version：${activeUploadSession.targetDatasetId} / ${activeUploadSession.targetVersionId}，versionStatus=${activeUploadSession.versionStatus ?? '-'}`} /> : null}
+            <Alert type={activeUploadSession.summary.rejectedFiles > 0 ? 'warning' : 'success'} showIcon title={`已接收 ${activeUploadSession.summary.acceptedFiles} 个文件，拒绝 ${activeUploadSession.summary.rejectedFiles} 个文件`} description={activeUploadSession.diagnosticMessage} />
+            <Table rowKey={(row) => `${row.fileName}-${row.fileId ?? 'rejected'}`} dataSource={activeUploadSession.files} pagination={false} columns={[{ title: '文件名', dataIndex: 'fileName' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '大小', dataIndex: 'sizeBytes', render: (value: number | null) => fmtSize(value) }, { title: '诊断', dataIndex: 'diagnosticMessage' }]} />
+            <Space wrap>
+              <Button onClick={() => setStep(1)}>继续追加文件</Button>
+              <Button type="primary" disabled={activeUploadSession.summary.acceptedFiles === 0 || isCommitPolling} loading={commitUploadSession.isPending || isCommitPolling} onClick={() => commitUploadSession.mutate(activeUploadSession.sessionId)}>{isCommitPolling ? '处理中...' : activeUploadSession.targetAction === 'APPEND_VERSION' ? '提交并追加到既有版本' : '提交并创建数据集'}</Button>
+            </Space>
+          </Space>
+        )}
+      </Card>
+    </div>
+  );
+}
 
 export function DatasetDetailPage() {
-  const loc = useLocation() as { state?: { datasetId?: string } };
   const nav = useNavigate();
-  const [taskForm] = Form.useForm<{ name: string; scene: string; templateId?: string }>();
-  const [previewFile, setPreviewFile] = useState<{ fileId: string; name: string } | null>(null);
+  const qc = useQueryClient();
+  const loc = useLocation() as { state?: { datasetId?: string; selectedVersionId?: string; versionStatus?: string; targetAction?: string; fromLocalUpload?: boolean } };
+  const user = useSessionStore((state) => state.user);
   const datasetId = loc.state?.datasetId ?? 'DATASET-WELD-DEFECT';
-  const detail = useQuery({ queryKey: ['dataset-detail', datasetId], queryFn: () => dataApi.datasetDetail(datasetId) });
+  const [selectedVersionId, setSelectedVersionId] = useState<string | undefined>(loc.state?.selectedVersionId);
+  const [editOpen, setEditOpen] = useState(false);
+  const [versionOpen, setVersionOpen] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const detail = useQuery({ queryKey: ['dataset-detail', datasetId, selectedVersionId], queryFn: () => dataApi.datasetDetail(datasetId, selectedVersionId) });
   const candidate = useQuery({ queryKey: ['dataset-annotation-candidate', datasetId], queryFn: () => dataApi.datasetAnnotationCandidate(datasetId) });
   const annTasks = useQuery({ queryKey: ['dataset-annotation-tasks', datasetId], queryFn: () => dataApi.datasetAnnotationTasks(datasetId) });
-  const qc = useQueryClient();
   const ref = useMutation({ mutationFn: () => dataApi.reference(datasetId), onError: () => undefined });
   const [msg, holder] = message.useMessage();
+  const [taskForm] = Form.useForm<{ name: string; scene: string; templateId?: string }>();
   const [taskOpen, setTaskOpen] = useState(false);
   const [exportTask, setExportTask] = useState<DatasetAnnotationTask | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ fileId: string; name: string } | null>(null);
+  const isSuperAdmin = user?.roles?.includes('SUPER_ADMIN') ?? false;
+  const refreshDetail = async (versionId?: string) => {
+    if (versionId) setSelectedVersionId(versionId);
+    await qc.invalidateQueries({ queryKey: ['datasets'] });
+    await qc.invalidateQueries({ queryKey: ['dataset-detail', datasetId] });
+    await qc.invalidateQueries({ queryKey: ['dataset-detail', datasetId, versionId ?? selectedVersionId] });
+  };
   const download = useMutation({
     mutationFn: platformApi.fileDownloadUrl,
     onSuccess: (result) => {
-      if (result.downloadUrl) { window.open(result.downloadUrl, '_blank', 'noopener,noreferrer'); msg.success('已打开文件下载链接'); return; }
+      if (result.downloadUrl) {
+        window.open(result.downloadUrl, '_blank', 'noopener,noreferrer');
+        msg.success('已打开文件下载链接');
+        return;
+      }
       msg.warning(`文件下载未配置：${result.diagnostic}`);
     },
     onError: (e: Error) => msg.error(e.message),
   });
-  const exportDownload = useMutation({
-    mutationFn: dataApi.annotationExportDownloadUrl,
-    onSuccess: (result) => {
-      if (result.downloadUrl) { window.open(result.downloadUrl, '_blank', 'noopener,noreferrer'); msg.success('已打开训练包下载链接'); return; }
-      msg.warning(`训练包下载未配置：${result.diagnosticCode} · ${result.diagnosticMessage}`);
+  const platformFiles = useQuery({ queryKey: ['platform-files-attach', datasetId], queryFn: platformApi.files, enabled: attachOpen });
+  const updateDataset = useMutation({
+    mutationFn: (input: { name?: string; accessLevel?: string; tags?: string[]; description?: string }) => dataApi.updateDataset(datasetId, input),
+    onSuccess: async () => {
+      setEditOpen(false);
+      await refreshDetail();
+      msg.success('数据集元信息已更新');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const createVersion = useMutation({
+    mutationFn: (input: { versionName?: string; sourceVersionId?: string | null; inheritPreviousFiles?: boolean; description?: string }) => dataApi.createVersion(datasetId, input),
+    onSuccess: async (created) => {
+      setVersionOpen(false);
+      await refreshDetail(created.versionId);
+      msg.success(`版本 ${created.versionName} 已创建并切换为当前版本`);
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const deleteVersion = useMutation({
+    mutationFn: (versionId: string) => dataApi.deleteVersion(datasetId, versionId),
+    onSuccess: async (result) => {
+      await refreshDetail(result.currentVersionId);
+      msg.success(`版本已删除，当前版本已回退到 ${result.currentVersionName}`);
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const attach = useMutation({
+    mutationFn: ({ versionId, fileId }: { versionId: string; fileId: string }) => dataApi.attachFile(datasetId, versionId, { fileId, fileRole: 'RAW' }),
+    onSuccess: async () => {
+      setAttachOpen(false);
+      await refreshDetail();
+      msg.success('文件已追加到当前版本');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const unbind = useMutation({
+    mutationFn: ({ versionId, bindingId }: { versionId: string; bindingId: string }) => dataApi.unbindFile(datasetId, versionId, bindingId),
+    onSuccess: async () => {
+      await refreshDetail();
+      msg.success('文件绑定已解绑，底层文件对象未删除');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const archive = useMutation({
+    mutationFn: () => dataApi.archiveDataset(datasetId),
+    onSuccess: async () => {
+      await refreshDetail();
+      msg.success('数据集已归档');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const hardDelete = useMutation({
+    mutationFn: () => dataApi.deleteDataset(datasetId),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['datasets'] });
+      msg.success('数据集已彻底删除');
+      nav('/ds');
     },
     onError: (e: Error) => msg.error(e.message),
   });
@@ -1877,32 +2341,25 @@ export function DatasetDetailPage() {
   });
   const createExport = useMutation({
     mutationFn: ({ taskId, format }: { taskId: string; format: string }) => dataApi.createAnnotationExport(taskId, { format }),
-    onSuccess: async (r) => { setExportTask(null); await qc.invalidateQueries({ queryKey: ['dataset-annotation-tasks', datasetId] }); msg.success(`导出请求已创建：${r.status}`); },
+    onSuccess: async () => { setExportTask(null); await qc.invalidateQueries({ queryKey: ['dataset-annotation-tasks', datasetId] }); msg.success('导出请求已创建'); },
     onError: (e: Error) => msg.error(e.message),
   });
-  const openWorkbench = useCallback((taskId: string) => {
-    nav(`/annwork?taskId=${encodeURIComponent(taskId)}`, { state: { taskId } });
-  }, [nav]);
+  const exportDownload = useMutation({
+    mutationFn: (exportId: string) => dataApi.annotationExportDownloadUrl(exportId),
+    onSuccess: (result) => { if (result.downloadUrl) { window.open(result.downloadUrl, '_blank', 'noopener,noreferrer'); msg.success('已打开训练包下载链接'); } else { msg.warning(`训练包下载状态未就绪：${result.diagnosticCode}`); } },
+    onError: (e: Error) => msg.error(e.message),
+  });
   const d = detail.data;
-  const taskScene = Form.useWatch('scene', taskForm) ?? 'IMAGE_TAGGING';
-  const sceneTemplates = useMemo(
-    () => (candidate.data?.templates ?? []).filter((template) => template.scene === taskScene),
-    [candidate.data?.templates, taskScene],
+  const selectedVersion = d?.selectedVersion;
+  const canWriteSelectedVersion = Boolean(
+    d
+    && selectedVersion
+    && d.dataset.status !== 'ARCHIVED'
+    && d.dataset.mutable
+    && d.selectedVersionId === d.dataset.currentVersionId
+    && selectedVersion.mutable
+    && selectedVersion.isCurrent,
   );
-  useEffect(() => {
-    if (!taskOpen) return;
-    const currentTemplateId = taskForm.getFieldValue('templateId');
-    if (sceneTemplates.some((template) => template.templateId === currentTemplateId)) return;
-    taskForm.setFieldsValue({ templateId: sceneTemplates[0]?.templateId });
-  }, [sceneTemplates, taskForm, taskOpen]);
-  useEffect(() => {
-    if (!taskOpen) return;
-    taskForm.setFieldsValue({
-      name: `${d?.dataset.name ?? '数据集'} 标注任务`,
-      scene: 'IMAGE_TAGGING',
-      templateId: (candidate.data?.templates ?? []).find((template) => template.scene === 'IMAGE_TAGGING')?.templateId,
-    });
-  }, [candidate.data?.templates, d?.dataset.name, taskForm, taskOpen]);
   const fileColumns = [
     { title: '文件 ID', dataIndex: 'fileId' },
     { title: '角色', dataIndex: 'fileRole', render: (v: string) => <Tag>{v}</Tag> },
@@ -1912,34 +2369,196 @@ export function DatasetDetailPage() {
     { title: '大小', render: (_: unknown, r: { sizeBytes?: number | null }) => fmtSize(r.sizeBytes) },
     { title: 'SHA256', dataIndex: 'sha256', render: (v: string | null) => v ? <Typography.Text className="mono" copyable>{v}</Typography.Text> : '-' },
     { title: '下载', render: (_: unknown, r: { fileId: string; status: string }) => <Button size="small" disabled={r.status !== 'BOUND'} loading={download.isPending} onClick={() => download.mutate(r.fileId)}>获取下载链接</Button> },
+    { title: '绑定 ID', dataIndex: 'bindingId', render: (v: string) => <Typography.Text className="mono" copyable>{v}</Typography.Text> },
+    { title: '解绑', render: (_: unknown, r: { bindingId: string; versionId: string }) => canWriteSelectedVersion ? <Button size="small" danger loading={unbind.isPending} onClick={() => Modal.confirm({ title: '解绑当前版本文件？', content: '仅删除当前版本的绑定关系，不删除底层文件对象。', okText: '确认解绑', onOk: () => unbind.mutateAsync({ versionId: r.versionId, bindingId: r.bindingId }) })}>解绑</Button> : null },
   ];
-  const exportColumns = [
-    { title: '格式', dataIndex: 'format' },
-    { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={color(v)}>{v}</Tag> },
-    { title: '图片副本', dataIndex: 'packageIncludesImages', render: (v: boolean) => v ? '包含' : '不包含' },
-    { title: '异步', dataIndex: 'asyncRequired', render: (v: boolean) => v ? '是' : '否' },
-    { title: '大小', render: (_: unknown, r: AnnotationTrainingExport) => fmtSize(r.sizeBytes) },
-    { title: '保留到', dataIndex: 'expiresAt', render: (v: string | null) => v ? v.slice(0, 10) : '-' },
-    { title: '诊断', render: (_: unknown, r: AnnotationTrainingExport) => `${r.diagnosticCode} · ${r.diagnosticMessage}` },
-    { title: '下载', render: (_: unknown, r: AnnotationTrainingExport) => <Button size="small" disabled={!r.exportId || r.status !== 'AVAILABLE'} loading={exportDownload.isPending} onClick={() => exportDownload.mutate(r.exportId)}>获取下载链接</Button> },
-  ];
-  const previewableFiles = (d?.files ?? []).filter((file) => file.contentType?.startsWith('image/'));
-  const annotationChildren = <Space direction="vertical" className="full-width">
-    <Alert type={candidate.data?.eligible ? 'success' : 'warning'} showIcon title="标注候选状态" description={`${candidate.data?.diagnosticCode ?? 'LOADING'} · ${candidate.data?.diagnosticMessage ?? '正在加载候选状态'}；训练环境默认采用自包含导出包，COCO/YOLO/VOC/Mask 均包含图片副本，超过 200MB 异步，保留 3 个月。`} />
-    <Space wrap><Button type="primary" disabled={!candidate.data?.eligible} onClick={() => setTaskOpen(true)}>从数据集创建标注任务</Button><Typography.Text type="secondary">当前版本：{candidate.data?.currentVersionId ?? '-'}</Typography.Text></Space>
-    <Table<DatasetAnnotationTask> rowKey={(r) => r.task.taskId} dataSource={annTasks.data ?? []} loading={annTasks.isLoading} expandable={{ expandedRowRender: (r) => <Table<AnnotationTrainingExport> rowKey="exportId" dataSource={r.exports} columns={exportColumns} pagination={false} locale={{ emptyText: '暂无训练格式导出' }} /> }} columns={[{ title: '任务', render: (_, r) => <Space direction="vertical" size={0}><Typography.Text strong>{r.task.name}</Typography.Text><Typography.Text type="secondary" className="mono">{r.task.taskId}</Typography.Text></Space> }, { title: '场景', render: (_, r) => txt(r.task.scene) }, { title: '状态', render: (_, r) => <Tag color={color(r.task.status)}>{annStatusText(r.task.status)}</Tag> }, { title: '进度', render: (_, r) => `${r.task.reviewedCount}/${r.task.totalCount}` }, { title: '质量分', render: (_, r) => r.task.qualityScore ?? '-' }, { title: '操作', render: (_, r) => <Space wrap><Button size="small" type="primary" onClick={() => openWorkbench(r.task.taskId)}>进入标注</Button><Button size="small" onClick={() => setExportTask(r)}>生成训练包</Button></Space> }]} />
-  </Space>;
-  return <div className="content-page">{holder}<div className="page-hero"><div><Typography.Title level={3}>{d?.dataset.name ?? '数据集详情'}</Typography.Title><Typography.Text type="secondary">概览 · 版本 · 文件 · 权限 · 血缘 · 标注任务/训练导出</Typography.Text></div><Space><Button onClick={() => ref.mutate()}>请求引用检查</Button><Button type="primary" disabled={!candidate.data?.eligible} onClick={() => setTaskOpen(true)}>创建标注任务</Button></Space></div>{ref.data ? <Alert type="success" showIcon title={`DatasetReference 可用：${ref.data.versionId}`} style={{ marginBottom: 16 }} /> : null}<Card loading={detail.isLoading}><Descriptions bordered column={2}><Descriptions.Item label="数据类型">{txt(d?.dataset.dataType)}</Descriptions.Item><Descriptions.Item label="状态"><Tag color={color(d?.dataset.status)}>{d?.dataset.status}</Tag></Descriptions.Item><Descriptions.Item label="权限"><Tag color={d?.dataset.accessLevel === 'RESTRICTED' ? 'red' : 'blue'}>{d?.dataset.accessLevel}</Tag></Descriptions.Item><Descriptions.Item label="样本数">{d?.dataset.recordCount.toLocaleString('zh-CN')}</Descriptions.Item><Descriptions.Item label="标签">{d?.dataset.tags.map((t) => <Tag key={t}>{t}</Tag>)}</Descriptions.Item><Descriptions.Item label="预览状态">{d?.previewStatus} · {d?.previewDiagnostic}</Descriptions.Item></Descriptions></Card>{previewableFiles.length > 0 ? <Card title={`图片预览（${previewableFiles.length}）`} style={{ marginTop: 16 }} loading={detail.isLoading}><Space wrap>{previewableFiles.map((file) => <Button key={file.id} onClick={() => setPreviewFile({ fileId: file.fileId, name: file.objectKey.split('/').slice(-1)[0] ?? file.fileId })}>预览 {file.objectKey.split('/').slice(-1)[0] ?? file.fileId}</Button>)}</Space><Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>当前仅对 `image/*` 文件展示预览入口；点击后使用 MinIO 预签名 URL 在弹窗中加载原图。</Typography.Paragraph></Card> : null}<Card title={`文件信息（${d?.files.length ?? 0}）`} style={{ marginTop: 16 }} loading={detail.isLoading}><Table rowKey="id" dataSource={d?.files ?? []} pagination={false} columns={fileColumns} locale={{ emptyText: '暂无已绑定文件；请通过上传向导完成文件登记并绑定版本。' }} /></Card><Tabs items={[{ key: 'annotation', label: '标注任务/训练导出', children: annotationChildren }, { key: 'versions', label: '版本历史', children: <Table rowKey="versionId" dataSource={d?.versions ?? []} pagination={false} columns={[{ title: '版本', dataIndex: 'versionName' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '内容安全', dataIndex: 'contentSafetyStatus' }, { title: '诊断', dataIndex: 'diagnosticMessage' }]} /> }, { key: 'files', label: `文件元数据（${d?.files.length ?? 0}）`, children: <Table rowKey="id" dataSource={d?.files ?? []} pagination={false} columns={fileColumns} locale={{ emptyText: '暂无文件元数据' }} /> }, { key: 'lineage', label: '血缘', children: <Table rowKey="lineageId" dataSource={d?.lineage ?? []} pagination={false} columns={[{ title: '来源', dataIndex: 'sourceType' }, { title: 'Source ID', dataIndex: 'sourceId' }, { title: '目标', dataIndex: 'targetId' }, { title: '转换', dataIndex: 'transformType' }]} /> }, { key: 'access', label: '权限授权', children: <Table rowKey="grantId" dataSource={d?.grants ?? []} pagination={false} columns={[{ title: '用户', dataIndex: 'userName' }, { title: '状态', dataIndex: 'status' }, { title: '有效期', dataIndex: 'expiresAt' }]} /> }]} /><Modal title="从数据集创建标注任务" open={taskOpen} onCancel={() => setTaskOpen(false)} footer={null} destroyOnHidden><Form form={taskForm} layout="vertical" onFinish={(v) => { if (!v.templateId) return; createTask.mutate({ ...v, templateId: v.templateId }); }}><Form.Item name="name" label="任务名称" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="scene" label="标注场景"><Select options={[{ value: 'IMAGE_TAGGING', label: '图片打标' }, { value: 'IMAGE_SEGMENTATION', label: '图片分割' }]} /></Form.Item><Form.Item name="templateId" label="标签模板" rules={[{ required: true, message: '当前场景暂无已发布模板' }]} extra={sceneTemplates.length === 0 ? '当前场景暂无已发布模板，请先创建并发布对应模板。' : undefined}><Select options={sceneTemplates.map((t) => ({ value: t.templateId, label: t.name }))} placeholder={sceneTemplates.length === 0 ? '当前场景暂无已发布模板' : '请选择标签模板'} /></Form.Item><Button type="primary" htmlType="submit" loading={createTask.isPending} disabled={sceneTemplates.length === 0}>创建任务</Button></Form></Modal><Modal title={`生成训练格式导出：${exportTask?.task.name ?? ''}`} open={!!exportTask} onCancel={() => setExportTask(null)} footer={null} destroyOnHidden><Form layout="vertical" initialValues={{ format: candidate.data?.supportedFormats?.[0] ?? 'SMP_JSONL' }} onFinish={(v) => exportTask && createExport.mutate({ taskId: exportTask.task.taskId, format: v.format })}><Alert type="info" showIcon title="导出策略" description="COCO/YOLO/VOC/Mask 包含 images/ 图片副本和 metadata；超过 200MB 进入异步生成；导出文件保留 3 个月。" style={{ marginBottom: 16 }} /><Form.Item name="format" label="训练格式"><Select options={(candidate.data?.supportedFormats ?? []).map((f) => ({ value: f, label: f }))} /></Form.Item><Button type="primary" htmlType="submit" loading={createExport.isPending}>生成训练包</Button></Form></Modal><Modal title={`图片预览：${previewFile?.name ?? ''}`} open={!!previewFile} footer={null} width={960} onCancel={() => setPreviewFile(null)} destroyOnHidden><ImagePreviewPanel fileId={previewFile?.fileId} /></Modal></div>;
+  const canCreateAnnotationTask = candidate.data?.eligible ?? (d?.dataset.status === 'ACTIVE');
+  const nextVersionName = d ? `v${(d.dataset.versionCount ?? 0) + 1}` : 'v2';
+  const taskScene = Form.useWatch('scene', taskForm) ?? 'IMAGE_TAGGING';
+  const sceneTemplates = useMemo(() => (candidate.data?.templates ?? []).filter((template) => template.scene === taskScene), [candidate.data?.templates, taskScene]);
+  useEffect(() => { if (!taskOpen) return; const currentTemplateId = taskForm.getFieldValue('templateId'); if (sceneTemplates.some((template) => template.templateId === currentTemplateId)) return; taskForm.setFieldsValue({ templateId: sceneTemplates[0]?.templateId }); }, [sceneTemplates, taskForm, taskOpen]);
+  useEffect(() => { if (!taskOpen) return; taskForm.setFieldsValue({ name: `${d?.dataset.name ?? '数据集'} 标注任务`, scene: 'IMAGE_TAGGING', templateId: (candidate.data?.templates ?? []).find((template) => template.scene === 'IMAGE_TAGGING')?.templateId }); }, [candidate.data?.templates, d?.dataset.name, taskForm, taskOpen]);
+  return (
+    <div className="content-page">
+      {holder}
+      <div className="page-hero">
+        <div>
+          <Typography.Title level={3}>{d?.dataset.name ?? '数据集详情'}</Typography.Title>
+          <Typography.Text type="secondary">概览 · 版本切换 · 所选版本视图 · 文件绑定 · 权限 · 血缘</Typography.Text>
+        </div>
+        <Space wrap>
+          <Button onClick={() => ref.mutate()}>请求引用检查</Button>
+          <Button onClick={() => setEditOpen(true)} disabled={!d?.dataset.mutable}>编辑元信息</Button>
+          <Button onClick={() => setVersionOpen(true)} disabled={!d?.dataset.mutable || d?.dataset.status === 'ARCHIVED'}>新建版本</Button>
+          <Button onClick={() => setAttachOpen(true)} disabled={!canWriteSelectedVersion}>追加文件</Button>
+          <Button onClick={() => nav('/up', { state: { appendTarget: canWriteSelectedVersion ? { datasetId, versionId: d!.selectedVersionId } : undefined } })} disabled={!canWriteSelectedVersion}>上传向导追加</Button>
+          <Button onClick={() => Modal.confirm({ title: '归档当前数据集？', content: '归档后所有写操作将被禁止，仅保留只读查看。', okText: '确认归档', onOk: () => archive.mutateAsync() })} disabled={d?.dataset.status === 'ARCHIVED' || !d?.dataset.mutable}>归档</Button>
+          {isSuperAdmin ? <Button danger disabled={!d?.dataset.hardDeletable} onClick={() => Modal.confirm({ title: '彻底删除当前数据集？', content: '仅用于已归档且无引用的数据集，删除后不可恢复。', okText: '确认彻底删除', okButtonProps: { danger: true }, onOk: () => hardDelete.mutateAsync() })}>彻底删除</Button> : null}
+          <Button type="primary" disabled={!canCreateAnnotationTask} onClick={() => loc.state?.fromLocalUpload ? nav('/ann', { state: { openCreateTask: true, datasetId } }) : setTaskOpen(true)}>创建标注任务</Button>
+        </Space>
+      </div>
+      {!canCreateAnnotationTask ? <Alert type="warning" showIcon style={{ marginBottom: 16 }} title="当前数据集尚未达到可发起标注任务的状态" description="仅 ACTIVE / 可用状态的数据集可继续发起标注任务；如处于 SECURITY_PENDING，请等待内容安全结果。" /> : null}
+      {d && !canWriteSelectedVersion ? <Alert type="info" showIcon style={{ marginBottom: 16 }} title="当前为只读版本视图" description="只有“当前版本”且版本可变时，才允许追加文件、解绑文件或使用上传向导追加。" /> : null}
+      {ref.data ? <Alert type="success" showIcon title={`DatasetReference 可用：${ref.data.versionId}`} style={{ marginBottom: 16 }} /> : null}
+      {loc.state?.targetAction === 'APPEND_VERSION' && loc.state?.versionStatus ? (
+        <Alert
+          type={loc.state.versionStatus === 'SECURITY_PENDING' ? 'warning' : 'info'}
+          showIcon
+          style={{ marginBottom: 16 }}
+          title="上传向导追加已完成"
+          description={`targetAction=APPEND_VERSION，versionStatus=${loc.state.versionStatus}`}
+        />
+      ) : null}
+      <Card loading={detail.isLoading}>
+        <Descriptions bordered column={2}>
+          <Descriptions.Item label="数据类型">{txt(d?.dataset.dataType)}</Descriptions.Item>
+          <Descriptions.Item label="状态"><Tag color={color(d?.dataset.status)}>{d?.dataset.status}</Tag></Descriptions.Item>
+          <Descriptions.Item label="权限"><Tag color={d?.dataset.accessLevel === 'RESTRICTED' ? 'red' : 'blue'}>{d?.dataset.accessLevel}</Tag></Descriptions.Item>
+          <Descriptions.Item label="版本总数">{d?.dataset.versionCount ?? 0}</Descriptions.Item>
+          <Descriptions.Item label="当前版本">{d?.dataset.currentVersionName ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label="所选版本">
+            <Space wrap>
+              <Select
+                value={d?.selectedVersionId}
+                style={{ width: 240 }}
+                onChange={setSelectedVersionId}
+                options={(d?.versions ?? []).map((item) => ({ value: item.versionId, label: `${item.versionName}${item.isCurrent ? '（当前）' : ''}` }))}
+              />
+              {selectedVersion?.isCurrent ? <Tag color="blue">当前版本</Tag> : <Tag>旧版本</Tag>}
+            </Space>
+          </Descriptions.Item>
+          <Descriptions.Item label="样本数">{d?.dataset.recordCount?.toLocaleString('zh-CN') ?? 0}</Descriptions.Item>
+          <Descriptions.Item label="标签">{d?.dataset.tags.map((t) => <Tag key={t}>{t}</Tag>)}</Descriptions.Item>
+          <Descriptions.Item label="预览状态">{d?.previewStatus} · {d?.previewDiagnostic}</Descriptions.Item>
+          <Descriptions.Item label="管理员硬删除">{d?.dataset.hardDeletable ? <Tag color="red">满足条件</Tag> : '未满足条件'}</Descriptions.Item>
+        </Descriptions>
+      </Card>
+      <Card title={`所选版本 · ${selectedVersion?.versionName ?? '-'}`} style={{ marginTop: 16 }} loading={detail.isLoading}>
+        <Descriptions bordered column={2}>
+          <Descriptions.Item label="版本状态"><Tag color={color(selectedVersion?.status)}>{selectedVersion?.status}</Tag></Descriptions.Item>
+          <Descriptions.Item label="内容安全">{selectedVersion?.contentSafetyStatus}</Descriptions.Item>
+          <Descriptions.Item label="来源版本">{selectedVersion?.sourceVersionId ?? '首版本'}</Descriptions.Item>
+          <Descriptions.Item label="文件数">{selectedVersion?.fileCount ?? 0}</Descriptions.Item>
+          <Descriptions.Item label="样本数">{selectedVersion?.recordCount ?? 0}</Descriptions.Item>
+          <Descriptions.Item label="大小">{fmtSize(selectedVersion?.sizeBytes)}</Descriptions.Item>
+          <Descriptions.Item label="诊断">{selectedVersion?.diagnosticCode ?? '-'} / {selectedVersion?.diagnosticMessage ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label="可删除">{selectedVersion?.deletable ? '是' : selectedVersion?.deleteBlockedReason ?? '否'}</Descriptions.Item>
+        </Descriptions>
+        {selectedVersion?.deletable ? (
+          <Button
+            style={{ marginTop: 16 }}
+            danger
+            onClick={() => Modal.confirm({
+              title: `删除版本 ${selectedVersion.versionName}？`,
+              content: '删除后会按 contract 回退 currentVersion，仅删除该版本及其文件绑定关系。',
+              okText: '确认删除版本',
+              okButtonProps: { danger: true },
+              onOk: () => deleteVersion.mutateAsync(selectedVersion.versionId),
+            })}
+          >
+            删除当前查看版本
+          </Button>
+        ) : null}
+      </Card>
+      <Card title={`文件信息（所选版本 ${d?.files.length ?? 0}）`} style={{ marginTop: 16 }} loading={detail.isLoading}>
+        <Table rowKey="bindingId" dataSource={d?.files ?? []} pagination={false} columns={fileColumns} locale={{ emptyText: '当前所选版本暂无已绑定文件。' }} />
+      </Card>
+      {(d?.files ?? []).filter((file) => file.contentType?.startsWith('image/')).length > 0 ? (
+        <Card title={`图片预览（${(d?.files ?? []).filter((file) => file.contentType?.startsWith('image/')).length}）`} style={{ marginTop: 16 }} loading={detail.isLoading}>
+          <Space wrap>{(d?.files ?? []).filter((file) => file.contentType?.startsWith('image/')).map((file) => <Button key={file.bindingId} onClick={() => setPreviewFile({ fileId: file.fileId, name: file.objectKey.split('/').slice(-1)[0] ?? file.fileId })}>预览 {file.objectKey.split('/').slice(-1)[0] ?? file.fileId}</Button>)}</Space>
+          <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>当前仅对 image/* 文件展示预览入口。</Typography.Paragraph>
+        </Card>
+      ) : null}
+      <Tabs
+        items={[
+          {
+            key: 'annotation',
+            label: '标注任务/训练导出',
+            children: <Space direction="vertical" className="full-width">
+              <Alert type={candidate.data?.eligible ? 'success' : 'warning'} showIcon title="ACTIVE IMAGE 数据集可创建标注任务" description={`${candidate.data?.diagnosticCode ?? 'LOADING'} · ${candidate.data?.diagnosticMessage ?? '正在加载候选状态'}；COCO/YOLO/VOC/Mask 均包含图片副本，训练环境默认采用自包含导出包。`} />
+              {loc.state?.fromLocalUpload ? null : <Space wrap><Button type="primary" disabled={!candidate.data?.eligible} onClick={() => setTaskOpen(true)}>从数据集创建标注任务</Button><Typography.Text type="secondary">当前版本：{candidate.data?.currentVersionId ?? '-'}</Typography.Text></Space>}
+              <Table<DatasetAnnotationTask> rowKey={(r) => r.task.taskId} dataSource={annTasks.data ?? []} loading={annTasks.isLoading} expandable={{ expandedRowRender: (r) => <Table<AnnotationTrainingExport> rowKey="exportId" dataSource={r.exports} pagination={false} columns={[{ title: '格式', dataIndex: 'format' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '包含', render: (_v, item) => item.packageIncludesImages ? '包含图片副本和 metadata' : '仅 metadata' }, { title: '有效期', render: (_v, item) => item.expiresAt ? item.expiresAt.slice(0, 10) : '-' }, { title: '大小', render: (_v, item) => fmtSize(item.sizeBytes) }, { title: '诊断', render: (_v, item) => `${item.diagnosticCode} · ${item.diagnosticMessage}` }, { title: '下载', render: (_v, item) => <Button size="small" disabled={!item.exportId || item.status !== 'AVAILABLE'} loading={exportDownload.isPending} onClick={() => exportDownload.mutate(item.exportId)}>获取下载链接</Button> }]} locale={{ emptyText: '暂无训练格式导出' }} /> }} columns={[{ title: '任务', render: (_v, r) => <Space direction="vertical" size={0}><Typography.Text strong>{r.task.name}</Typography.Text><Typography.Text type="secondary" className="mono">{r.task.taskId}</Typography.Text></Space> }, { title: '场景', render: (_v, r) => txt(r.task.scene) }, { title: '状态', render: (_v, r) => <Tag color={color(r.task.status)}>{annStatusText(r.task.status)}</Tag> }, { title: '进度', render: (_v, r) => `${r.task.reviewedCount}/${r.task.totalCount}` }, { title: '质量分', render: (_v, r) => r.task.qualityScore ?? '-' }, { title: '操作', render: (_v, r) => <Space wrap><Button size="small" type="primary" onClick={() => nav(`/annwork?taskId=${encodeURIComponent(r.task.taskId)}`, { state: { taskId: r.task.taskId } })}>进入标注</Button><Button size="small" onClick={() => setExportTask(r)}>生成训练包</Button></Space> }]} />
+            </Space>,
+          },
+          {
+            key: 'versions',
+            label: '版本历史',
+            children: <Table rowKey="versionId" dataSource={d?.versions ?? []} pagination={false} columns={[{ title: '版本', render: (_, r) => <Space><a onClick={() => setSelectedVersionId(r.versionId)}>{r.versionName}</a>{r.isCurrent ? <Tag color="blue">当前</Tag> : null}</Space> }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '来源版本', dataIndex: 'sourceVersionId', render: (v) => v ?? '首版本' }, { title: '内容安全', dataIndex: 'contentSafetyStatus' }, { title: '文件数', dataIndex: 'fileCount' }, { title: '诊断', dataIndex: 'diagnosticMessage' }]} />,
+          },
+          { key: 'files', label: `文件元数据（${d?.files.length ?? 0}）`, children: <Table rowKey="bindingId" dataSource={d?.files ?? []} pagination={false} columns={fileColumns} locale={{ emptyText: '暂无文件元数据' }} /> },
+          { key: 'lineage', label: '血缘', children: <Table rowKey="lineageId" dataSource={d?.lineage ?? []} pagination={false} columns={[{ title: '来源', dataIndex: 'sourceType' }, { title: 'Source ID', dataIndex: 'sourceId' }, { title: '目标', dataIndex: 'targetId' }, { title: '转换', dataIndex: 'transformType' }]} /> },
+          { key: 'access', label: '权限授权', children: <Table rowKey="grantId" dataSource={d?.grants ?? []} pagination={false} columns={[{ title: '用户', dataIndex: 'userName' }, { title: '状态', dataIndex: 'status' }, { title: '有效期', dataIndex: 'expiresAt' }]} /> },
+        ]}
+      />
+      <Modal title="编辑数据集元信息" open={editOpen} onCancel={() => setEditOpen(false)} footer={null} destroyOnHidden>
+        <Form
+          layout="vertical"
+          initialValues={d ? { name: d.dataset.name, accessLevel: d.dataset.accessLevel, tags: d.dataset.tags.join('，'), description: d.dataset.description ?? '' } : undefined}
+          onFinish={(values) => updateDataset.mutate({ name: values.name, accessLevel: values.accessLevel, tags: String(values.tags ?? '').split(/[,，]/).map((item: string) => item.trim()).filter(Boolean), description: values.description })}
+        >
+          <Form.Item name="name" label="数据集名称" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="accessLevel" label="访问级别" rules={[{ required: true }]}><Select options={['PUBLIC', 'TEAM', 'PRIVATE', 'RESTRICTED'].map((v) => ({ value: v, label: v }))} /></Form.Item>
+          <Form.Item name="tags" label="标签"><Input /></Form.Item>
+          <Form.Item name="description" label="描述"><Input.TextArea rows={3} /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={updateDataset.isPending}>保存元信息</Button>
+        </Form>
+      </Modal>
+      <Modal title="新建版本" open={versionOpen} onCancel={() => setVersionOpen(false)} footer={null} destroyOnHidden>
+        <Form
+          layout="vertical"
+          initialValues={{ versionName: nextVersionName, sourceVersionId: d?.dataset.currentVersionId, inheritPreviousFiles: 'true', description: '' }}
+          onFinish={(values) => createVersion.mutate({ versionName: values.versionName, sourceVersionId: values.sourceVersionId, inheritPreviousFiles: values.inheritPreviousFiles === 'true', description: values.description })}
+        >
+          <Form.Item name="versionName" label="版本号" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="sourceVersionId" label="来源版本"><Select options={(d?.versions ?? []).map((item) => ({ value: item.versionId, label: item.versionName }))} /></Form.Item>
+          <Form.Item name="inheritPreviousFiles" label="是否复制来源文件集合"><Select options={[{ value: 'true', label: '复制来源文件集合' }, { value: 'false', label: '创建空版本' }]} /></Form.Item>
+          <Form.Item name="description" label="版本备注"><Input.TextArea rows={3} /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={createVersion.isPending}>创建版本</Button>
+        </Form>
+      </Modal>
+      <Modal title="追加文件到当前版本" open={attachOpen} onCancel={() => setAttachOpen(false)} footer={null} destroyOnHidden width={880}>
+        <Alert type="info" showIcon style={{ marginBottom: 16 }} title="仅追加当前版本" description={`所选版本需等于 currentVersion，当前目标：${d?.dataset.currentVersionName ?? '-'} / ${d?.selectedVersionId ?? '-'}`} />
+        <Table
+          rowKey="fileId"
+          dataSource={platformFiles.data?.items ?? []}
+          pagination={false}
+          columns={[
+            { title: '文件 ID', dataIndex: 'fileId' },
+            { title: 'Object Key', dataIndex: 'objectKey' },
+            { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> },
+            { title: '大小', render: (_, r) => fmtSize(r.sizeBytes) },
+            { title: '操作', render: (_, r) => <Button type="link" disabled={!canWriteSelectedVersion} loading={attach.isPending} onClick={() => d && attach.mutate({ versionId: d.selectedVersionId, fileId: r.fileId })}>追加到当前版本</Button> },
+          ]}
+        />
+      </Modal>
+      <Modal title="从数据集创建标注任务" open={taskOpen} onCancel={() => setTaskOpen(false)} footer={null} destroyOnHidden>
+        <Form form={taskForm} layout="vertical" onFinish={(v) => { if (!v.templateId) return; createTask.mutate({ ...v, templateId: v.templateId }); }}>
+          <Form.Item name="name" label="任务名称" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="scene" label="标注场景"><Select options={[{ value: 'IMAGE_TAGGING', label: '图片打标' }, { value: 'IMAGE_SEGMENTATION', label: '图片分割' }]} /></Form.Item>
+          <Form.Item name="templateId" label="标签模板" rules={[{ required: true, message: '当前场景暂无已发布模板' }]} extra={sceneTemplates.length === 0 ? '当前场景暂无已发布模板，请先创建并发布对应模板。' : undefined}><Select options={sceneTemplates.map((t) => ({ value: t.templateId, label: t.name }))} placeholder={sceneTemplates.length === 0 ? '当前场景暂无已发布模板' : '请选择标签模板'} /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={createTask.isPending}>创建任务</Button>
+        </Form>
+      </Modal>
+      <Modal title={`生成训练格式导出：${exportTask?.task.name ?? ''}`} open={!!exportTask} onCancel={() => setExportTask(null)} footer={null} destroyOnHidden>
+        <Form layout="vertical" initialValues={{ format: candidate.data?.supportedFormats?.[0] ?? 'SMP_JSONL' }} onFinish={(v) => exportTask && createExport.mutate({ taskId: exportTask.task.taskId, format: v.format })}>
+          <Alert type="info" showIcon title="导出策略" description="COCO/YOLO/VOC/Mask 包含图片副本和 metadata。超过 200MB 进入异步生成。" style={{ marginBottom: 16 }} />
+          <Form.Item name="format" label="训练格式"><Select options={(candidate.data?.supportedFormats ?? []).map((f) => ({ value: f, label: f }))} /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={createExport.isPending}>生成训练包</Button>
+        </Form>
+      </Modal>
+      <Modal title={`图片预览：${previewFile?.name ?? ''}`} open={!!previewFile} footer={null} width={960} onCancel={() => setPreviewFile(null)} destroyOnHidden>
+        <ImagePreviewPanel fileId={previewFile?.fileId} />
+      </Modal>
+    </div>
+  );
 }
 
 function ImagePreviewPanel({ fileId }: { fileId?: string }) {
   const previewUrl = fileId ? platformApi.fileContentUrl(fileId) : '';
-
   if (!fileId) return null;
-
   return (
-    <Space orientation="vertical" className="full-width" size={12}>
-      <Alert type="info" showIcon message="预览通过后端鉴权接口读取图片内容，避免浏览器直接访问 MinIO 遇到 403。" />
+    <Space direction="vertical" className="full-width" size={12}>
+      <Alert type="info" showIcon message="预览通过后端鉴权接口读取图片内容。" />
       <img src={previewUrl} alt="dataset preview" style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain', borderRadius: 8, background: '#f5f5f5' }} />
       <Space>
         <Button onClick={() => window.open(previewUrl, '_blank', 'noopener,noreferrer')}>新窗口打开原图</Button>

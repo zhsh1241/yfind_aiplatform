@@ -116,6 +116,14 @@ public class AnnotationService {
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "所选数据集状态不可用：DAT-009 要求源数据集必须为 ACTIVE");
         }
         AnnotationLabelTemplateRecord template = templateVisible(principal, require(request.templateId(), "标签模板不能为空"), false);
+        if (!source.tenantId().equals(template.tenantId())) {
+            audit(principal, source.tenantId(), "ANNOTATION_CROSS_TENANT_DENIED", "LabelTemplate", template.templateId(), "FAILURE", "CRITICAL", source.tenantId(), template.tenantId(), TRACE_TAG + ";DAT-012");
+            throw new PlatformException(PlatformError.FORBIDDEN, "标签模板与数据集不属于同一 BU");
+        }
+        if (!"PUBLISHED".equals(template.status())) {
+            audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "LabelTemplate", template.templateId(), "FAILURE", "WARNING", template.status(), "PUBLISHED_REQUIRED", TRACE_TAG + ";DAT-003");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "任务尚未配置已发布标签模板：DAT-003 要求模板为 PUBLISHED");
+        }
         if (!"IMAGE".equals(upper(source.dataType(), ""))) {
             audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "Dataset", source.datasetId(), "FAILURE", "WARNING", source.dataType(), "IMAGE_REQUIRED", TRACE_TAG + ";DAT-013");
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DAT-013 仅支持图片数据集创建图片打标或图片分割任务");
@@ -127,14 +135,6 @@ public class AnnotationService {
         if (!scene.equals(templateScene)) {
             audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "LabelTemplate", template.templateId(), "FAILURE", "WARNING", template.scene(), scene, TRACE_TAG + ";DAT-013");
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DAT-013 标签模板场景必须与标注任务场景一致");
-        }
-        if (!source.tenantId().equals(template.tenantId())) {
-            audit(principal, source.tenantId(), "ANNOTATION_CROSS_TENANT_DENIED", "LabelTemplate", template.templateId(), "FAILURE", "CRITICAL", source.tenantId(), template.tenantId(), TRACE_TAG + ";DAT-012");
-            throw new PlatformException(PlatformError.FORBIDDEN, "标签模板与数据集不属于同一 BU");
-        }
-        if (!"PUBLISHED".equals(template.status())) {
-            audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "LabelTemplate", template.templateId(), "FAILURE", "WARNING", template.status(), "PUBLISHED_REQUIRED", TRACE_TAG + ";DAT-003");
-            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "任务尚未配置已发布标签模板：DAT-003 要求模板为 PUBLISHED");
         }
         List<String> assignees = safe(request.assigneeIds());
         List<String> reviewers = safe(request.reviewerIds());

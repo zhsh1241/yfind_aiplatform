@@ -503,7 +503,7 @@ class AnnotationFlowJsonlExportRunnerTest {
     }
 
     private List<RealImageAsset> downloadRealImages() throws Exception {
-        Path imageDir = workspaceRoot().resolve(".tmp").resolve("real-images");
+        Path imageDir = Files.createTempDirectory(workspaceRoot().resolve(".tmp"), "real-images-");
         Files.createDirectories(imageDir);
         List<RealImageAsset> assets = new ArrayList<>();
         assets.add(downloadRealImage(
@@ -529,7 +529,9 @@ class AnnotationFlowJsonlExportRunnerTest {
         Path target = imageDir.resolve(fileName);
         Path localSource = resolveLocalRealImage(fileName);
         if (localSource != null) {
-            Files.copy(localSource, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            if (!localSource.toAbsolutePath().normalize().equals(target.toAbsolutePath().normalize())) {
+                Files.copy(localSource, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
         } else if ((sourceUrl.startsWith("http://") || sourceUrl.startsWith("https://")) && (!Files.exists(target) || Files.size(target) == 0L)) {
             HttpRequest request = HttpRequest.newBuilder(URI.create(sourceUrl))
                 .header("User-Agent", "OpenAI-Codex-TestRunner/1.0")

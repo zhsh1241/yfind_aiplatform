@@ -180,7 +180,7 @@ export function DatasetUploadPage() {
           diagnostic: initialized.status,
         });
         setUploadPhase(`上传 ${item.name} 到对象存储`);
-        const uploaded = await platformApi.uploadFile(initialized.fileId, item.file, (percent) => {
+        const uploaded = await platformApi.uploadFile(initialized.fileId, item.file, (percent: number) => {
           updateQueueItem(item.uid, { progress: 35 + Math.min(45, Math.round((percent / 100) * 45)) });
         });
 

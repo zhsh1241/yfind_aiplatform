@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -33,6 +34,12 @@ public class GlobalExceptionHandler {
     ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException exception) {
         return ResponseEntity.badRequest()
             .body(ApiResponse.failure(ErrorCode.INVALID_PARAM.code(), ErrorCode.INVALID_PARAM.defaultMessage(), traceId()));
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    ResponseEntity<ApiResponse<Void>> handleMaxUploadSize(MaxUploadSizeExceededException exception) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+            .body(ApiResponse.failure(41300, "DATASET_UPLOAD_FILE_LIMIT_EXCEEDED: 文件大小超出当前阈值", traceId()));
     }
 
     @ExceptionHandler(Exception.class)

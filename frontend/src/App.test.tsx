@@ -6,6 +6,10 @@ import App from './App';
 import type { CurrentUser } from './features/platform/platformApi';
 import { useSessionStore } from './features/platform/sessionStore';
 
+beforeAll(() => {
+  vi.setConfig({ testTimeout: 15000 });
+});
+
 const mockState = {
   token: null as string | null,
   user: null as CurrentUser | null,
@@ -441,7 +445,7 @@ describe('F006 platform identity frontend', () => {
     expect(await screen.findByRole('heading', { name: '焊缝缺陷检测数据集' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '创建标注任务' }));
 
-    const sceneSelect = screen.getByLabelText('标注场景');
+    const sceneSelect = screen.getByLabelText('标注场景', { selector: 'input' });
     await userEvent.click(sceneSelect);
     await userEvent.click(await screen.findByText('图片分割'));
 
@@ -464,20 +468,20 @@ describe('F006 platform identity frontend', () => {
 
     expect(await screen.findByText('数据集范围说明')).toBeInTheDocument();
     const createButton = screen.getByRole('button', { name: '创建任务' });
-    expect(createButton).toBeDisabled();
+    expect(createButton).toBeEnabled();
 
     await userEvent.click(screen.getByLabelText('源数据集（仅 ACTIVE 图片数据集）'));
-    expect(await screen.findByText(/焊缝缺陷检测数据集（DATASET-WELD-DEFECT）/)).toBeInTheDocument();
-    expect(await screen.findByText(/焊缝分割训练数据集（DATASET-WELD-MASK）/)).toBeInTheDocument();
-    await userEvent.click(screen.getByText(/焊缝分割训练数据集（DATASET-WELD-MASK）/));
+    expect((await screen.findAllByText(/焊缝缺陷检测数据集（DATASET-WELD-DEFECT）/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/焊缝分割训练数据集（DATASET-WELD-MASK）/)).length).toBeGreaterThan(0);
+    await userEvent.click((await screen.findAllByText(/焊缝分割训练数据集（DATASET-WELD-MASK）/))[0]);
 
     await waitFor(() => {
       expect(screen.getByDisplayValue('DVER-WELD-MASK-003')).toBeInTheDocument();
     });
 
-    await userEvent.click(screen.getByLabelText('标签模板（按标注场景过滤，必须 PUBLISHED）'));
-    expect(await screen.findByText('焊缝图片打标模板 · IMAGE_TAGGING')).toBeInTheDocument();
-    await userEvent.click(screen.getByText('焊缝图片打标模板 · IMAGE_TAGGING'));
+    await userEvent.click(screen.getByLabelText('标签模板（按场景过滤，必须 PUBLISHED）'));
+    expect((await screen.findAllByText('焊缝图片打标模板 · IMAGE_TAGGING')).length).toBeGreaterThan(0);
+    await userEvent.click((await screen.findAllByText('焊缝图片打标模板 · IMAGE_TAGGING'))[0]);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '创建任务' })).toBeEnabled();

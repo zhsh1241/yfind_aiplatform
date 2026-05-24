@@ -18,23 +18,23 @@ SET source_type = 'IMPORT',
 WHERE source_id = 'DSRC-CABIN-MINIO';
 
 UPDATE data_source
-SET name = '影音接口 API',
-    database_name = 'media-feed',
-    description = '待确认影音接口 API',
+SET name = '工单文本 API',
+    database_name = 'workorder',
+    description = '待确认工单 API',
     updated_at = CURRENT_TIMESTAMP
 WHERE source_id = 'DSRC-YF-API';
 
 UPDATE platform_file_object
-SET object_key = 'TENANT-YF/dataset/FILE-DATASET-MEDIA-001.jsonl',
+SET object_key = 'TENANT-YF/dataset/FILE-DATASET-TEXT-001.jsonl',
     content_type = 'application/jsonl',
     updated_at = CURRENT_TIMESTAMP
 WHERE file_id = 'FILE-DATASET-TEXT-001';
 
 UPDATE dataset
-SET name = '影音质检接口样例数据集',
-    data_type = 'AUDIO_VIDEO',
-    tags = '影音,质检,接口',
-    description = '影音接口接入样例数据集',
+SET name = '工单文本分类语料库',
+    data_type = 'TEXT',
+    tags = '工单,NLP,文本分类',
+    description = '工单文本公开样例数据集',
     updated_at = CURRENT_TIMESTAMP
 WHERE dataset_id = 'DATASET-WORKORDER-TEXT';
 
@@ -46,11 +46,11 @@ SET scene = 'IMAGE_TAGGING',
 WHERE template_id = 'LT-WELD-BBOX';
 
 UPDATE annotation_label_template
-SET scene = 'IMAGE_SEGMENTATION',
-    label_type = 'POLYGON',
-    name = '焊缝缺陷图片分割模板草稿',
-    label_schema_json = '{"labels":[{"name":"裂纹区域"},{"name":"气孔区域"}]}',
-    label_studio_config_xml = '<View><Image name="image" value="$image"/><PolygonLabels name="label" toName="image"><Label value="裂纹区域"/><Label value="气孔区域"/></PolygonLabels></View>',
+SET scene = 'TEXT_LABELING',
+    label_type = 'CATEGORY',
+    name = '工单意图分类模板草稿',
+    label_schema_json = '{"labels":[{"name":"报修"},{"name":"保养"},{"name":"咨询"}]}',
+    label_studio_config_xml = '<View><Text name="text" value="$text"/><Choices name="intent" toName="text"><Choice value="报修"/><Choice value="保养"/><Choice value="咨询"/></Choices></View>',
     updated_at = CURRENT_TIMESTAMP
 WHERE template_id = 'LT-TEXT-INTENT-DRAFT';
 

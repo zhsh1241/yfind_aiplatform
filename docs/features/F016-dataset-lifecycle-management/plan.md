@@ -1,11 +1,11 @@
 ---
 feature: F016-dataset-lifecycle-management
 title: 数据集生命周期管理增强
-plan_status: draft
-approved_at: ""
+plan_status: approved
+approved_at: "2026-05-24"
 owner: codex
 created_at: 2026-05-23
-updated_at: 2026-05-23
+updated_at: 2026-05-24
 ---
 
 # Plan: 数据集生命周期管理增强
@@ -83,9 +83,9 @@ F009 已建立数据集、版本、文件绑定、权限、血缘与引用检查
 - 若前端不清晰区分“编辑数据集”和“编辑版本内容”，用户容易混淆。
 - 若管理员硬删除门禁只做前端不做后端，会存在越权风险。
 
-## 5. Reuse Strategy / 复用策略
+## 复用策略
 
-### 必须复用
+### Must Reuse / 优先复用
 
 - `backend/smp-app/src/main/java/com/yf/smp/app/platform/DataManagementService.java`
 - `backend/smp-app/src/main/java/com/yf/smp/app/platform/DataManagementController.java`
@@ -100,7 +100,7 @@ F009 已建立数据集、版本、文件绑定、权限、血缘与引用检查
 - 不把“编辑数据集”实现成影子数据集
 - 不再造第二套上传流程或版本缓存状态
 
-### 新增 seam 的必要性
+### Approved New Seams / 新增 seam 的必要性
 
 现有 F009 只有“创建版本”和“绑定文件”，缺少“删除单版本”“从某个版本解绑图片”“管理员硬删除门禁”这些正式生命周期 seam，因此需要在原服务上做最小闭环增强，而不是重构整套模型。
 
