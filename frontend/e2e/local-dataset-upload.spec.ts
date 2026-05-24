@@ -37,7 +37,8 @@ test('TASK-local-dataset-upload AC-05 本地上传提交后可在详情页继续
 
   await page.getByRole('button', { name: '提交并创建数据集' }).click();
   await expect(page.getByText(/阶段进度：SECURITY_SCAN · 70%/)).toBeVisible();
-  await expect(page.getByRole('heading', { name: '焊缝缺陷检测数据集' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'F015 本地上传数据集' })).toBeVisible();
+  await expect(page.getByText('所选版本', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '创建标注任务' })).toBeEnabled();
   await page.getByRole('button', { name: '创建标注任务' }).click();
   await expect(page.getByRole('heading', { name: '标注任务管理' })).toBeVisible();
@@ -74,6 +75,9 @@ test('TASK-local-dataset-upload AC-04 高风险内容提交后展示安全待处
           versionId: null,
           status: 'UPLOADING',
           creationMode: 'LOCAL_UPLOAD',
+          targetAction: 'CREATE_DATASET',
+          targetDatasetId: null,
+          targetVersionId: null,
           progress: { phase: 'UPLOADING_FILES', percent: 45 },
           summary: { totalFiles: 1, acceptedFiles: 1, rejectedFiles: 0 },
           datasetStatus: 'DRAFT',
@@ -98,6 +102,9 @@ test('TASK-local-dataset-upload AC-04 高风险内容提交后展示安全待处
           versionId: 'DVER-UPLOAD-RISK',
           status: 'PROCESSING',
           creationMode: 'LOCAL_UPLOAD',
+          targetAction: 'CREATE_DATASET',
+          targetDatasetId: null,
+          targetVersionId: null,
           progress: { phase: 'SECURITY_SCAN', percent: 70 },
           summary: { totalFiles: 1, acceptedFiles: 1, rejectedFiles: 0 },
           datasetStatus: 'DRAFT',
@@ -117,8 +124,10 @@ test('TASK-local-dataset-upload AC-04 高风险内容提交后展示安全待处
         traceId: 'e2e-f015-risk',
         timestamp: new Date().toISOString(),
         data: {
-          dataset: { datasetId: 'DATASET-UPLOAD-RISK', name: 'F015 高风险内容', datasetType: 'RAW', dataType: 'IMAGE', tenantId: 'TENANT-CABIN', projectId: null, currentVersionId: 'DVER-UPLOAD-RISK', currentVersionName: 'v0.1.0', status: 'DRAFT', accessLevel: 'TEAM', tags: [], recordCount: 0, sizeBytes: 2048, ownerId: 'USR-ADMIN', ownerName: '平台管理员', description: '高风险内容待处理', updatedAt: new Date().toISOString() },
-          versions: [{ versionId: 'DVER-UPLOAD-RISK', datasetId: 'DATASET-UPLOAD-RISK', versionName: 'v0.1.0', status: 'SECURITY_PENDING', recordCount: 0, sizeBytes: 2048, contentSafetyStatus: 'BLOCKED', diagnosticCode: 'DATASET_UPLOAD_SECURITY_BLOCKED', diagnosticMessage: 'SECURITY_BLOCKED', createdAt: new Date().toISOString(), publishedAt: null }],
+          dataset: { datasetId: 'DATASET-UPLOAD-RISK', name: 'F015 高风险内容', datasetType: 'RAW', dataType: 'IMAGE', tenantId: 'TENANT-CABIN', projectId: null, currentVersionId: 'DVER-UPLOAD-RISK', currentVersionName: 'v1', status: 'DRAFT', accessLevel: 'TEAM', tags: [], versionCount: 1, recordCount: 0, sizeBytes: 2048, ownerId: 'USR-ADMIN', ownerName: '平台管理员', description: '高风险内容待处理', archivedAt: null, updatedAt: new Date().toISOString(), mutable: true, hardDeletable: false },
+          selectedVersionId: 'DVER-UPLOAD-RISK',
+          selectedVersion: { versionId: 'DVER-UPLOAD-RISK', datasetId: 'DATASET-UPLOAD-RISK', versionName: 'v1', status: 'SECURITY_PENDING', isCurrent: true, sourceVersionId: null, recordCount: 0, fileCount: 0, sizeBytes: 2048, contentSafetyStatus: 'BLOCKED', diagnosticCode: 'DATASET_UPLOAD_SECURITY_BLOCKED', diagnosticMessage: 'SECURITY_BLOCKED', createdAt: new Date().toISOString(), publishedAt: null, mutable: false, deletable: false, deleteBlockedReason: 'DATASET_VERSION_IMMUTABLE' },
+          versions: [{ versionId: 'DVER-UPLOAD-RISK', datasetId: 'DATASET-UPLOAD-RISK', versionName: 'v1', status: 'SECURITY_PENDING', isCurrent: true, sourceVersionId: null, recordCount: 0, fileCount: 0, sizeBytes: 2048, contentSafetyStatus: 'BLOCKED', diagnosticCode: 'DATASET_UPLOAD_SECURITY_BLOCKED', diagnosticMessage: 'SECURITY_BLOCKED', createdAt: new Date().toISOString(), publishedAt: null, mutable: false, deletable: false, deleteBlockedReason: 'DATASET_VERSION_IMMUTABLE' }],
           files: [],
           grants: [],
           lineage: [],
@@ -145,6 +154,6 @@ test('TASK-local-dataset-upload AC-04 高风险内容提交后展示安全待处
   await expect(page.getByText(/阶段进度：SECURITY_SCAN · 70%/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'F015 高风险内容' })).toBeVisible();
   await expect(page.getByText(/当前数据集尚未达到可发起标注任务的状态/)).toBeVisible();
-  await expect(page.getByText(/SECURITY_BLOCKED/)).toBeVisible();
+  await expect(page.getByText('DATASET_UPLOAD_SECURITY_BLOCKED / SECURITY_BLOCKED')).toBeVisible();
   await expect(page.getByRole('button', { name: '创建标注任务' })).toBeDisabled();
 });

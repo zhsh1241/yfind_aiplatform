@@ -25,6 +25,8 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -32,6 +34,9 @@ import org.springframework.test.context.ActiveProfiles;
 class DataManagementControllerTest {
     @LocalServerPort
     private int port;
+
+    @Autowired
+    private JdbcTemplate jdbc;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient client = HttpClient.newHttpClient();
@@ -688,14 +693,289 @@ class DataManagementControllerTest {
         assertThat(publishBlocked.at("/message").asText()).contains("DATASET_SECURITY_PENDING");
 
         JsonNode immutable = putJson("/api/v1/datasets/DATASET-WELD-DEFECT", "trace-f009-immutable", """
-            {"name":"非法修改已发布数据集","accessLevel":"TEAM","tags":["bad"]}
+            {"name":"已发布数据集元信息修订","accessLevel":"TEAM","tags":["bad"]}
             """, admin);
-        assertThat(immutable.at("/code").asInt()).isEqualTo(40900);
-        assertThat(immutable.at("/message").asText()).contains("DATASET_VERSION_IMMUTABLE");
+        assertThat(immutable.at("/code").asInt()).isZero();
+        assertThat(immutable.at("/data/dataset/name").asText()).isEqualTo("已发布数据集元信息修订");
 
         JsonNode detail = getJson("/api/v1/datasets/DATASET-WELD-DEFECT", "trace-f009-detail", admin);
         assertThat(detail.at("/data/lineage/0/sourceType").asText()).isEqualTo("DATA_SOURCE");
         assertThat(detail.at("/data/previewStatus").asText()).isEqualTo("UNSUPPORTED");
+    }
+
+    @Test
+    void datasetLifecycleSupportsVersionAwareDetailMetadataOnlyUpdateAndVersionCopy() throws Exception {
+        // TASK-dataset-lifecycle-management AC-01 AC-02 AC-03 AC-04
+        String admin = login("admin", "YF");
+        JsonNode created = postJson("/api/v1/datasets", "trace-f016-create", """
+            {"name":"F016 生命周期数据集","datasetType":"RAW","dataType":"IMAGE","tenantId":"TENANT-CABIN","accessLevel":"TEAM","tags":["F016"],"description":"dataset lifecycle","recordCount":0}
+            """, admin);
+        String datasetId = created.at("/data/dataset/datasetId").asText();
+        String versionV1 = created.at("/data/dataset/currentVersionId").asText();
+        assertThat(created.at("/data/dataset/currentVersionName").asText()).isEqualTo("v1");
+        assertThat(created.at("/data/dataset/versionCount").asInt()).isEqualTo(1);
+
+        JsonNode attachedV1 = postJson("/api/v1/datasets/" + datasetId + "/versions/" + versionV1 + "/files", "trace-f016-attach-v1", """
+            {"fileId":"FILE-DATASET-WELD-001","fileRole":"RAW"}
+            """, admin);
+        assertThat(attachedV1.at("/code").asInt()).isZero();
+
+        JsonNode versionCreated = postJson("/api/v1/datasets/" + datasetId + "/versions", "trace-f016-create-v2", """
+            {"inheritPreviousFiles":true}
+            """, admin);
+        String versionV2 = versionCreated.at("/data/versionId").asText();
+        assertThat(versionCreated.at("/data/versionName").asText()).isEqualTo("v2");
+        assertThat(versionCreated.at("/data/sourceVersionId").asText()).isEqualTo(versionV1);
+        assertThat(versionCreated.at("/data/fileCount").asInt()).isEqualTo(1);
+
+        JsonNode attachedV2 = postJson("/api/v1/datasets/" + datasetId + "/versions/" + versionV2 + "/files", "trace-f016-attach-v2", """
+            {"fileId":"FILE-DATASET-WELD-002","fileRole":"RAW"}
+            """, admin);
+        assertThat(attachedV2.at("/code").asInt()).isZero();
+
+        JsonNode list = getJson("/api/v1/datasets", "trace-f016-list", admin);
+        JsonNode summary = findByField(list.at("/data/items"), "datasetId", datasetId);
+        assertThat(summary.at("/versionCount").asInt()).isEqualTo(2);
+        assertThat(summary.at("/hardDeletable").asBoolean()).isFalse();
+
+        JsonNode defaultDetail = getJson("/api/v1/datasets/" + datasetId, "trace-f016-detail-default", admin);
+        assertThat(defaultDetail.at("/data/selectedVersionId").asText()).isEqualTo(versionV2);
+        assertThat(defaultDetail.at("/data/files").size()).isEqualTo(2);
+        assertThat(defaultDetail.at("/data/selectedVersion/fileCount").asInt()).isEqualTo(2);
+
+        JsonNode v1Detail = getJson("/api/v1/datasets/" + datasetId + "?versionId=" + versionV1, "trace-f016-detail-v1", admin);
+        assertThat(v1Detail.at("/data/selectedVersionId").asText()).isEqualTo(versionV1);
+        assertThat(v1Detail.at("/data/files").size()).isEqualTo(1);
+        assertThat(v1Detail.at("/data/files/0/fileId").asText()).isEqualTo("FILE-DATASET-WELD-001");
+
+        JsonNode updated = putJson("/api/v1/datasets/" + datasetId, "trace-f016-update", """
+            {"name":"F016 生命周期数据集-修订","accessLevel":"RESTRICTED","tags":["F016","META"],"description":"metadata only"}
+            """, admin);
+        assertThat(updated.at("/data/dataset/name").asText()).isEqualTo("F016 生命周期数据集-修订");
+        assertThat(updated.at("/data/dataset/accessLevel").asText()).isEqualTo("RESTRICTED");
+        assertThat(updated.at("/data/dataset/currentVersionId").asText()).isEqualTo(versionV2);
+        assertThat(updated.at("/data/files").size()).isEqualTo(2);
+
+        JsonNode audit = getJson("/api/v1/platform/audit-logs?action=DATASET_UPDATED", "trace-f016-audit-update", admin);
+        assertThat(audit.at("/data/items").findValuesAsText("resourceId")).contains(datasetId);
+    }
+
+    @Test
+    void datasetLifecycleUnbindDeleteRollbackAndLastVersionProtection() throws Exception {
+        // TASK-dataset-lifecycle-management AC-04 AC-05
+        String admin = login("admin", "YF");
+        JsonNode created = postJson("/api/v1/datasets", "trace-f016-del-create", """
+            {"name":"F016 删除保护","datasetType":"RAW","dataType":"IMAGE","tenantId":"TENANT-CABIN","accessLevel":"TEAM","tags":["F016"],"description":"delete protection","recordCount":0}
+            """, admin);
+        String datasetId = created.at("/data/dataset/datasetId").asText();
+        String versionV1 = created.at("/data/dataset/currentVersionId").asText();
+
+        postJson("/api/v1/datasets/" + datasetId + "/versions/" + versionV1 + "/files", "trace-f016-del-attach-v1", """
+            {"fileId":"FILE-DATASET-WELD-001","fileRole":"RAW"}
+            """, admin);
+        JsonNode versionCreated = postJson("/api/v1/datasets/" + datasetId + "/versions", "trace-f016-del-create-v2", """
+            {"inheritPreviousFiles":true}
+            """, admin);
+        String versionV2 = versionCreated.at("/data/versionId").asText();
+        postJson("/api/v1/datasets/" + datasetId + "/versions/" + versionV2 + "/files", "trace-f016-del-attach-v2", """
+            {"fileId":"FILE-DATASET-WELD-002","fileRole":"RAW"}
+            """, admin);
+
+        JsonNode v2Detail = getJson("/api/v1/datasets/" + datasetId, "trace-f016-del-detail-v2", admin);
+        String copiedBindingId = findByField(v2Detail.at("/data/files"), "fileId", "FILE-DATASET-WELD-001").at("/bindingId").asText();
+        JsonNode unbound = deleteJson("/api/v1/datasets/" + datasetId + "/versions/" + versionV2 + "/files/" + copiedBindingId, "trace-f016-unbind", admin);
+        assertThat(unbound.at("/code").asInt()).isZero();
+        assertThat(unbound.at("/data/fileId").asText()).isEqualTo("FILE-DATASET-WELD-001");
+        assertThat(unbound.at("/data/remainingFileCount").asInt()).isEqualTo(1);
+
+        JsonNode v1Detail = getJson("/api/v1/datasets/" + datasetId + "?versionId=" + versionV1, "trace-f016-v1-after-unbind", admin);
+        assertThat(v1Detail.at("/data/files").findValuesAsText("fileId")).contains("FILE-DATASET-WELD-001");
+        Integer objectCount = jdbc.queryForObject("SELECT COUNT(*) FROM platform_file_object WHERE file_id='FILE-DATASET-WELD-001'", Integer.class);
+        assertThat(objectCount).isEqualTo(1);
+
+        jdbc.update("INSERT INTO dataset_reference_guard (reference_id,dataset_id,version_id,ref_type,ref_id,status,created_at) VALUES (?,?,?,?,?,'ACTIVE',CURRENT_TIMESTAMP)",
+            "REF-F016-V2", datasetId, versionV2, "MODEL", "MODEL-F016-V2");
+        JsonNode referenced = deleteJson("/api/v1/datasets/" + datasetId + "/versions/" + versionV2, "trace-f016-delete-ref", admin);
+        assertThat(referenced.at("/code").asInt()).isEqualTo(40900);
+        assertThat(referenced.at("/message").asText()).contains("DATASET_VERSION_REFERENCED");
+        jdbc.update("DELETE FROM dataset_reference_guard WHERE reference_id='REF-F016-V2'");
+
+        JsonNode deleted = deleteJson("/api/v1/datasets/" + datasetId + "/versions/" + versionV2, "trace-f016-delete-v2", admin);
+        assertThat(deleted.at("/code").asInt()).isZero();
+        assertThat(deleted.at("/data/currentVersionId").asText()).isEqualTo(versionV1);
+        assertThat(deleted.at("/data/versionCount").asInt()).isEqualTo(1);
+
+        JsonNode lastOne = deleteJson("/api/v1/datasets/" + datasetId + "/versions/" + versionV1, "trace-f016-delete-last", admin);
+        assertThat(lastOne.at("/code").asInt()).isEqualTo(40900);
+        assertThat(lastOne.at("/message").asText()).contains("DATASET_VERSION_LAST_ONE_FORBIDDEN");
+    }
+
+    @Test
+    void datasetLifecycleArchiveHardDeleteAndAppendUploadFollowContract() throws Exception {
+        // TASK-dataset-lifecycle-management AC-06 AC-07 AC-08
+        String admin = login("admin", "YF");
+        String buAdmin = login("buadmin", "CABIN");
+        JsonNode created = postJson("/api/v1/datasets", "trace-f016-archive-create", """
+            {"name":"F016 归档删除","datasetType":"RAW","dataType":"IMAGE","tenantId":"TENANT-CABIN","accessLevel":"TEAM","tags":["F016"],"description":"archive delete","recordCount":0}
+            """, admin);
+        String datasetId = created.at("/data/dataset/datasetId").asText();
+        String versionId = created.at("/data/dataset/currentVersionId").asText();
+
+        JsonNode createAppendSession = postJson("/api/v1/dataset-upload-sessions", "trace-f016-append-create", """
+            {"name":"F016 归档删除","tenantId":"TENANT-CABIN","datasetType":"RAW","dataType":"IMAGE","accessLevel":"TEAM","tags":["F016"],"description":"append session","creationMode":"LOCAL_UPLOAD","targetAction":"APPEND_VERSION","targetDatasetId":"%s","targetVersionId":"%s"}
+            """.formatted(datasetId, versionId), buAdmin);
+        String sessionId = createAppendSession.at("/data/sessionId").asText();
+        assertThat(createAppendSession.at("/data/targetAction").asText()).isEqualTo("APPEND_VERSION");
+        assertThat(createAppendSession.at("/data/targetDatasetId").asText()).isEqualTo(datasetId);
+        assertThat(createAppendSession.at("/data/targetVersionId").asText()).isEqualTo(versionId);
+
+        postMultipart(
+            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
+            "trace-f016-append-upload",
+            List.of(new MultipartPart("files", "append-1.jpg", "image/jpeg", imageBytes("jpg"))),
+            buAdmin
+        );
+        JsonNode appendCommit = postJson("/api/v1/dataset-upload-sessions/" + sessionId + "/commit", "trace-f016-append-commit", "{\"publishRequested\":false}", buAdmin);
+        assertThat(appendCommit.at("/code").asInt()).isZero();
+        JsonNode appendCompleted = waitForUploadSessionStatus(sessionId, buAdmin, "READY");
+        assertThat(appendCompleted.at("/data/datasetId").asText()).isEqualTo(datasetId);
+        assertThat(appendCompleted.at("/data/versionId").asText()).isEqualTo(versionId);
+        assertThat(appendCompleted.at("/data/targetAction").asText()).isEqualTo("APPEND_VERSION");
+        assertThat(appendCompleted.at("/data/diagnosticCode").asText()).isEqualTo("DATASET_UPLOAD_APPEND_READY");
+
+        JsonNode detailAfterAppend = getJson("/api/v1/datasets/" + datasetId, "trace-f016-append-detail", admin);
+        assertThat(detailAfterAppend.at("/data/files").size()).isEqualTo(1);
+
+        JsonNode hardDeleteBeforeArchive = deleteJson("/api/v1/datasets/" + datasetId, "trace-f016-hard-delete-before-archive", admin);
+        assertThat(hardDeleteBeforeArchive.at("/code").asInt()).isEqualTo(40900);
+        assertThat(hardDeleteBeforeArchive.at("/message").asText()).contains("DATASET_NOT_ARCHIVED_FOR_HARD_DELETE");
+
+        JsonNode archived = postJson("/api/v1/datasets/" + datasetId + "/archive", "trace-f016-archive", "{}", buAdmin);
+        assertThat(archived.at("/data/status").asText()).isEqualTo("ARCHIVED");
+
+        JsonNode archivedUpdateRejected = putJson("/api/v1/datasets/" + datasetId, "trace-f016-archive-update-reject", """
+            {"name":"should reject"}
+            """, admin);
+        assertThat(archivedUpdateRejected.at("/code").asInt()).isEqualTo(40900);
+        assertThat(archivedUpdateRejected.at("/message").asText()).contains("DATASET_ARCHIVED_READONLY");
+
+        JsonNode archivedAppendRejected = postJson("/api/v1/dataset-upload-sessions", "trace-f016-append-archived-reject", """
+            {"name":"F016 归档删除","tenantId":"TENANT-CABIN","datasetType":"RAW","dataType":"IMAGE","accessLevel":"TEAM","creationMode":"LOCAL_UPLOAD","targetAction":"APPEND_VERSION","targetDatasetId":"%s","targetVersionId":"%s"}
+            """.formatted(datasetId, versionId), buAdmin);
+        assertThat(archivedAppendRejected.at("/code").asInt()).isEqualTo(40900);
+        assertThat(archivedAppendRejected.at("/message").asText()).contains("DATASET_ARCHIVED_READONLY");
+
+        JsonNode hardDeleteDenied = deleteJson("/api/v1/datasets/" + datasetId, "trace-f016-hard-delete-denied", buAdmin);
+        assertThat(hardDeleteDenied.at("/code").asInt()).isEqualTo(40300);
+        assertThat(hardDeleteDenied.at("/message").asText()).contains("DATASET_HARD_DELETE_ADMIN_ONLY");
+
+        jdbc.update("INSERT INTO dataset_reference_guard (reference_id,dataset_id,version_id,ref_type,ref_id,status,created_at) VALUES (?,?,?,?,?,'ACTIVE',CURRENT_TIMESTAMP)",
+            "REF-F016-DATASET", datasetId, versionId, "TRAINING_TASK", "TRAIN-F016");
+        JsonNode hardDeleteReferenced = deleteJson("/api/v1/datasets/" + datasetId, "trace-f016-hard-delete-ref", admin);
+        assertThat(hardDeleteReferenced.at("/code").asInt()).isEqualTo(40900);
+        assertThat(hardDeleteReferenced.at("/message").asText()).contains("DATASET_REFERENCED");
+        jdbc.update("DELETE FROM dataset_reference_guard WHERE reference_id='REF-F016-DATASET'");
+
+        JsonNode hardDeleted = deleteJson("/api/v1/datasets/" + datasetId, "trace-f016-hard-delete", admin);
+        assertThat(hardDeleted.at("/code").asInt()).isZero();
+        JsonNode afterDelete = getJson("/api/v1/datasets/" + datasetId, "trace-f016-after-hard-delete", admin);
+        assertThat(afterDelete.at("/code").asInt()).isEqualTo(40400);
+    }
+
+    @Test
+    void datasetLifecycleCrossBuWriteAndPublishedVersionAreProtected() throws Exception {
+        // TASK-dataset-lifecycle-management AC-05 AC-08
+        String admin = login("admin", "YF");
+        String buAdmin = login("buadmin", "CABIN");
+        jdbc.update("INSERT INTO platform_user_role (id, user_id, role_code, tenant_id, active, expires_at, created_at) VALUES (?,?,?,'TENANT-QE',TRUE,NULL,CURRENT_TIMESTAMP)",
+            "USR-QE::BU_ADMIN::TENANT-QE", "USR-QE", "BU_ADMIN");
+        String qe = login("qeuser", "QE");
+
+        JsonNode crossBuUpdate = putJson("/api/v1/datasets/DATASET-WELD-DEFECT", "trace-f016-cross-bu-update", """
+            {"name":"跨BU非法修改"}
+            """, qe);
+        assertThat(crossBuUpdate.at("/code").asInt()).isEqualTo(40400);
+
+        JsonNode publishedAttach = postJson("/api/v1/datasets/DATASET-WELD-DEFECT/versions/DVER-WELD-001/files", "trace-f016-published-attach", """
+            {"fileId":"FILE-DATASET-WELD-002","fileRole":"RAW"}
+            """, admin);
+        assertThat(publishedAttach.at("/code").asInt()).isEqualTo(40900);
+        assertThat(publishedAttach.at("/message").asText()).contains("DATASET_VERSION_IMMUTABLE");
+
+        JsonNode crossBuAppendCreate = postJson("/api/v1/dataset-upload-sessions", "trace-f016-cross-bu-append-direct-create", """
+            {"name":"跨BU直接创建","tenantId":"TENANT-CABIN","datasetType":"RAW","dataType":"IMAGE","accessLevel":"TEAM","creationMode":"LOCAL_UPLOAD","targetAction":"APPEND_VERSION","targetDatasetId":"DATASET-WELD-DEFECT","targetVersionId":"DVER-WELD-001"}
+            """, qe);
+        assertThat(crossBuAppendCreate.at("/code").asInt()).isEqualTo(40400);
+
+        JsonNode created = postJson("/api/v1/datasets", "trace-f016-cross-bu-create", """
+            {"name":"F016 跨BU会话","datasetType":"RAW","dataType":"IMAGE","tenantId":"TENANT-CABIN","accessLevel":"TEAM","tags":["F016"],"description":"cross bu session","recordCount":0}
+            """, admin);
+        String datasetId = created.at("/data/dataset/datasetId").asText();
+        String versionId = created.at("/data/dataset/currentVersionId").asText();
+
+        JsonNode appendSession = postJson("/api/v1/dataset-upload-sessions", "trace-f016-cross-bu-append-create", """
+            {"name":"跨BU追加","tenantId":"TENANT-CABIN","datasetType":"RAW","dataType":"IMAGE","accessLevel":"TEAM","creationMode":"LOCAL_UPLOAD","targetAction":"APPEND_VERSION","targetDatasetId":"%s","targetVersionId":"%s"}
+            """.formatted(datasetId, versionId), buAdmin);
+        String sessionId = appendSession.at("/data/sessionId").asText();
+
+        JsonNode crossBuAppendQuery = getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f016-cross-bu-append-query", qe);
+        assertThat(crossBuAppendQuery.at("/code").asInt()).isEqualTo(40400);
+    }
+
+    @Test
+    void datasetLifecycleAppendCommitRevalidatesArchivedAndCurrentVersionGuard() throws Exception {
+        // TASK-dataset-lifecycle-management AC-07 AC-08
+        String admin = login("admin", "YF");
+        String buAdmin = login("buadmin", "CABIN");
+        JsonNode created = postJson("/api/v1/datasets", "trace-f016-revalidate-create", """
+            {"name":"F016 追加二次校验","datasetType":"RAW","dataType":"IMAGE","tenantId":"TENANT-CABIN","accessLevel":"TEAM","tags":["F016"],"description":"append revalidate","recordCount":0}
+            """, admin);
+        String datasetId = created.at("/data/dataset/datasetId").asText();
+        String versionV1 = created.at("/data/dataset/currentVersionId").asText();
+
+        JsonNode appendSession = postJson("/api/v1/dataset-upload-sessions", "trace-f016-revalidate-session", """
+            {"name":"追加会话","tenantId":"TENANT-CABIN","datasetType":"RAW","dataType":"IMAGE","accessLevel":"TEAM","creationMode":"LOCAL_UPLOAD","targetAction":"APPEND_VERSION","targetDatasetId":"%s","targetVersionId":"%s"}
+            """.formatted(datasetId, versionV1), buAdmin);
+        String archivedSessionId = appendSession.at("/data/sessionId").asText();
+        postMultipart(
+            "/api/v1/dataset-upload-sessions/" + archivedSessionId + "/files",
+            "trace-f016-revalidate-upload-archive",
+            List.of(new MultipartPart("files", "append-archive.jpg", "image/jpeg", imageBytes("jpg"))),
+            buAdmin
+        );
+
+        JsonNode archived = postJson("/api/v1/datasets/" + datasetId + "/archive", "trace-f016-revalidate-archive", "{}", buAdmin);
+        assertThat(archived.at("/data/status").asText()).isEqualTo("ARCHIVED");
+
+        JsonNode archivedCommit = postJson("/api/v1/dataset-upload-sessions/" + archivedSessionId + "/commit", "trace-f016-revalidate-commit-archive", "{\"publishRequested\":false}", buAdmin);
+        assertThat(archivedCommit.at("/code").asInt()).isEqualTo(40900);
+        assertThat(archivedCommit.at("/message").asText()).contains("DATASET_ARCHIVED_READONLY");
+
+        JsonNode createdSwitch = postJson("/api/v1/datasets", "trace-f016-revalidate-create-switch", """
+            {"name":"F016 当前版本切换","datasetType":"RAW","dataType":"IMAGE","tenantId":"TENANT-CABIN","accessLevel":"TEAM","tags":["F016"],"description":"append current version","recordCount":0}
+            """, admin);
+        String switchDatasetId = createdSwitch.at("/data/dataset/datasetId").asText();
+        String switchVersionV1 = createdSwitch.at("/data/dataset/currentVersionId").asText();
+
+        JsonNode staleSession = postJson("/api/v1/dataset-upload-sessions", "trace-f016-revalidate-stale-session", """
+            {"name":"追加旧版本","tenantId":"TENANT-CABIN","datasetType":"RAW","dataType":"IMAGE","accessLevel":"TEAM","creationMode":"LOCAL_UPLOAD","targetAction":"APPEND_VERSION","targetDatasetId":"%s","targetVersionId":"%s"}
+            """.formatted(switchDatasetId, switchVersionV1), buAdmin);
+        String staleSessionId = staleSession.at("/data/sessionId").asText();
+        postMultipart(
+            "/api/v1/dataset-upload-sessions/" + staleSessionId + "/files",
+            "trace-f016-revalidate-upload-stale",
+            List.of(new MultipartPart("files", "append-stale.jpg", "image/jpeg", imageBytes("jpg"))),
+            buAdmin
+        );
+
+        JsonNode versionCreated = postJson("/api/v1/datasets/" + switchDatasetId + "/versions", "trace-f016-revalidate-new-version", """
+            {"inheritPreviousFiles":true}
+            """, admin);
+        assertThat(versionCreated.at("/data/versionName").asText()).isEqualTo("v2");
+
+        JsonNode staleCommit = postJson("/api/v1/dataset-upload-sessions/" + staleSessionId + "/commit", "trace-f016-revalidate-commit-stale", "{\"publishRequested\":false}", buAdmin);
+        assertThat(staleCommit.at("/code").asInt()).isEqualTo(40900);
+        assertThat(staleCommit.at("/message").asText()).contains("DATASET_TARGET_VERSION_NOT_CURRENT");
     }
 
     @Test
@@ -750,6 +1030,12 @@ class DataManagementControllerTest {
         return send(builder.build());
     }
 
+    private JsonNode deleteJson(String path, String traceId, String token) throws Exception {
+        var builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).header(TraceIdFilter.TRACE_HEADER, traceId).DELETE();
+        if (token != null) builder.header("Authorization", "Bearer " + token);
+        return send(builder.build());
+    }
+
     private JsonNode postMultipart(String path, String traceId, List<MultipartPart> parts, String token) throws Exception {
         String boundary = "----SMPBoundary" + System.nanoTime();
         ByteArrayOutputStream body = new ByteArrayOutputStream();
@@ -785,6 +1071,15 @@ class DataManagementControllerTest {
             Thread.sleep(100);
         }
         return latest == null ? getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-poll-timeout", token) : latest;
+    }
+
+    private JsonNode findByField(JsonNode items, String field, String value) {
+        for (JsonNode item : items) {
+            if (value.equals(item.path(field).asText())) {
+                return item;
+            }
+        }
+        throw new AssertionError("No item with " + field + "=" + value);
     }
 
     private HttpServer mockContentSafetyServer(String responseBody) throws Exception {

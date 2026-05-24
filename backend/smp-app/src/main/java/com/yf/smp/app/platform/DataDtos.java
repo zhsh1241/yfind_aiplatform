@@ -8,22 +8,24 @@ record DataSourceRequest(String name, String sourceType, String tenantId, String
 record DataSourceTestResponse(String sourceId, String result, String status, String diagnosticCode, String diagnosticMessage, Integer latencyMs, String traceId, OffsetDateTime testedAt) {}
 record DataSourceSyncTaskResponse(String taskId, String sourceId, String sourceName, String targetDatasetId, String targetDatasetName, String name, String scheduleMode, String syncScope, String status, OffsetDateTime lastRunAt, String lastResult, String diagnosticCode, String diagnosticMessage) {}
 record DataSourceSyncTaskRequest(String sourceId, String targetDatasetId, String name, String scheduleMode, String syncScope) {}
-record DatasetUploadSessionCreateRequest(String name, String tenantId, String datasetType, String dataType, String accessLevel, List<String> tags, String description, String creationMode) {}
+record DatasetUploadSessionCreateRequest(String name, String tenantId, String datasetType, String dataType, String accessLevel, List<String> tags, String description, String creationMode, String targetAction, String targetDatasetId, String targetVersionId) {}
 record DatasetUploadSessionCommitRequest(Boolean publishRequested) {}
 record DatasetUploadProgressResponse(String phase, int percent) {}
 record DatasetUploadSummaryResponse(int totalFiles, int acceptedFiles, int rejectedFiles) {}
 record DatasetUploadFileResponse(String fileName, String fileId, String status, Long sizeBytes, String contentType, String diagnosticCode, String diagnosticMessage) {}
-record DatasetUploadSessionResponse(String sessionId, String datasetId, String versionId, String status, String creationMode, DatasetUploadProgressResponse progress, DatasetUploadSummaryResponse summary, String datasetStatus, String versionStatus, String diagnosticCode, String diagnosticMessage, List<DatasetUploadFileResponse> files) {}
-record DatasetSummaryResponse(String datasetId, String name, String datasetType, String dataType, String tenantId, String projectId, String currentVersionId, String currentVersionName, String status, String accessLevel, List<String> tags, long recordCount, long sizeBytes, String ownerId, String ownerName, String description, OffsetDateTime updatedAt) {}
+record DatasetUploadSessionResponse(String sessionId, String datasetId, String versionId, String status, String creationMode, String targetAction, String targetDatasetId, String targetVersionId, DatasetUploadProgressResponse progress, DatasetUploadSummaryResponse summary, String datasetStatus, String versionStatus, String diagnosticCode, String diagnosticMessage, List<DatasetUploadFileResponse> files) {}
+record DatasetSummaryResponse(String datasetId, String name, String datasetType, String dataType, String tenantId, String projectId, String currentVersionId, String currentVersionName, String status, String accessLevel, List<String> tags, long versionCount, long recordCount, long sizeBytes, String ownerId, String ownerName, String description, OffsetDateTime archivedAt, OffsetDateTime updatedAt, boolean mutable, boolean hardDeletable) {}
 record DatasetStatsResponse(long total, long raw, long preprocessed, long annotated, long restricted, long totalSizeBytes) {}
 record DatasetListResponse(List<DatasetSummaryResponse> items, long total, int page, int pageSize, DatasetStatsResponse stats) {}
 record DatasetCreateRequest(String name, String datasetType, String dataType, String tenantId, String projectId, String accessLevel, List<String> tags, String description, Long recordCount, String sourceId) {}
 record DatasetUpdateRequest(String name, String accessLevel, List<String> tags, String description) {}
-record DatasetDetailResponse(DatasetSummaryResponse dataset, List<DatasetVersionResponse> versions, List<DatasetFileResponse> files, List<DatasetAccessGrantResponse> grants, List<DataLineageResponse> lineage, String previewStatus, String previewDiagnostic) {}
-record DatasetVersionResponse(String versionId, String datasetId, String versionName, String status, long recordCount, long sizeBytes, String contentSafetyStatus, String diagnosticCode, String diagnosticMessage, OffsetDateTime createdAt, OffsetDateTime publishedAt) {}
-record DatasetVersionCreateRequest(String versionName, Long recordCount) {}
-record DatasetFileResponse(String id, String datasetId, String versionId, String fileId, String fileRole, String status, String objectKey, String contentType, Long sizeBytes, String sha256) {}
+record DatasetDetailResponse(DatasetSummaryResponse dataset, String selectedVersionId, DatasetVersionResponse selectedVersion, List<DatasetVersionResponse> versions, List<DatasetFileResponse> files, List<DatasetAccessGrantResponse> grants, List<DataLineageResponse> lineage, String previewStatus, String previewDiagnostic) {}
+record DatasetVersionResponse(String versionId, String datasetId, String versionName, String status, boolean isCurrent, String sourceVersionId, long recordCount, long fileCount, long sizeBytes, String contentSafetyStatus, String diagnosticCode, String diagnosticMessage, OffsetDateTime createdAt, OffsetDateTime publishedAt, boolean mutable, boolean deletable, String deleteBlockedReason) {}
+record DatasetVersionCreateRequest(String versionName, String sourceVersionId, Boolean inheritPreviousFiles, String description, Long recordCount) {}
+record DatasetVersionDeleteResponse(String datasetId, String deletedVersionId, String currentVersionId, String currentVersionName, long versionCount) {}
+record DatasetFileResponse(String bindingId, String datasetId, String versionId, String fileId, String fileRole, String status, String objectKey, String contentType, Long sizeBytes, String sha256) {}
 record DatasetFileAttachRequest(String fileId, String fileRole) {}
+record DatasetFileUnbindResponse(String datasetId, String versionId, String bindingId, String fileId, long remainingFileCount) {}
 record DataLineageResponse(String lineageId, String sourceType, String sourceId, String targetType, String targetId, String transformType, OffsetDateTime createdAt) {}
 record DatasetAccessRequestCreateRequest(String purpose) {}
 record DatasetAccessRequestResponse(String requestId, String datasetId, String requesterId, String requesterName, String purpose, String status, OffsetDateTime createdAt, String reviewedBy, OffsetDateTime reviewedAt) {}

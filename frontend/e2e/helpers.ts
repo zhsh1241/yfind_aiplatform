@@ -34,12 +34,32 @@ const auditLog = { id: 'AUD-001', eventId: 'EVT-E2E', tenantId: 'TENANT-YF', ope
 
 const dataSources = [{ sourceId: 'DSRC-CABIN-MINIO', name: 'Image bucket', sourceType: 'OBJECT_STORAGE', tenantId: 'TENANT-CABIN', projectId: null, endpoint: 'minio.sandbox.internal', port: 9000, databaseName: 'weld-images', credentialMode: 'SECRET_REF', secretRefMasked: 'secret://TODO_CONFIRM_MINIO_DATASET', sharedScope: 'BU', description: 'object storage sandbox seam', status: 'ACTIVE', lastTestAt: '2026-05-18T00:00:00Z', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX OBJECT_STORAGE connector verified', latencyMs: 38, updatedAt: '2026-05-18T00:00:00Z' }, { sourceId: 'DSRC-CABIN-DB', name: 'MES relational db', sourceType: 'RELATIONAL_DB', tenantId: 'TENANT-CABIN', projectId: null, endpoint: 'postgres.sandbox.internal', port: 5432, databaseName: 'mes_order', credentialMode: 'SECRET_REF', secretRefMasked: 'secret://sandbox/db', sharedScope: 'BU', description: 'relational db sandbox connector', status: 'ACTIVE', lastTestAt: '2026-05-18T00:00:00Z', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX RELATIONAL_DB connector verified', latencyMs: 41, updatedAt: '2026-05-18T00:00:00Z' }, { sourceId: 'DSRC-CABIN-STREAM', name: 'Weld event stream', sourceType: 'STREAM', tenantId: 'TENANT-CABIN', projectId: null, endpoint: 'kafka.sandbox.internal', port: 9092, databaseName: 'weld-events', credentialMode: 'SECRET_REF', secretRefMasked: 'secret://sandbox/stream', sharedScope: 'BU', description: 'stream sandbox connector', status: 'ACTIVE', lastTestAt: '2026-05-18T00:00:00Z', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX STREAM connector verified', latencyMs: 39, updatedAt: '2026-05-18T00:00:00Z' }, { sourceId: 'DSRC-CABIN-TS', name: 'Equipment time-series', sourceType: 'TIME_SERIES', tenantId: 'TENANT-CABIN', projectId: null, endpoint: 'influx.sandbox.internal', port: 8086, databaseName: 'equipment_metrics', credentialMode: 'SECRET_REF', secretRefMasked: 'secret://sandbox/timeseries', sharedScope: 'BU', description: 'time-series sandbox connector', status: 'ACTIVE', lastTestAt: '2026-05-18T00:00:00Z', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX TIME_SERIES connector verified', latencyMs: 37, updatedAt: '2026-05-18T00:00:00Z' }, { sourceId: 'DSRC-CABIN-OPC', name: 'Weld OPC-UA', sourceType: 'INDUSTRIAL_PROTOCOL', tenantId: 'TENANT-CABIN', projectId: null, endpoint: 'opcua.sandbox.internal', port: 4840, databaseName: 'ns=2;s=weld', credentialMode: 'SECRET_REF', secretRefMasked: 'secret://sandbox/opcua', sharedScope: 'BU', description: 'industrial protocol sandbox connector', status: 'ACTIVE', lastTestAt: '2026-05-18T00:00:00Z', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX INDUSTRIAL_PROTOCOL connector verified', latencyMs: 45, updatedAt: '2026-05-18T00:00:00Z' }, { sourceId: 'DSRC-YF-API', name: 'Workorder API', sourceType: 'API', tenantId: 'TENANT-YF', projectId: null, endpoint: 'api.sandbox.internal', port: null, databaseName: 'workorder', credentialMode: 'SECRET_REF', secretRefMasked: 'secret://TODO_CONFIRM_WORKORDER_API', sharedScope: 'GLOBAL', description: 'api sandbox connector', status: 'ACTIVE', lastTestAt: '2026-05-18T00:00:00Z', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX API connector verified', latencyMs: 42, updatedAt: '2026-05-18T00:00:00Z' }];
 const syncTasks = [{ taskId: 'DSYNC-001', sourceId: 'DSRC-CABIN-MINIO', sourceName: '图像存储桶', targetDatasetId: 'DATASET-WELD-DEFECT', targetDatasetName: '焊缝缺陷检测数据集', name: '生产图像同步', scheduleMode: 'HOURLY', syncScope: 'prefix=/weld', status: 'PAUSED', lastRunAt: null, lastResult: 'UNCONFIGURED', diagnosticCode: 'DATA_SYNC_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_DATA_CONNECTOR_SCHEDULER' }];
-const datasets = { items: [{ datasetId: 'DATASET-WELD-DEFECT', name: '焊缝缺陷检测数据集', datasetType: 'RAW', dataType: 'IMAGE', tenantId: 'TENANT-CABIN', projectId: null, currentVersionId: 'DVER-WELD-001', currentVersionName: 'v1.0.0', status: 'ACTIVE', accessLevel: 'RESTRICTED', tags: ['焊接','质检','目标检测'], recordCount: 31200, sizeBytes: 1024, ownerId: 'USR-ADMIN', ownerName: '平台管理员', description: '焊缝缺陷图片样例数据集', updatedAt: '2026-05-18T00:00:00Z' }, { datasetId: 'DATASET-WORKORDER-TEXT', name: '工单文本分类语料库', datasetType: 'RAW', dataType: 'TEXT', tenantId: 'TENANT-YF', projectId: null, currentVersionId: 'DVER-TEXT-001', currentVersionName: 'v2.1.0', status: 'ACTIVE', accessLevel: 'PUBLIC', tags: ['工单','NLP'], recordCount: 125600, sizeBytes: 2048, ownerId: 'USR-ADMIN', ownerName: '平台管理员', description: '工单文本公开样例数据集', updatedAt: '2026-05-18T00:00:00Z' }], total: 2, page: 1, pageSize: 20, stats: { total: 2, raw: 2, preprocessed: 0, annotated: 0, restricted: 1, totalSizeBytes: 3072 } };
-const datasetDetail = { dataset: datasets.items[0], versions: [{ versionId: 'DVER-WELD-001', datasetId: 'DATASET-WELD-DEFECT', versionName: 'v1.0.0', status: 'PUBLISHED', recordCount: 31200, sizeBytes: 1024, contentSafetyStatus: 'PASSED', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX_CONTENT_SAFETY_PASSED', createdAt: '2026-05-18T00:00:00Z', publishedAt: '2026-05-18T00:00:00Z' }], files: [{ id: 'DF-WELD-001', datasetId: 'DATASET-WELD-DEFECT', versionId: 'DVER-WELD-001', fileId: 'FILE-DATASET-WELD-001', fileRole: 'RAW', status: 'BOUND', objectKey: 'TENANT-CABIN/dataset/FILE-DATASET-WELD-001.csv', contentType: 'text/csv', sizeBytes: 1024, sha256: 'sha256-weld-001' }], grants: [], lineage: [{ lineageId: 'LIN-DSRC-WELD-001', sourceType: 'DATA_SOURCE', sourceId: 'DSRC-CABIN-MINIO', targetType: 'DATASET_VERSION', targetId: 'DVER-WELD-001', transformType: 'IMPORT', createdAt: '2026-05-18T00:00:00Z' }], previewStatus: 'UNSUPPORTED', previewDiagnostic: '非图片/不可预览文件显示元数据退化状态' };
-const datasetUploadSession = { sessionId: 'DUS-E2E-001', datasetId: 'DATASET-UPLOAD-E2E', versionId: 'DVER-UPLOAD-E2E', status: 'PENDING_UPLOAD', creationMode: 'LOCAL_UPLOAD', progress: { phase: 'PENDING_UPLOAD', percent: 0 }, summary: { totalFiles: 0, acceptedFiles: 0, rejectedFiles: 0 }, datasetStatus: 'DRAFT', versionStatus: 'DRAFT', diagnosticCode: 'OK', diagnosticMessage: 'SESSION_CREATED', files: [] };
+const datasets = { items: [{ datasetId: 'DATASET-WELD-DEFECT', name: '焊缝缺陷检测数据集', datasetType: 'RAW', dataType: 'IMAGE', tenantId: 'TENANT-CABIN', projectId: null, currentVersionId: 'DVER-WELD-002', currentVersionName: 'v2', status: 'ACTIVE', accessLevel: 'RESTRICTED', tags: ['焊接','质检','目标检测'], versionCount: 2, recordCount: 31200, sizeBytes: 3072, ownerId: 'USR-ADMIN', ownerName: '平台管理员', description: '焊缝缺陷图片样例数据集', archivedAt: null, updatedAt: '2026-05-18T00:00:00Z', mutable: true, hardDeletable: false }, { datasetId: 'DATASET-WORKORDER-TEXT', name: '工单文本分类语料库', datasetType: 'RAW', dataType: 'TEXT', tenantId: 'TENANT-YF', projectId: null, currentVersionId: 'DVER-TEXT-001', currentVersionName: 'v1', status: 'ARCHIVED', accessLevel: 'PUBLIC', tags: ['工单','NLP'], versionCount: 1, recordCount: 125600, sizeBytes: 2048, ownerId: 'USR-ADMIN', ownerName: '平台管理员', description: '工单文本公开样例数据集', archivedAt: '2026-05-18T01:00:00Z', updatedAt: '2026-05-18T01:00:00Z', mutable: false, hardDeletable: true }], total: 2, page: 1, pageSize: 20, stats: { total: 2, raw: 2, preprocessed: 0, annotated: 0, restricted: 1, totalSizeBytes: 5120 } };
+const datasetVersions = [
+  { versionId: 'DVER-WELD-001', datasetId: 'DATASET-WELD-DEFECT', versionName: 'v1', status: 'PUBLISHED', isCurrent: false, sourceVersionId: null, recordCount: 16000, fileCount: 1, sizeBytes: 1024, contentSafetyStatus: 'PASSED', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX_CONTENT_SAFETY_PASSED', createdAt: '2026-05-18T00:00:00Z', publishedAt: '2026-05-18T00:00:00Z', mutable: false, deletable: false, deleteBlockedReason: 'DATASET_VERSION_IMMUTABLE' },
+  { versionId: 'DVER-WELD-002', datasetId: 'DATASET-WELD-DEFECT', versionName: 'v2', status: 'READY', isCurrent: true, sourceVersionId: 'DVER-WELD-001', recordCount: 31200, fileCount: 2, sizeBytes: 3072, contentSafetyStatus: 'PASSED', diagnosticCode: 'OK', diagnosticMessage: 'VERSION_READY', createdAt: '2026-05-18T01:00:00Z', publishedAt: null, mutable: true, deletable: true, deleteBlockedReason: null },
+];
+const datasetFilesByVersion = {
+  'DVER-WELD-001': [{ bindingId: 'DF-WELD-001', datasetId: 'DATASET-WELD-DEFECT', versionId: 'DVER-WELD-001', fileId: 'FILE-DATASET-WELD-001', fileRole: 'RAW', status: 'BOUND', objectKey: 'TENANT-CABIN/dataset/FILE-DATASET-WELD-001.csv', contentType: 'text/csv', sizeBytes: 1024, sha256: 'sha256-weld-001' }],
+  'DVER-WELD-002': [
+    { bindingId: 'DF-WELD-002', datasetId: 'DATASET-WELD-DEFECT', versionId: 'DVER-WELD-002', fileId: 'FILE-DATASET-WELD-001', fileRole: 'RAW', status: 'BOUND', objectKey: 'TENANT-CABIN/dataset/FILE-DATASET-WELD-001.csv', contentType: 'text/csv', sizeBytes: 1024, sha256: 'sha256-weld-001' },
+    { bindingId: 'DF-WELD-003', datasetId: 'DATASET-WELD-DEFECT', versionId: 'DVER-WELD-002', fileId: 'FILE-DATASET-WELD-002', fileRole: 'RAW', status: 'BOUND', objectKey: 'TENANT-CABIN/dataset/FILE-DATASET-WELD-002.jpg', contentType: 'image/jpeg', sizeBytes: 2048, sha256: 'sha256-weld-002' },
+  ],
+};
+const buildDatasetDetail = (versionId = 'DVER-WELD-002') => ({ dataset: datasets.items[0], selectedVersionId: versionId, selectedVersion: datasetVersions.find((item) => item.versionId === versionId), versions: datasetVersions, files: datasetFilesByVersion[versionId as keyof typeof datasetFilesByVersion] ?? [], grants: [], lineage: [{ lineageId: 'LIN-DSRC-WELD-001', sourceType: 'DATA_SOURCE', sourceId: 'DSRC-CABIN-MINIO', targetType: 'DATASET_VERSION', targetId: versionId, transformType: 'IMPORT', createdAt: '2026-05-18T00:00:00Z' }], previewStatus: versionId === 'DVER-WELD-002' ? 'PREVIEWABLE' : 'UNSUPPORTED', previewDiagnostic: versionId === 'DVER-WELD-002' ? '样例可预览' : '非图片/不可预览文件显示元数据退化状态' });
+const datasetDetail = buildDatasetDetail();
+const uploadDatasetSummary = { datasetId: 'DATASET-UPLOAD-E2E', name: 'F015 本地上传数据集', datasetType: 'RAW', dataType: 'IMAGE', tenantId: 'TENANT-CABIN', projectId: null, currentVersionId: 'DVER-UPLOAD-E2E', currentVersionName: 'v1', status: 'ACTIVE', accessLevel: 'TEAM', tags: [], versionCount: 1, recordCount: 1, sizeBytes: 1024, ownerId: 'USR-ADMIN', ownerName: '平台管理员', description: '本地上传创建', archivedAt: null, updatedAt: '2026-05-18T02:00:00Z', mutable: true, hardDeletable: false };
+const uploadDatasetVersion = { versionId: 'DVER-UPLOAD-E2E', datasetId: 'DATASET-UPLOAD-E2E', versionName: 'v1', status: 'READY', isCurrent: true, sourceVersionId: null, recordCount: 1, fileCount: 1, sizeBytes: 1024, contentSafetyStatus: 'PASSED', diagnosticCode: 'OK', diagnosticMessage: 'VERSION_READY', createdAt: '2026-05-18T02:00:00Z', publishedAt: null, mutable: true, deletable: false, deleteBlockedReason: 'DATASET_VERSION_LAST_ONE_FORBIDDEN' };
+const uploadDatasetDetail = { dataset: uploadDatasetSummary, selectedVersionId: 'DVER-UPLOAD-E2E', selectedVersion: uploadDatasetVersion, versions: [uploadDatasetVersion], files: [{ bindingId: 'DF-UPLOAD-001', datasetId: 'DATASET-UPLOAD-E2E', versionId: 'DVER-UPLOAD-E2E', fileId: 'FILE-UPLOAD-001', fileRole: 'RAW', status: 'BOUND', objectKey: 'TENANT-CABIN/upload/FILE-UPLOAD-001.jpg', contentType: 'image/jpeg', sizeBytes: 1024, sha256: 'sha256-upload-001' }], grants: [], lineage: [], previewStatus: 'PREVIEWABLE', previewDiagnostic: '样例可预览' };
+const riskDatasetDetail = { dataset: { datasetId: 'DATASET-UPLOAD-RISK', name: 'F015 高风险内容', datasetType: 'RAW', dataType: 'IMAGE', tenantId: 'TENANT-CABIN', projectId: null, currentVersionId: 'DVER-UPLOAD-RISK', currentVersionName: 'v1', status: 'DRAFT', accessLevel: 'TEAM', tags: [], versionCount: 1, recordCount: 0, sizeBytes: 2048, ownerId: 'USR-ADMIN', ownerName: '平台管理员', description: '高风险内容待处理', archivedAt: null, updatedAt: '2026-05-18T02:00:00Z', mutable: true, hardDeletable: false }, selectedVersionId: 'DVER-UPLOAD-RISK', selectedVersion: { versionId: 'DVER-UPLOAD-RISK', datasetId: 'DATASET-UPLOAD-RISK', versionName: 'v1', status: 'SECURITY_PENDING', isCurrent: true, sourceVersionId: null, recordCount: 0, fileCount: 0, sizeBytes: 2048, contentSafetyStatus: 'BLOCKED', diagnosticCode: 'DATASET_UPLOAD_SECURITY_BLOCKED', diagnosticMessage: 'SECURITY_BLOCKED', createdAt: '2026-05-18T02:00:00Z', publishedAt: null, mutable: false, deletable: false, deleteBlockedReason: 'DATASET_VERSION_IMMUTABLE' }, versions: [{ versionId: 'DVER-UPLOAD-RISK', datasetId: 'DATASET-UPLOAD-RISK', versionName: 'v1', status: 'SECURITY_PENDING', isCurrent: true, sourceVersionId: null, recordCount: 0, fileCount: 0, sizeBytes: 2048, contentSafetyStatus: 'BLOCKED', diagnosticCode: 'DATASET_UPLOAD_SECURITY_BLOCKED', diagnosticMessage: 'SECURITY_BLOCKED', createdAt: '2026-05-18T02:00:00Z', publishedAt: null, mutable: false, deletable: false, deleteBlockedReason: 'DATASET_VERSION_IMMUTABLE' }], files: [], grants: [], lineage: [], previewStatus: 'UNSUPPORTED', previewDiagnostic: '高风险内容未进入可用版本' };
+const datasetUploadSession = { sessionId: 'DUS-E2E-001', datasetId: 'DATASET-UPLOAD-E2E', versionId: 'DVER-UPLOAD-E2E', status: 'PENDING_UPLOAD', creationMode: 'LOCAL_UPLOAD', targetAction: 'CREATE_DATASET', targetDatasetId: null, targetVersionId: null, progress: { phase: 'PENDING_UPLOAD', percent: 0 }, summary: { totalFiles: 0, acceptedFiles: 0, rejectedFiles: 0 }, datasetStatus: 'DRAFT', versionStatus: 'DRAFT', diagnosticCode: 'OK', diagnosticMessage: 'SESSION_CREATED', files: [] };
 const datasetUploadSessionUploaded = { ...datasetUploadSession, status: 'UPLOADING', progress: { phase: 'UPLOADING_FILES', percent: 45 }, summary: { totalFiles: 2, acceptedFiles: 1, rejectedFiles: 1 }, diagnosticMessage: 'UPLOAD_SUMMARY_UPDATED', files: [{ fileName: 'weld-1.jpg', fileId: 'FILE-UPLOAD-001', status: 'UPLOADED', sizeBytes: 1024, contentType: 'image/jpeg', diagnosticCode: 'OK', diagnosticMessage: 'FILE_ACCEPTED' }, { fileName: 'bad.txt', fileId: null, status: 'REJECTED', sizeBytes: 20, contentType: 'application/octet-stream', diagnosticCode: 'DATASET_UPLOAD_FILE_TYPE_UNSUPPORTED', diagnosticMessage: '仅支持图片文件与 zip 包' }] };
 const datasetUploadSessionReady = { ...datasetUploadSessionUploaded, status: 'READY', progress: { phase: 'READY', percent: 100 }, datasetStatus: 'ACTIVE', versionStatus: 'READY', diagnosticCode: 'DATASET_UPLOAD_READY', diagnosticMessage: '本地上传数据集已完成文件绑定，可进入后续流程' };
 const datasetUploadSessionProcessing = { ...datasetUploadSessionUploaded, datasetId: 'DATASET-UPLOAD-E2E', versionId: 'DVER-UPLOAD-E2E', status: 'PROCESSING', progress: { phase: 'SECURITY_SCAN', percent: 70 }, datasetStatus: 'DRAFT', versionStatus: 'DRAFT', diagnosticCode: 'OK', diagnosticMessage: 'SECURITY_SCAN' };
+const datasetUploadSessionAppend = { sessionId: 'DUS-E2E-APPEND', datasetId: null, versionId: null, status: 'PENDING_UPLOAD', creationMode: 'LOCAL_UPLOAD', targetAction: 'APPEND_VERSION', targetDatasetId: 'DATASET-WELD-DEFECT', targetVersionId: 'DVER-WELD-002', progress: { phase: 'PENDING_UPLOAD', percent: 0 }, summary: { totalFiles: 0, acceptedFiles: 0, rejectedFiles: 0 }, datasetStatus: 'ACTIVE', versionStatus: 'READY', diagnosticCode: 'OK', diagnosticMessage: 'SESSION_CREATED', files: [] };
+const datasetUploadSessionAppendUploaded = { ...datasetUploadSessionAppend, status: 'UPLOADING', progress: { phase: 'UPLOADING_FILES', percent: 45 }, summary: { totalFiles: 1, acceptedFiles: 1, rejectedFiles: 0 }, diagnosticCode: 'OK', diagnosticMessage: 'UPLOAD_SUMMARY_UPDATED', files: [{ fileName: 'append-1.jpg', fileId: 'FILE-UPLOAD-APPEND-001', status: 'UPLOADED', sizeBytes: 1536, contentType: 'image/jpeg', diagnosticCode: 'OK', diagnosticMessage: 'FILE_ACCEPTED' }] };
+const datasetUploadSessionAppendProcessing = { ...datasetUploadSessionAppendUploaded, datasetId: 'DATASET-WELD-DEFECT', versionId: 'DVER-WELD-002', status: 'PROCESSING', progress: { phase: 'SECURITY_SCAN', percent: 70 }, datasetStatus: 'ACTIVE', versionStatus: 'READY', diagnosticCode: 'OK', diagnosticMessage: 'SECURITY_SCAN' };
+const datasetUploadSessionAppendReady = { ...datasetUploadSessionAppendUploaded, datasetId: 'DATASET-WELD-DEFECT', versionId: 'DVER-WELD-002', status: 'READY', progress: { phase: 'READY', percent: 100 }, datasetStatus: 'ACTIVE', versionStatus: 'SECURITY_PENDING', diagnosticCode: 'DATASET_UPLOAD_APPEND_READY', diagnosticMessage: '文件已追加到既有版本，等待内容安全与索引完成' };
 const datasetUploadSessionRiskUploaded = { ...datasetUploadSession, status: 'UPLOADING', progress: { phase: 'UPLOADING_FILES', percent: 45 }, summary: { totalFiles: 1, acceptedFiles: 1, rejectedFiles: 0 }, diagnosticMessage: 'UPLOAD_SUMMARY_UPDATED', files: [{ fileName: 'risk-photo.jpg', fileId: 'FILE-UPLOAD-RISK', status: 'UPLOADED', sizeBytes: 2048, contentType: 'image/jpeg', diagnosticCode: 'DATASET_UPLOAD_SECURITY_BLOCKED', diagnosticMessage: '检测到高风险内容' }] };
 const datasetUploadSessionRiskProcessing = { ...datasetUploadSessionRiskUploaded, datasetId: 'DATASET-UPLOAD-RISK', versionId: 'DVER-UPLOAD-RISK', status: 'PROCESSING', progress: { phase: 'SECURITY_SCAN', percent: 70 }, datasetStatus: 'DRAFT', versionStatus: 'DRAFT', diagnosticCode: 'OK', diagnosticMessage: 'SECURITY_SCAN' };
 const datasetUploadSessionRiskCommit = { ...datasetUploadSessionRiskUploaded, status: 'SECURITY_PENDING', progress: { phase: 'SECURITY_PENDING', percent: 100 }, datasetId: 'DATASET-UPLOAD-RISK', versionId: 'DVER-UPLOAD-RISK', datasetStatus: 'DRAFT', versionStatus: 'SECURITY_PENDING', diagnosticCode: 'DATASET_UPLOAD_SECURITY_BLOCKED', diagnosticMessage: 'SECURITY_BLOCKED', files: [{ fileName: 'risk-photo.jpg', fileId: 'FILE-UPLOAD-RISK', status: 'SECURITY_BLOCKED', sizeBytes: 2048, contentType: 'image/jpeg', diagnosticCode: 'DATASET_UPLOAD_SECURITY_BLOCKED', diagnosticMessage: '检测到高风险内容' }] };
@@ -137,21 +157,83 @@ export async function mockPlatformApis(page: Page) {
   await page.route('**/api/v1/data-sources/*/disable', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { ...dataSources[0], status: 'DISABLED' } } }); });
   await page.route('**/api/v1/data-source-sync-tasks', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: route.request().method() === 'POST' ? { ...syncTasks[0], taskId: 'DSYNC-NEW' } : syncTasks } }); });
   await page.route('**/api/v1/data-source-sync-tasks/*/run', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { ...syncTasks[0], status: 'SUCCEEDED', lastResult: 'SUCCESS', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX_RELATIONAL_DB_IMPORT_READY' } } }); });
-  await page.route('**/api/v1/datasets', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: route.request().method() === 'POST' ? { ...datasetDetail, dataset: { ...datasetDetail.dataset, name: '新建视觉数据集', status: 'DRAFT' }, versions: [{ ...datasetDetail.versions[0], status: 'DRAFT', contentSafetyStatus: 'UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_CONTENT_SAFETY_SERVICE' }] } : datasets } }); });
-  await page.route('**/api/v1/datasets?**', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: route.request().method() === 'POST' ? { ...datasetDetail, dataset: { ...datasetDetail.dataset, name: '新建视觉数据集', status: 'DRAFT' }, versions: [{ ...datasetDetail.versions[0], status: 'DRAFT', contentSafetyStatus: 'UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_CONTENT_SAFETY_SERVICE' }] } : datasets } }); });
+  await page.route('**/api/v1/datasets', async (route) => {
+    await route.fulfill({
+      json: {
+        code: 0,
+        message: 'success',
+        traceId: 'e2e',
+        timestamp: new Date().toISOString(),
+        data: route.request().method() === 'POST'
+          ? { ...buildDatasetDetail(), dataset: { ...datasets.items[0], name: '新建视觉数据集', status: 'DRAFT', currentVersionId: 'DVER-UPLOAD-E2E', currentVersionName: 'v1', versionCount: 1 }, selectedVersionId: 'DVER-UPLOAD-E2E', selectedVersion: { versionId: 'DVER-UPLOAD-E2E', datasetId: 'DATASET-UPLOAD-E2E', versionName: 'v1', status: 'DRAFT', isCurrent: true, sourceVersionId: null, recordCount: 0, fileCount: 0, sizeBytes: 0, contentSafetyStatus: 'UNCONFIGURED', diagnosticCode: 'OK', diagnosticMessage: 'TODO_CONFIRM_CONTENT_SAFETY_SERVICE', createdAt: '2026-05-18T00:00:00Z', publishedAt: null, mutable: true, deletable: false, deleteBlockedReason: 'DATASET_VERSION_LAST_ONE_FORBIDDEN' }, versions: [{ versionId: 'DVER-UPLOAD-E2E', datasetId: 'DATASET-UPLOAD-E2E', versionName: 'v1', status: 'DRAFT', isCurrent: true, sourceVersionId: null, recordCount: 0, fileCount: 0, sizeBytes: 0, contentSafetyStatus: 'UNCONFIGURED', diagnosticCode: 'OK', diagnosticMessage: 'TODO_CONFIRM_CONTENT_SAFETY_SERVICE', createdAt: '2026-05-18T00:00:00Z', publishedAt: null, mutable: true, deletable: false, deleteBlockedReason: 'DATASET_VERSION_LAST_ONE_FORBIDDEN' }], files: [] }
+          : datasets,
+      },
+    });
+  });
+  await page.route('**/api/v1/datasets?**', async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: datasets } });
+  });
   await page.route('**/api/v1/datasets/*/lineage', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: datasetDetail.lineage } }); });
-  await page.route('**/api/v1/datasets/*/versions/*/files', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: datasetDetail.files[0] } }); });
-  await page.route('**/api/v1/datasets/*', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: datasetDetail } }); });
+  await page.route('**/api/v1/datasets/*/versions', async (route) => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({
+        json: {
+          code: 0,
+          message: 'success',
+          traceId: 'e2e',
+          timestamp: new Date().toISOString(),
+          data: { versionId: 'DVER-WELD-003', datasetId: 'DATASET-WELD-DEFECT', versionName: 'v3', status: 'READY', isCurrent: true, sourceVersionId: 'DVER-WELD-002', recordCount: 31200, fileCount: 2, sizeBytes: 3072, contentSafetyStatus: 'PASSED', diagnosticCode: 'OK', diagnosticMessage: 'VERSION_READY', createdAt: '2026-05-18T02:00:00Z', publishedAt: null, mutable: true, deletable: true, deleteBlockedReason: null },
+        },
+      });
+      return;
+    }
+    await route.fallback();
+  });
+  await page.route('**/api/v1/datasets/*/versions/*/files/*', async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { datasetId: 'DATASET-WELD-DEFECT', versionId: 'DVER-WELD-002', bindingId: 'DF-WELD-003', fileId: 'FILE-DATASET-WELD-002', remainingFileCount: 1 } } });
+  });
+  await page.route('**/api/v1/datasets/*/versions/*/files', async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: datasetFilesByVersion['DVER-WELD-002'][1] } });
+  });
+  await page.route('**/api/v1/datasets/*/versions/*', async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { datasetId: 'DATASET-WELD-DEFECT', deletedVersionId: 'DVER-WELD-002', currentVersionId: 'DVER-WELD-001', currentVersionName: 'v1', versionCount: 1 } } });
+  });
+  await page.route('**/api/v1/datasets/*/archive', async (route) => {
+    const archivedSummary = { ...datasets.items[0], status: 'ARCHIVED', mutable: false, archivedAt: '2026-05-18T03:00:00Z' };
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: archivedSummary } });
+  });
+  await page.route('**/api/v1/datasets/*', async (route) => {
+    const url = new URL(route.request().url());
+    const versionId = url.searchParams.get('versionId') ?? 'DVER-WELD-002';
+    if (url.pathname.endsWith('/DATASET-UPLOAD-E2E')) {
+      await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: uploadDatasetDetail } });
+      return;
+    }
+    if (url.pathname.endsWith('/DATASET-UPLOAD-RISK')) {
+      await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: riskDatasetDetail } });
+      return;
+    }
+    if (route.request().method() === 'PUT') {
+      const detail = buildDatasetDetail(versionId);
+      await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { ...detail, dataset: { ...detail.dataset, name: '焊缝缺陷检测数据集-修订', accessLevel: 'TEAM', tags: ['焊接', '修订'], description: 'metadata updated' } } } });
+      return;
+    }
+    if (route.request().method() === 'DELETE') {
+      await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: null } });
+      return;
+    }
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: buildDatasetDetail(versionId) } });
+  });
   let uploadSessionPollCount = 0;
   let riskUploadSessionPollCount = 0;
   await page.route('**/api/v1/dataset-upload-sessions/*/files', async (route) => {
     const payload = route.request().postDataBuffer()?.toString('utf8') ?? '';
-    const data = payload.includes('risk-photo.jpg') ? datasetUploadSessionRiskUploaded : datasetUploadSessionUploaded;
+    const data = payload.includes('risk-photo.jpg') ? datasetUploadSessionRiskUploaded : payload.includes('append-1.jpg') ? datasetUploadSessionAppendUploaded : datasetUploadSessionUploaded;
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data } });
   });
   await page.route('**/api/v1/dataset-upload-sessions/*/commit', async (route) => {
-    const payload = route.request().postDataBuffer()?.toString('utf8') ?? '';
-    const data = payload.includes('risk') ? datasetUploadSessionRiskProcessing : datasetUploadSessionProcessing;
+    const url = route.request().url();
+    const data = url.includes('DUS-E2E-RISK') ? datasetUploadSessionRiskProcessing : url.includes('DUS-E2E-APPEND') ? datasetUploadSessionAppendProcessing : datasetUploadSessionProcessing;
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data } });
   });
   await page.route('**/api/v1/dataset-upload-sessions/*', async (route) => {
@@ -168,9 +250,19 @@ export async function mockPlatformApis(page: Page) {
       await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data } });
       return;
     }
+    if (url.includes('DUS-E2E-APPEND')) {
+      uploadSessionPollCount += 1;
+      const data = uploadSessionPollCount === 1 ? datasetUploadSessionAppendProcessing : datasetUploadSessionAppendReady;
+      await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data } });
+      return;
+    }
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: datasetUploadSession } });
   });
-  await page.route('**/api/v1/dataset-upload-sessions', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: datasetUploadSession } }); });
+  await page.route('**/api/v1/dataset-upload-sessions', async (route) => {
+    const payload = route.request().postData() ?? '';
+    const data = payload.includes('APPEND_VERSION') ? datasetUploadSessionAppend : datasetUploadSession;
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data } });
+  });
   await page.route('**/api/v1/dataset-references**', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { datasetId: 'DATASET-WELD-DEFECT', versionId: 'DVER-WELD-001', status: 'PUBLISHED', usable: true, diagnosticCode: 'OK', diagnosticMessage: 'usable' } } }); });
 
   await page.route('**/api/v1/pipelines', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { items: [pipelineDetail.pipeline], total: 1, page: 1, pageSize: 20 } } }); });
