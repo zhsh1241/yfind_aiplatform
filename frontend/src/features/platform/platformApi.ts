@@ -511,6 +511,9 @@ export const platformApi = {
   async me() {
     return unwrap<CurrentUser>(apiClient.get('/api/v1/auth/me'));
   },
+  async logout() {
+    return unwrap<void>(apiClient.post('/api/v1/auth/logout'));
+  },
   async users() {
     return unwrap<PageResponse<UserSummary>>(apiClient.get('/api/v1/platform/users'));
   },
@@ -603,7 +606,7 @@ export const platformApi = {
     return unwrap<FileDownloadResponse>(apiClient.get(`/api/v1/platform/files/${fileId}/download-url`));
   },
   fileContentUrl(fileId: string) {
-    const base = apiClient.defaults.baseURL ?? '';
+    const base = apiClient?.defaults?.baseURL ?? '';
     return `${base}/api/v1/platform/files/${fileId}/content`;
   },
   async notificationChannels() {
@@ -715,10 +718,24 @@ export type AnnotationExternalBinding = { bindingId: string; taskId: string; pro
 export type AnnotationOverview = { stats: AnnotationStats; tasks: AnnotationTaskSummary[]; templates: AnnotationLabelTemplate[] };
 export type AnnotationTaskList = { items: AnnotationTaskSummary[]; total: number; page: number; pageSize: number };
 export type AnnotationTaskDetail = { task: AnnotationTaskSummary; assignments: AnnotationAssignment[]; workItems: AnnotationWorkItem[]; reviewItems: AnnotationReviewItem[]; publications: AnnotationPublication[]; externalBinding: AnnotationExternalBinding };
+export type AnnotationWorkItemPage = { items: AnnotationWorkItem[]; total: number; page: number; pageSize: number };
+type AnnotationWorkItemPageRaw = AnnotationWorkItemPage | AnnotationWorkItem[];
+
+function normalizeAnnotationWorkItemPage(data: AnnotationWorkItemPageRaw, params: { page?: number; pageSize?: number } = {}): AnnotationWorkItemPage {
+  if (Array.isArray(data)) {
+    return {
+      items: data,
+      total: data.length,
+      page: params.page ?? 1,
+      pageSize: params.pageSize ?? (data.length || 1),
+    };
+  }
+  return data;
+}
 export type AnnotationTrainingExport = { exportId: string; taskId: string; format: string; formatVersion: string; status: string; diagnosticCode: string; diagnosticMessage: string; fileId: string | null; downloadUrl: string | null; sizeBytes: number | null; asyncRequired: boolean; packageIncludesImages: boolean; requestedAt: string; generatedAt: string | null; expiresAt: string | null };
 export type DatasetAnnotationCandidate = { datasetId: string; datasetName: string; currentVersionId: string | null; dataType: string; status: string; eligible: boolean; diagnosticCode: string; diagnosticMessage: string; templates: AnnotationLabelTemplate[]; supportedFormats: string[] };
 export type DatasetAnnotationTask = { task: AnnotationTaskSummary; exports: AnnotationTrainingExport[] };
-export type AnnotationTaskCreateInput = { name: string; sourceDatasetId: string; sourceVersionId?: string | null; templateId: string; scene: string; reviewEnabled?: boolean; prelabelEnabled?: boolean; labelStudioEnabled?: boolean; prelabelModelSource?: string; prelabelConfidence?: number; assigneeIds?: string[]; reviewerIds?: string[]; deadline?: string | null; note?: string };
+export type AnnotationTaskCreateInput = { name: string; sourceDatasetId: string; sourceVersionId?: string | null; templateId?: string; inlineLabels?: string[]; inlineTemplateName?: string; scene: string; reviewEnabled?: boolean; prelabelEnabled?: boolean; labelStudioEnabled?: boolean; prelabelModelSource?: string; prelabelConfidence?: number; assigneeIds?: string[]; reviewerIds?: string[]; deadline?: string | null; note?: string };
 export type AnnotationLabelTemplateInput = { name: string; tenantId?: string; scene: string; labelType: string; labelSchemaJson: string; labelStudioConfigXml?: string };
 
 export const dataApi = {
@@ -799,7 +816,10 @@ export const dataApi = {
   async publishLabelTemplate(templateId: string) { return unwrap<AnnotationLabelTemplate>(apiClient.post(`/api/v1/annotation/label-templates/${templateId}/publish`)); },
   async archiveLabelTemplate(templateId: string) { return unwrap<AnnotationLabelTemplate>(apiClient.post(`/api/v1/annotation/label-templates/${templateId}/archive`)); },
   async labelStudioConfig(templateId: string) { return unwrap<{ templateId: string; configXml: string; diagnosticCode: string; diagnosticMessage: string }>(apiClient.get(`/api/v1/annotation/label-templates/${templateId}/label-studio-config`)); },
-  async annotationWorkItems(taskId: string) { return unwrap<AnnotationWorkItem[]>(apiClient.get(`/api/v1/annotation/tasks/${taskId}/work-items`)); },
+  async annotationWorkItems(taskId: string, params: { page?: number; pageSize?: number } = {}) {
+    const response = await unwrap<AnnotationWorkItemPageRaw>(apiClient.get(`/api/v1/annotation/tasks/${taskId}/work-items`, { params }));
+    return normalizeAnnotationWorkItemPage(response, params);
+  },
   async saveAnnotationDraft(workItemId: string, annotationJson: string) { return unwrap<AnnotationWorkItem>(apiClient.post(`/api/v1/annotation/work-items/${workItemId}/draft`, { annotationJson })); },
   async submitAnnotationWorkItem(workItemId: string, annotationJson: string) { return unwrap<AnnotationWorkItem>(apiClient.post(`/api/v1/annotation/work-items/${workItemId}/submit`, { annotationJson })); },
   async annotationReviewItems(params: { status?: string; taskId?: string } = {}) { return unwrap<AnnotationReviewItem[]>(apiClient.get('/api/v1/annotation/review-items', { params })); },

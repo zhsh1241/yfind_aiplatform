@@ -45,6 +45,7 @@ class DataManagementControllerTest {
     void localDatasetUploadSessionCreatesReceivesFilesQueriesAndCommits() throws Exception {
         // TASK-local-dataset-upload AC-02 AC-03 AC-05 AC-06
         String admin = login("admin", "YF");
+        byte[] uploadedImage = imageBytes("jpg");
         HttpServer server = mockContentSafetyServer("""
             {"status":"PASSED"}
             """);
@@ -69,7 +70,7 @@ class DataManagementControllerTest {
             JsonNode uploaded = postMultipart(
                 "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
                 "trace-f015-session-upload",
-                List.of(new MultipartPart("files", "weld-1.jpg", "image/jpeg", imageBytes("jpg"))),
+                List.of(new MultipartPart("files", "weld-1.jpg", "image/jpeg", uploadedImage)),
                 buAdmin
             );
             assertThat(uploaded.at("/code").asInt()).isZero();
@@ -99,6 +100,12 @@ class DataManagementControllerTest {
             assertThat(detail.at("/data/dataset/currentVersionId").asText()).isEqualTo(versionId);
             assertThat(detail.at("/data/files/0/fileRole").asText()).isEqualTo("RAW");
             assertThat(detail.at("/data/lineage/0/sourceType").asText()).isEqualTo("LOCAL_UPLOAD");
+            String fileId = jdbc.queryForObject("SELECT file_id FROM dataset_file WHERE dataset_id=? ORDER BY created_at LIMIT 1", String.class, datasetId);
+
+            BinaryResponse fileContent = getBytes("/api/v1/platform/files/" + fileId + "/content", "trace-f015-file-content", buAdmin);
+            assertThat(fileContent.statusCode()).isEqualTo(200);
+            assertThat(fileContent.contentType()).startsWith("image/jpeg");
+            assertThat(fileContent.body()).isEqualTo(uploadedImage);
 
             JsonNode audit = getJson("/api/v1/platform/audit-logs?action=DATASET_UPLOAD_COMMITTED", "trace-f015-audit", admin);
             assertThat(audit.at("/data/items/0/action").asText()).isEqualTo("DATASET_UPLOAD_COMMITTED");
@@ -599,8 +606,8 @@ class DataManagementControllerTest {
         assertThat(labelStudio.at("/data/configStatus").asText()).isEqualTo("UNCONFIGURED");
         assertThat(labelStudio.at("/data/diagnosticMessage").asText()).contains("TODO_CONFIRM_LABEL_STUDIO_BASE_URL");
 
-        JsonNode workItems = getJson("/api/v1/annotation/tasks/" + taskId + "/work-items", "trace-f012-work-items", admin);
-        String firstWorkItemId = workItems.at("/data/0/workItemId").asText();
+        JsonNode workItems = getJson("/api/v1/annotation/tasks/" + taskId + "/work-items?page=1&pageSize=50", "trace-f012-work-items", admin);
+        String firstWorkItemId = workItems.at("/data/items/0/workItemId").asText();
         JsonNode draft = postJson("/api/v1/annotation/work-items/" + firstWorkItemId + "/draft", "trace-f012-work-draft", """
             {"annotationJson":"{\\"boxes\\":[{\\"label\\":\\"裂纹\\"}]}"}
             """, admin);
@@ -616,7 +623,8 @@ class DataManagementControllerTest {
         assertThat(approved.at("/data/status").asText()).isEqualTo("APPROVED");
 
         JsonNode detailAfterFirstApprove = getJson("/api/v1/annotation/tasks/" + taskId, "trace-f012-task-detail-after-approve", admin);
-        for (JsonNode item : detailAfterFirstApprove.at("/data/workItems")) {
+        JsonNode detailWorkItems = getJson("/api/v1/annotation/tasks/" + taskId + "/work-items?page=1&pageSize=50", "trace-f012-work-items-after-approve", admin);
+        for (JsonNode item : detailWorkItems.at("/data/items")) {
             if (!"APPROVED".equals(item.at("/status").asText())) {
                 String itemId = item.at("/workItemId").asText();
                 postJson("/api/v1/annotation/work-items/" + itemId + "/submit", "trace-f012-submit-" + itemId, """
@@ -1020,6 +1028,14 @@ class DataManagementControllerTest {
         return send(builder.build());
     }
 
+    private BinaryResponse getBytes(String path, String traceId, String token) throws Exception {
+        var builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).header(TraceIdFilter.TRACE_HEADER, traceId).GET();
+        if (token != null) builder.header("Authorization", "Bearer " + token);
+        var response = client.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
+        if (response.statusCode() < 400) assertThat(response.headers().firstValue(TraceIdFilter.TRACE_HEADER)).isPresent();
+        return new BinaryResponse(response.statusCode(), response.headers().firstValue("Content-Type").orElse(""), response.body());
+    }
+
     private JsonNode postJson(String path, String traceId, String body, String token) throws Exception {
         var builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).header(TraceIdFilter.TRACE_HEADER, traceId).header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body));
         if (token != null) builder.header("Authorization", "Bearer " + token);
@@ -1133,6 +1149,7 @@ class DataManagementControllerTest {
         }
     }
 
+    private record BinaryResponse(int statusCode, String contentType, byte[] body) {}
     private record MultipartPart(String name, String fileName, String contentType, byte[] content) {}
     private record ZipPart(String name, byte[] bytes) {}
 }

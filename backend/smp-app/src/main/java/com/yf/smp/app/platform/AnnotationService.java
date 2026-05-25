@@ -11,6 +11,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -106,6 +108,19 @@ public class AnnotationService {
         return detail(taskVisible(principal, taskId, false));
     }
 
+    public AnnotationWorkItemPageResponse workItems(PlatformPrincipal principal, String taskId, int page, int pageSize) {
+        requireAnyPermission(principal, "data:annotation:submit", "data:annotation:read");
+        AnnotationTaskRecord task = taskVisible(principal, taskId, false);
+        List<AnnotationWorkItemResponse> visible = workItemResponses(task.taskId()).stream()
+            .filter(item -> principal.hasPermission("data:annotation:read") || principal.user().id().equals(item.annotatorId()))
+            .toList();
+        int normalizedPage = Math.max(1, page);
+        int normalizedPageSize = Math.max(1, Math.min(200, pageSize));
+        int from = Math.min((normalizedPage - 1) * normalizedPageSize, visible.size());
+        int to = Math.min(from + normalizedPageSize, visible.size());
+        return new AnnotationWorkItemPageResponse(visible.subList(from, to), visible.size(), normalizedPage, normalizedPageSize);
+    }
+
     @Transactional(noRollbackFor = PlatformException.class)
     public AnnotationTaskDetailResponse createTask(PlatformPrincipal principal, AnnotationTaskCreateRequest request) {
         identityService.requirePermission(principal, "data:annotation:write");
@@ -115,19 +130,11 @@ public class AnnotationService {
             audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "Dataset", source.datasetId(), "FAILURE", "WARNING", source.status(), "ACTIVE_REQUIRED", TRACE_TAG + ";DAT-009");
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "所选数据集状态不可用：DAT-009 要求源数据集必须为 ACTIVE");
         }
-        AnnotationLabelTemplateRecord template = templateVisible(principal, require(request.templateId(), "标签模板不能为空"), false);
-        if (!source.tenantId().equals(template.tenantId())) {
-            audit(principal, source.tenantId(), "ANNOTATION_CROSS_TENANT_DENIED", "LabelTemplate", template.templateId(), "FAILURE", "CRITICAL", source.tenantId(), template.tenantId(), TRACE_TAG + ";DAT-012");
-            throw new PlatformException(PlatformError.FORBIDDEN, "标签模板与数据集不属于同一 BU");
-        }
-        if (!"PUBLISHED".equals(template.status())) {
-            audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "LabelTemplate", template.templateId(), "FAILURE", "WARNING", template.status(), "PUBLISHED_REQUIRED", TRACE_TAG + ";DAT-003");
-            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "任务尚未配置已发布标签模板：DAT-003 要求模板为 PUBLISHED");
-        }
         if (!"IMAGE".equals(upper(source.dataType(), ""))) {
             audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "Dataset", source.datasetId(), "FAILURE", "WARNING", source.dataType(), "IMAGE_REQUIRED", TRACE_TAG + ";DAT-013");
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DAT-013 仅支持图片数据集创建图片打标或图片分割任务");
         }
+        AnnotationLabelTemplateRecord template = resolveTaskTemplate(principal, source, request);
         String scene = normalizeScene(request.scene(), template.scene());
         String templateScene = normalizeScene(template.scene(), "IMAGE_TAGGING");
         ensureImageScene(scene, "DAT-013 仅支持图片打标或图片分割标注场景");
@@ -144,20 +151,72 @@ public class AnnotationService {
 
         String id = "ANN-" + randomHex(10).toUpperCase(Locale.ROOT);
         OffsetDateTime at = now();
-        long total = Math.max(1L, Math.min(source.recordCount(), 6L));
+        String sourceVersionId = blank(request.sourceVersionId(), source.currentVersionId());
+        long total = countDatasetFiles(sourceVersionId);
+        if (total <= 0) {
+            total = Math.max(1L, source.recordCount());
+        }
         String status = assignees.isEmpty() ? "DRAFT" : "IN_PROGRESS";
         jdbc.update("""
             INSERT INTO annotation_task (task_id, tenant_id, project_id, source_dataset_id, source_version_id, template_id, name, scene, status, review_enabled, prelabel_enabled, label_studio_enabled, prelabel_model_source, prelabel_confidence, total_count, annotated_count, reviewed_count, quality_score, deadline, note, created_by, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, ?, ?, ?, ?, ?)
-            """, id, source.tenantId(), source.projectId(), source.datasetId(), blank(request.sourceVersionId(), source.currentVersionId()), template.templateId(), require(request.name(), "标注任务名称不能为空"), scene, status, bool(request.reviewEnabled(), true), bool(request.prelabelEnabled(), false), bool(request.labelStudioEnabled(), true), blank(request.prelabelModelSource(), "TODO_CONFIRM_PRELABEL_MODEL_SOURCE"), request.prelabelConfidence(), total, request.deadline(), nullIfBlank(request.note()), principal.user().id(), at, at);
+            """, id, source.tenantId(), source.projectId(), source.datasetId(), sourceVersionId, template.templateId(), require(request.name(), "标注任务名称不能为空"), scene, status, bool(request.reviewEnabled(), true), bool(request.prelabelEnabled(), false), bool(request.labelStudioEnabled(), true), blank(request.prelabelModelSource(), "TODO_CONFIRM_PRELABEL_MODEL_SOURCE"), request.prelabelConfidence(), total, request.deadline(), nullIfBlank(request.note()), principal.user().id(), at, at);
         replaceAssignments(principal, id, assignees, reviewers);
-        createInitialWorkItems(id, source, assignees, bool(request.prelabelEnabled(), false), total, at);
+        createInitialWorkItems(id, source, sourceVersionId, assignees, bool(request.prelabelEnabled(), false), total, at);
         ensureBinding(id);
         audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATED", "AnnotationTask", id, "SUCCESS", "INFO", null, status, TRACE_TAG);
         if (!assignees.isEmpty() || !reviewers.isEmpty()) {
             audit(principal, source.tenantId(), "ANNOTATION_TASK_ASSIGNED", "AnnotationTask", id, "SUCCESS", "INFO", null, assignees + ";" + reviewers, TRACE_TAG);
         }
         return detail(taskRecord(id));
+    }
+
+    private AnnotationLabelTemplateRecord resolveTaskTemplate(PlatformPrincipal principal, DatasetInfo source, AnnotationTaskCreateRequest request) {
+        if (!blank(request.templateId())) {
+            AnnotationLabelTemplateRecord template = templateVisible(principal, require(request.templateId(), "标签模板不能为空"), false);
+            ensureTemplateUsableForTask(principal, source, template);
+            return template;
+        }
+        List<String> inlineLabels = normalizeInlineLabels(request.inlineLabels());
+        if (inlineLabels.isEmpty()) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "请选择标签模板或在创建任务时至少输入一个标签");
+        }
+        String scene = normalizeScene(request.scene(), "IMAGE_TAGGING");
+        ensureImageScene(scene, "DAT-013 仅支持图片打标或图片分割标注场景");
+        return createInlineTemplateForTask(principal, source, scene, inlineLabels, request.inlineTemplateName());
+    }
+
+    private void ensureTemplateUsableForTask(PlatformPrincipal principal, DatasetInfo source, AnnotationLabelTemplateRecord template) {
+        if (!source.tenantId().equals(template.tenantId())) {
+            audit(principal, source.tenantId(), "ANNOTATION_CROSS_TENANT_DENIED", "LabelTemplate", template.templateId(), "FAILURE", "CRITICAL", source.tenantId(), template.tenantId(), TRACE_TAG + ";DAT-012");
+            throw new PlatformException(PlatformError.FORBIDDEN, "标签模板与数据集不属于同一 BU");
+        }
+        if (!"PUBLISHED".equals(template.status())) {
+            audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "LabelTemplate", template.templateId(), "FAILURE", "WARNING", template.status(), "PUBLISHED_REQUIRED", TRACE_TAG + ";DAT-003");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "任务尚未配置已发布标签模板：DAT-003 要求模板为 PUBLISHED");
+        }
+    }
+
+    private AnnotationLabelTemplateRecord createInlineTemplateForTask(PlatformPrincipal principal, DatasetInfo source, String scene, List<String> inlineLabels, String inlineTemplateName) {
+        String templateId = "LT-" + randomHex(10).toUpperCase(Locale.ROOT);
+        OffsetDateTime at = now();
+        String schemaJson = labelSchemaJson(inlineLabels, scene);
+        jdbc.update(
+            "INSERT INTO annotation_label_template (template_id, tenant_id, name, scene, label_type, label_schema_json, label_studio_config_xml, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'PUBLISHED', ?, ?, ?)",
+            templateId,
+            source.tenantId(),
+            blank(inlineTemplateName, source.name() + " " + sceneLabel(scene) + "模板"),
+            scene,
+            defaultLabelType(scene),
+            schemaJson,
+            defaultConfigXml(scene, schemaJson),
+            principal.user().id(),
+            at,
+            at
+        );
+        audit(principal, source.tenantId(), "ANNOTATION_TEMPLATE_CREATED", "LabelTemplate", templateId, "SUCCESS", "INFO", null, "PUBLISHED", TRACE_TAG + ";INLINE_TASK_TEMPLATE");
+        audit(principal, source.tenantId(), "ANNOTATION_TEMPLATE_PUBLISHED", "LabelTemplate", templateId, "SUCCESS", "INFO", "DRAFT", "PUBLISHED", TRACE_TAG + ";INLINE_TASK_TEMPLATE");
+        return templateRecord(templateId);
     }
 
     @Transactional
@@ -249,14 +308,6 @@ public class AnnotationService {
         identityService.requirePermission(principal, "data:label-template:read");
         AnnotationLabelTemplateRecord template = templateVisible(principal, templateId, false);
         return new AnnotationLabelStudioConfigResponse(template.templateId(), template.labelStudioConfigXml(), "OK", "LABEL_STUDIO_CONFIG_GENERATED");
-    }
-
-    public List<AnnotationWorkItemResponse> workItems(PlatformPrincipal principal, String taskId) {
-        requireAnyPermission(principal, "data:annotation:submit", "data:annotation:read");
-        AnnotationTaskRecord task = taskVisible(principal, taskId, false);
-        return workItemResponses(task.taskId()).stream()
-            .filter(item -> principal.hasPermission("data:annotation:read") || principal.user().id().equals(item.annotatorId()))
-            .toList();
     }
 
     @Transactional
@@ -514,7 +565,7 @@ public class AnnotationService {
     }
 
     private AnnotationTaskDetailResponse detail(AnnotationTaskRecord task) {
-        return new AnnotationTaskDetailResponse(summary(task), assignments(task.taskId()), workItemResponses(task.taskId()), reviewItemResponses(task.taskId()), publications(task.taskId()), bindingResponse(binding(task.taskId())));
+        return new AnnotationTaskDetailResponse(summary(task), assignments(task.taskId()), List.of(), reviewItemResponses(task.taskId()), publications(task.taskId()), bindingResponse(binding(task.taskId())));
     }
 
     private List<AnnotationTaskSummaryResponse> allTasks(PlatformPrincipal principal, String status, String keyword) {
@@ -589,11 +640,13 @@ public class AnnotationService {
         jdbc.update("INSERT INTO annotation_assignment (assignment_id,task_id,assignee_id,role,status,assigned_by,assigned_at) VALUES (?,?,?,?,?,?,?)", "ANN-ASG-" + randomHex(10).toUpperCase(Locale.ROOT), taskId, assigneeId, role, "ACTIVE", principal.user().id(), at);
     }
 
-    private void createInitialWorkItems(String taskId, DatasetInfo source, List<String> assignees, boolean prelabel, long total, OffsetDateTime at) {
-        int count = (int) Math.max(1L, Math.min(total, 6L));
+    private void createInitialWorkItems(String taskId, DatasetInfo source, String sourceVersionId, List<String> assignees, boolean prelabel, long total, OffsetDateTime at) {
+        List<String> sampleFileIds = sampleFiles(sourceVersionId);
+        int count = sampleFileIds.isEmpty() ? (int) Math.max(1L, total) : sampleFileIds.size();
         String annotator = assignees.isEmpty() ? null : assignees.getFirst();
         for (int i = 1; i <= count; i++) {
-            jdbc.update("INSERT INTO annotation_work_item (work_item_id,task_id,sample_file_id,sample_key,annotator_id,status,prediction_json,annotation_json,submitted_at,created_at,updated_at) VALUES (?,?,?,?,?,'PENDING',?,?,NULL,?,?)", "ANN-WI-" + randomHex(10).toUpperCase(Locale.ROOT), taskId, firstFile(source.currentVersionId()), source.tenantId() + "/annotation/" + taskId + "/sample-" + i + ".jpg", annotator, prelabel ? "{\"model\":\"TODO_CONFIRM_PRELABEL_MODEL_SOURCE\",\"confidence\":0.70}" : null, null, at, at);
+            String sampleFileId = sampleFileIds.isEmpty() ? null : sampleFileIds.get((i - 1) % sampleFileIds.size());
+            jdbc.update("INSERT INTO annotation_work_item (work_item_id,task_id,sample_file_id,sample_key,annotator_id,status,prediction_json,annotation_json,submitted_at,created_at,updated_at) VALUES (?,?,?,?,?,'PENDING',?,?,NULL,?,?)", "ANN-WI-" + randomHex(10).toUpperCase(Locale.ROOT), taskId, sampleFileId, source.tenantId() + "/annotation/" + taskId + "/sample-" + i + ".jpg", annotator, prelabel ? "{\"model\":\"TODO_CONFIRM_PRELABEL_MODEL_SOURCE\",\"confidence\":0.70}" : null, null, at, at);
         }
     }
 
@@ -796,9 +849,13 @@ public class AnnotationService {
         return rows.getFirst();
     }
 
-    private String firstFile(String versionId) {
-        List<String> rows = jdbc.queryForList("SELECT file_id FROM dataset_file WHERE version_id=? ORDER BY created_at LIMIT 1", String.class, versionId);
-        return rows.isEmpty() ? null : rows.getFirst();
+    private List<String> sampleFiles(String versionId) {
+        return jdbc.queryForList("SELECT file_id FROM dataset_file WHERE version_id=? ORDER BY created_at", String.class, versionId);
+    }
+
+    private long countDatasetFiles(String versionId) {
+        Long count = jdbc.queryForObject("SELECT COUNT(1) FROM dataset_file WHERE version_id=?", Long.class, versionId);
+        return count == null ? 0L : count;
     }
 
     private AnnotationWorkItemResponse workItem(String id) {
@@ -906,6 +963,15 @@ public class AnnotationService {
         return "<View><Image name=\"image\" value=\"$image\"/><RectangleLabels name=\"label\" toName=\"image\">" + labelNodes + "</RectangleLabels></View>";
     }
 
+    private String labelSchemaJson(List<String> labels, String scene) {
+        String labelItems = normalizeInlineLabels(labels).stream()
+            .map(label -> "\"" + jsonEscape(label) + "\"")
+            .reduce((left, right) -> left + "," + right)
+            .orElse("");
+        String dataType = "TEXT_LABELING".equals(normalizeScene(scene, "")) ? ",\"dataType\":\"TEXT\"" : "";
+        return "{\"labels\":[" + labelItems + "]" + dataType + "}";
+    }
+
     private String defaultLabelType(String scene) {
         return "IMAGE_SEGMENTATION".equals(normalizeScene(scene, "IMAGE_TAGGING")) ? "POLYGON" : "BOUNDING_BOX";
     }
@@ -922,12 +988,34 @@ public class AnnotationService {
         return value.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
+    private String jsonEscape(String value) {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
     private String sceneLabel(String scene) {
         return switch (normalizeScene(scene, "")) {
             case "IMAGE_TAGGING" -> "图片打标";
             case "IMAGE_SEGMENTATION" -> "图片分割";
             default -> blank(scene, "未分类");
         };
+    }
+
+    private List<String> normalizeInlineLabels(List<String> labels) {
+        if (labels == null || labels.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String label : labels) {
+            if (label == null) continue;
+            String[] parts = label.split("[,，、\\n\\r]+");
+            for (String part : parts) {
+                String item = part == null ? "" : part.trim();
+                if (!item.isEmpty()) {
+                    normalized.add(item);
+                }
+            }
+        }
+        return new ArrayList<>(normalized);
     }
 
     private String normalizeScene(String value, String fallback) {

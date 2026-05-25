@@ -58,6 +58,7 @@ class AnnotationFlowJsonlExportRunnerTest {
 
     @Test
     void runSegmentationAnnotationFlowAndExportLocalJsonlPackage() throws Exception {
+        seedAdditionalDatasetFiles();
         String admin = login("admin", "YF");
         String annotator = login("annotator", "CABIN");
         String reviewer = login("buadmin", "CABIN");
@@ -74,7 +75,7 @@ class AnnotationFlowJsonlExportRunnerTest {
         String taskId = createdTask.at("/data/task/taskId").asText();
 
         JsonNode detail = getJson("/api/v1/annotation/tasks/" + taskId, "trace-user-flow-detail", admin);
-        List<JsonNode> workItems = sortedWorkItems(detail.at("/data/workItems"));
+        List<JsonNode> workItems = loadSortedWorkItems(taskId, "trace-user-flow-detail-work-items", admin);
         assertThat(workItems).hasSize(6);
 
         int index = 0;
@@ -97,7 +98,9 @@ class AnnotationFlowJsonlExportRunnerTest {
 
         JsonNode approvedDetail = getJson("/api/v1/annotation/tasks/" + taskId, "trace-user-flow-approved-detail", reviewer);
         assertThat(approvedDetail.at("/data/task/reviewedCount").asLong()).isEqualTo(approvedDetail.at("/data/task/totalCount").asLong());
-        assertThat(approvedDetail.at("/data/workItems").findValuesAsText("status")).containsOnly("APPROVED");
+        assertThat(loadSortedWorkItems(taskId, "trace-user-flow-approved-work-items", reviewer).stream()
+            .map(item -> item.at("/status").asText())
+            .toList()).containsOnly("APPROVED");
 
         JsonNode quality = postJson("/api/v1/annotation/tasks/" + taskId + "/quality-check", "trace-user-flow-quality", "{}", reviewer);
         assertThat(quality.at("/code").asInt()).isZero();
@@ -122,7 +125,7 @@ class AnnotationFlowJsonlExportRunnerTest {
         assertThat(download.at("/data/downloadUrl").asText()).contains("localhost");
 
         JsonNode finalDetail = getJson("/api/v1/annotation/tasks/" + taskId, "trace-user-flow-final-detail", reviewer);
-        Path artifactDir = writeArtifacts(taskId, finalDetail, publication.at("/data"), export.at("/data"), download.at("/data"));
+        Path artifactDir = writeArtifacts(taskId, finalDetail, loadSortedWorkItems(taskId, "trace-user-flow-final-work-items", reviewer), publication.at("/data"), export.at("/data"), download.at("/data"));
         System.out.println("ANNOTATION_FLOW_TASK=" + taskId);
         System.out.println("ANNOTATION_FLOW_JSONL=" + artifactDir.resolve("annotations").resolve("smp.jsonl").toAbsolutePath());
         System.out.println("ANNOTATION_FLOW_PACKAGE=" + artifactDir.resolve(taskId + "-smp-jsonl-package.zip").toAbsolutePath());
@@ -185,7 +188,7 @@ class AnnotationFlowJsonlExportRunnerTest {
         String taskId = createdTask.at("/data/task/taskId").asText();
 
         JsonNode detail = getJson("/api/v1/annotation/tasks/" + taskId, "trace-real-flow-detail", admin);
-        List<JsonNode> workItems = sortedWorkItems(detail.at("/data/workItems"));
+        List<JsonNode> workItems = loadSortedWorkItems(taskId, "trace-real-flow-detail-work-items", admin);
         assertThat(workItems).hasSize(2);
 
         for (int i = 0; i < assets.size(); i++) {
@@ -197,7 +200,7 @@ class AnnotationFlowJsonlExportRunnerTest {
         }
 
         JsonNode patchedDetail = getJson("/api/v1/annotation/tasks/" + taskId, "trace-real-flow-patched-detail", admin);
-        List<JsonNode> patchedItems = sortedWorkItems(patchedDetail.at("/data/workItems"));
+        List<JsonNode> patchedItems = loadSortedWorkItems(taskId, "trace-real-flow-patched-work-items", admin);
         assertThat(patchedItems).hasSize(2);
         assertThat(patchedItems.get(0).at("/sampleKey").asText()).contains("industrial-samples");
         assertThat(patchedItems.get(1).at("/sampleKey").asText()).contains("industrial-samples");
@@ -242,7 +245,7 @@ class AnnotationFlowJsonlExportRunnerTest {
         assertThat(download.at("/data/diagnosticCode").asText()).isEqualTo("SIGNED_URL_READY");
         assertThat(download.at("/data/downloadUrl").asText()).contains("localhost");
 
-        Path artifactDir = writeArtifactsWithRealImages(taskId, approvedDetail, publication.at("/data"), export.at("/data"), download.at("/data"), assets);
+        Path artifactDir = writeArtifactsWithRealImages(taskId, approvedDetail, loadSortedWorkItems(taskId, "trace-real-flow-final-work-items", reviewer), publication.at("/data"), export.at("/data"), download.at("/data"), assets);
         System.out.println("REAL_IMAGE_ANNOTATION_FLOW_TASK=" + taskId);
         System.out.println("REAL_IMAGE_ANNOTATION_FLOW_DATASET=" + datasetId);
         System.out.println("REAL_IMAGE_ANNOTATION_FLOW_EXPORT=" + exportId);
@@ -250,7 +253,7 @@ class AnnotationFlowJsonlExportRunnerTest {
         System.out.println("REAL_IMAGE_ANNOTATION_FLOW_PACKAGE=" + artifactDir.resolve(taskId + "-real-images-smp-jsonl-package.zip").toAbsolutePath());
     }
 
-    private Path writeArtifacts(String taskId, JsonNode detail, JsonNode publication, JsonNode export, JsonNode download) throws Exception {
+    private Path writeArtifacts(String taskId, JsonNode detail, List<JsonNode> workItems, JsonNode publication, JsonNode export, JsonNode download) throws Exception {
         Path root = workspaceRoot();
         Path artifactDir = root.resolve(".tmp").resolve("annotation-flow").resolve(taskId);
         Path annotationsDir = artifactDir.resolve("annotations");
@@ -258,7 +261,6 @@ class AnnotationFlowJsonlExportRunnerTest {
         Files.createDirectories(annotationsDir);
         Files.createDirectories(imagesDir);
 
-        List<JsonNode> workItems = sortedWorkItems(detail.at("/data/workItems"));
         List<String> jsonlLines = new ArrayList<>();
         ArrayNode imageManifest = objectMapper.createArrayNode();
         for (JsonNode workItem : workItems) {
@@ -337,7 +339,7 @@ class AnnotationFlowJsonlExportRunnerTest {
         return artifactDir;
     }
 
-    private Path writeArtifactsWithRealImages(String taskId, JsonNode detail, JsonNode publication, JsonNode export, JsonNode download, List<RealImageAsset> assets) throws Exception {
+    private Path writeArtifactsWithRealImages(String taskId, JsonNode detail, List<JsonNode> workItems, JsonNode publication, JsonNode export, JsonNode download, List<RealImageAsset> assets) throws Exception {
         Path root = workspaceRoot();
         Path artifactDir = root.resolve(".tmp").resolve("annotation-flow-real").resolve(taskId);
         Path annotationsDir = artifactDir.resolve("annotations");
@@ -350,7 +352,6 @@ class AnnotationFlowJsonlExportRunnerTest {
             assetsByFileId.put(asset.fileId(), asset);
         }
 
-        List<JsonNode> workItems = sortedWorkItems(detail.at("/data/workItems"));
         List<String> jsonlLines = new ArrayList<>();
         ArrayNode imageManifest = objectMapper.createArrayNode();
         for (JsonNode workItem : workItems) {
@@ -466,6 +467,49 @@ class AnnotationFlowJsonlExportRunnerTest {
         zip.putNextEntry(new ZipEntry(name));
         zip.write(content);
         zip.closeEntry();
+    }
+
+    private void seedAdditionalDatasetFiles() {
+        for (int index = 2; index <= 6; index++) {
+            String fileId = "FILE-DATASET-WELD-00" + index;
+            String datasetFileId = "DF-WELD-00" + index;
+            OffsetDateTime timestamp = OffsetDateTime.parse("2026-05-2" + index + "T08:00:00+08:00");
+            jdbc.update("""
+                INSERT INTO platform_file_object (
+                    file_id, asset_type, tenant_id, project_id, bucket, object_key, expected_sha256, sha256,
+                    expected_size_bytes, size_bytes, content_type, storage_tier, status, owner_id, created_at, updated_at
+                )
+                SELECT ?, 'DATASET', 'TENANT-CABIN', NULL, 'smp-datasets', ?, ?, ?,
+                       1024, 1024, 'image/jpeg', 'STANDARD', 'AVAILABLE', 'USR-ADMIN', ?, ?
+                WHERE NOT EXISTS (SELECT 1 FROM platform_file_object WHERE file_id = ?)
+                """,
+                fileId,
+                "TENANT-CABIN/dataset/test/" + fileId + ".jpg",
+                "sha256-" + fileId.toLowerCase(),
+                "sha256-" + fileId.toLowerCase(),
+                timestamp,
+                timestamp,
+                fileId
+            );
+            jdbc.update("""
+                INSERT INTO dataset_file (id, dataset_id, version_id, file_id, file_role, status, created_at)
+                SELECT ?, 'DATASET-WELD-DEFECT', 'DVER-WELD-001', ?, 'RAW', 'BOUND', ?
+                WHERE NOT EXISTS (SELECT 1 FROM dataset_file WHERE id = ?)
+                """,
+                datasetFileId,
+                fileId,
+                timestamp,
+                datasetFileId
+            );
+        }
+    }
+
+    private List<JsonNode> loadSortedWorkItems(String taskId, String traceId, String token) throws Exception {
+        return sortedWorkItems(workItemsPage(taskId, traceId, token).at("/data/items"));
+    }
+
+    private JsonNode workItemsPage(String taskId, String traceId, String token) throws Exception {
+        return getJson("/api/v1/annotation/tasks/" + taskId + "/work-items?page=1&pageSize=200", traceId, token);
     }
 
     private List<JsonNode> sortedWorkItems(JsonNode workItemsNode) {

@@ -15,7 +15,7 @@ type SessionState = {
   initialized: boolean;
   login: (input: { username: string; password: string; tenantCode: string }) => Promise<void>;
   bootstrap: () => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 };
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -60,7 +60,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       set({ token: null, user: null, initialized: true });
     }
   },
-  logout() {
+  async logout() {
+    try {
+      await platformApi.logout();
+    } catch {
+      // 后端不可达或 token 失效时也应允许本地登出。
+    }
     clearAccessToken();
     clearSession();
     set({ token: null, user: null, initialized: true });

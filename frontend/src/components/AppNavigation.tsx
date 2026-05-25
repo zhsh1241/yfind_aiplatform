@@ -10,6 +10,8 @@ import { Menu } from 'antd';
 import type { MenuProps } from 'antd';
 import { useLocation, useNavigate } from 'react-router';
 import type { ReactNode } from 'react';
+import { domainLabel, pageLabel } from '../features/platform/i18n';
+import type { AppLanguage } from '../features/platform/localeStore';
 
 export type PrototypeDomain = '工作台' | '数据管理' | '模型开发' | '运营中心' | '平台管理';
 
@@ -58,7 +60,7 @@ const iconByDomain: Record<PrototypeDomain, ReactNode> = {
   平台管理: <SettingOutlined />,
 };
 
-export function AppNavigation({ allowedKeys }: { allowedKeys?: Set<string> }) {
+export function AppNavigation({ allowedKeys, language }: { allowedKeys?: Set<string>; language: AppLanguage }) {
   const navigate = useNavigate();
   const location = useLocation();
   const pagesByDomain = Map.groupBy(
@@ -69,8 +71,8 @@ export function AppNavigation({ allowedKeys }: { allowedKeys?: Set<string> }) {
     .map((domain) => ({
       key: domain,
       icon: iconByDomain[domain] ?? <AppstoreOutlined />,
-      label: domain,
-      children: pagesByDomain.get(domain)?.map((page) => ({ key: page.key, label: page.label })) ?? [],
+      label: domainLabel(domain, language),
+      children: pagesByDomain.get(domain)?.map((page) => ({ key: page.key, label: pageLabel(page.key, language) })) ?? [],
     }))
     .filter((item) => item.children.length > 0);
 

@@ -72,7 +72,7 @@ public class SecurityConfig {
             .toList());
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", TraceIdFilter.TRACE_HEADER, "X-Requested-With"));
-        configuration.setExposedHeaders(List.of(TraceIdFilter.TRACE_HEADER));
+        configuration.setExposedHeaders(List.of(TraceIdFilter.TRACE_HEADER, "Content-Disposition"));
         configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

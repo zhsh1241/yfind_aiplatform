@@ -1,9 +1,10 @@
-import { Alert, Button, Card, Descriptions, Drawer, Form, Input, Modal, Select, Space, Steps, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Descriptions, Drawer, Form, Input, Modal, Select, Space, Steps, Table, Tabs, Tag, Typography, Upload, message } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { type ChangeEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
   dataApi,
+  getAccessToken,
   platformApi,
   type AnnotationLabelTemplate,
   type AnnotationLabelTemplateInput,
@@ -36,6 +37,39 @@ const color = (status?: string) => ['ACTIVE', 'PUBLISHED', 'TESTED', 'OK', 'AVAI
   : ['UNCONFIGURED', 'DRAFT', 'PAUSED'].includes(status ?? '') ? 'orange' : ['FAILED', 'DISABLED', 'ARCHIVED'].includes(status ?? '') ? 'red' : 'blue';
 const fmtSize = (n?: number | null) => !n ? '0 B' : n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : n > 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${n} B`;
 const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', AUDIO_VIDEO: '影音', TEXT: '文本', TABULAR: '表格', EVENT: '事件', TIME_SERIES: '时序库', TELEMETRY: '遥测', FILE: '文件', OBJECT: '对象', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '外部接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
+const localFileRowKey = (file: File) => `${(file as File & { webkitRelativePath?: string }).webkitRelativePath ?? file.name}-${file.size}-${file.lastModified}`;
+const localFileRelativePath = (file: File) => (file as File & { webkitRelativePath?: string }).webkitRelativePath ?? '';
+const LOCAL_UPLOAD_BATCH_MAX_FILES = 10;
+const LOCAL_UPLOAD_BATCH_MAX_BYTES = 8 * 1024 * 1024;
+const ANNOTATION_THUMB_ITEM_HEIGHT = 116;
+const ANNOTATION_THUMB_OVERSCAN = 4;
+const ANNOTATION_THUMB_PANEL_FALLBACK_HEIGHT = 560;
+const ANNOTATION_WORKBENCH_PAGE_SIZE = 50;
+const SESSION_STORAGE_KEY = 'smp.session.v1';
+
+const splitLocalUploadBatches = (files: File[]) => {
+  const batches: File[][] = [];
+  let current: File[] = [];
+  let currentBytes = 0;
+
+  files.forEach((file) => {
+    const exceedsFileCount = current.length >= LOCAL_UPLOAD_BATCH_MAX_FILES;
+    const exceedsBytes = current.length > 0 && currentBytes + file.size > LOCAL_UPLOAD_BATCH_MAX_BYTES;
+    if (exceedsFileCount || exceedsBytes) {
+      batches.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+    current.push(file);
+    currentBytes += file.size;
+  });
+
+  if (current.length > 0) {
+    batches.push(current);
+  }
+
+  return batches;
+};
 
 const safeJson = (value?: string | null) => {
   try {
@@ -88,13 +122,105 @@ const industrialSampleImages: Record<string, { url: string; title: string; sourc
     source: 'Wikimedia Commons: TIG welding.jpg',
   },
 };
+
+function readStoredAccessToken() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { accessToken?: unknown };
+    return typeof parsed.accessToken === 'string' && parsed.accessToken ? parsed.accessToken : null;
+  } catch {
+    return null;
+  }
+}
+
+function useAnnotationSamplePreviewUrls(fileIds: string[]) {
+  const token = useSessionStore((state) => state.token) ?? getAccessToken() ?? readStoredAccessToken();
+  const [blobPreviewUrls, setBlobPreviewUrls] = useState<Record<string, string>>({});
+  const objectUrlCacheRef = useRef<Record<string, string>>({});
+  const fileIdKey = fileIds.join('|');
+  const directUrls = useMemo(() => Object.fromEntries(fileIds.map((fileId) => [fileId, platformApi.fileContentUrl(fileId)])), [fileIdKey, fileIds]);
+  const useBlobPreview = !!token && typeof window !== 'undefined' && typeof URL.createObjectURL === 'function' && fileIds.length > 0;
+
+  useEffect(() => {
+    if (!useBlobPreview) {
+      return;
+    }
+
+    let cancelled = false;
+    const pendingFileIds = fileIds.filter((fileId) => !objectUrlCacheRef.current[fileId]);
+
+    if (pendingFileIds.length === 0) {
+      setBlobPreviewUrls((current) => current);
+      return;
+    }
+
+    void (async () => {
+      const entries = await Promise.all(pendingFileIds.map(async (fileId) => {
+        const directUrl = directUrls[fileId];
+        try {
+          const response = await fetch(directUrl, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          const blob = await response.blob();
+          const objectUrl = URL.createObjectURL(blob);
+          return [fileId, objectUrl] as const;
+        } catch {
+          return [fileId, ''] as const;
+        }
+      }));
+
+      if (cancelled) {
+        entries.forEach(([, previewUrl]) => {
+          if (previewUrl.startsWith('blob:')) {
+            URL.revokeObjectURL(previewUrl);
+          }
+        });
+        return;
+      }
+      setBlobPreviewUrls((current) => {
+        const next = { ...current };
+        entries.forEach(([fileId, previewUrl]) => {
+          objectUrlCacheRef.current[fileId] = previewUrl;
+          next[fileId] = previewUrl;
+        });
+        return next;
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [directUrls, fileIds, token, useBlobPreview]);
+
+  useEffect(() => () => {
+    Object.values(objectUrlCacheRef.current).forEach((previewUrl) => {
+      if (previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    });
+    objectUrlCacheRef.current = {};
+  }, []);
+
+  const previewUrls = useMemo(
+    () => Object.fromEntries(fileIds.map((fileId) => [fileId, useBlobPreview ? (blobPreviewUrls[fileId] ?? '') : directUrls[fileId]])),
+    [blobPreviewUrls, directUrls, fileIdKey, fileIds, useBlobPreview],
+  );
+
+  return previewUrls;
+}
+
 type DraftBox = { x: number; y: number; w: number; h: number };
 type AnnotationPoint = { x: number; y: number };
 type AnnotationShape = 'rect' | 'ellipse' | 'polygon';
 type AnnotationBox = { id: string; x: number; y: number; w: number; h: number; label: string; cls: number; shape: AnnotationShape; confidence?: number; source?: 'manual' | 'ai' };
 type AnnotationPolygon = { id: string; points: AnnotationPoint[]; label: string; cls: number; confidence?: number; source?: 'manual' | 'ai' };
-type AiSuggestionBox = AnnotationBox & { source: 'ai' };
-type AiSuggestionPolygon = AnnotationPolygon & { source: 'ai' };
 type DragState = { boxId: string; start: { x: number; y: number }; origin: { x: number; y: number } };
 type PolygonVertexDragState = { polygonId: string; pointIndex: number; pointerId: number };
 type PolygonEdgeDragState = {
@@ -116,24 +242,6 @@ type AnnotationEditorAction =
   | { type: 'select'; selectedShapeId: string }
   | { type: 'undo' }
   | { type: 'redo' };
-const prototypeBoxes: AnnotationBox[] = [
-  { id: 'box-porosity-001', x: 62, y: 48, w: 110, h: 74, label: '焊接气孔', cls: 0, source: 'manual', shape: 'rect' },
-  { id: 'box-crack-001', x: 240, y: 110, w: 88, h: 60, label: '裂纹', cls: 1, source: 'manual', shape: 'rect' },
-  { id: 'box-slag-001', x: 140, y: 180, w: 130, h: 50, label: '夹渣', cls: 2, source: 'manual', shape: 'rect' },
-  { id: 'box-fusion-001', x: 360, y: 60, w: 70, h: 82, label: '未熔合', cls: 3, source: 'manual', shape: 'rect' },
-];
-const aiSuggestionBoxes = [
-  { id: 'ai-suggestion-porosity-001', x: 62, y: 240, w: 105, h: 58, label: '焊接气孔', cls: 0, shape: 'rect', confidence: 0.91, source: 'ai' },
-  { id: 'ai-suggestion-crack-001', x: 298, y: 138, w: 84, h: 52, label: '裂纹', cls: 1, shape: 'rect', confidence: 0.78, source: 'ai' },
-  { id: 'ai-suggestion-fusion-001', x: 170, y: 60, w: 90, h: 44, label: '未熔合', cls: 3, shape: 'rect', confidence: 0.65, source: 'ai' },
-] satisfies AiSuggestionBox[];
-const prototypeSegmentationPolygons: AnnotationPolygon[] = [
-  { id: 'poly-crack-001', label: '裂纹', cls: 1, source: 'manual', points: [{ x: 146, y: 108 }, { x: 188, y: 92 }, { x: 238, y: 126 }, { x: 224, y: 178 }, { x: 162, y: 170 }] },
-  { id: 'poly-porosity-001', label: '焊接气孔', cls: 0, source: 'manual', points: [{ x: 298, y: 172 }, { x: 338, y: 154 }, { x: 366, y: 192 }, { x: 350, y: 232 }, { x: 306, y: 224 }] },
-];
-const aiSuggestionPolygons = [
-  { id: 'ai-poly-slag-001', label: '夹渣', cls: 2, source: 'ai', confidence: 0.84, points: [{ x: 84, y: 222 }, { x: 134, y: 204 }, { x: 154, y: 242 }, { x: 126, y: 278 }, { x: 78, y: 264 }] },
-] satisfies AiSuggestionPolygon[];
 const shortcutGroups = [
   { group: '绘制工具', items: [['W', '矩形框'], ['E', '椭圆框'], ['P', '多边形框'], ['D / Delete', '删除所选']] },
   { group: '类别选择', items: [['1-4', '切换类别'], ['Ctrl+Z', '撤销'], ['Ctrl+Y', '重做'], ['Space', '下一张']] },
@@ -145,7 +253,7 @@ const annotationTaskDefaults = {
   name: '焊缝缺陷检测标注任务',
   scene: 'IMAGE_TAGGING',
   reviewEnabled: true,
-  prelabelEnabled: true,
+  prelabelEnabled: false,
   labelStudioEnabled: true,
 } as const;
 const shapeText = (shape: AnnotationShape) => ({ rect: '矩形', ellipse: '椭圆', polygon: '多边形' })[shape];
@@ -168,6 +276,7 @@ const defaultLabelSchema = (scene?: string) => scene === 'IMAGE_SEGMENTATION'
   : scene === 'TEXT_LABELING'
     ? '{"labels":["质量投诉","设备故障","工艺咨询"],"dataType":"TEXT"}'
     : '{"labels":["裂纹","气孔"]}';
+const parseInlineLabels = (value?: string) => Array.from(new Set(String(value ?? '').split(/[\n,，]/).map((item) => item.trim()).filter(Boolean)));
 const labelStudioXmlForTemplate = (scene?: string, labelSchemaJson?: string, fallbackXml?: string) => {
   if (fallbackXml?.trim()) return fallbackXml.trim();
   let labels = ['待确认标签'];
@@ -227,11 +336,16 @@ const normalizePoint = (value: unknown): AnnotationPoint | null => {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   return { x, y };
 };
+const serializeAnnotationPayload = (scene: string | undefined, boxes: AnnotationBox[], polygons: AnnotationPolygon[]) => JSON.stringify(scene === 'IMAGE_SEGMENTATION'
+  ? {
+    polygons: polygons.map((polygon) => ({ id: polygon.id, label: polygon.label, cls: polygon.cls, source: polygon.source ?? 'manual', confidence: polygon.confidence, points: polygon.points })),
+  }
+  : {
+    boxes: boxes.map((box) => ({ id: box.id, label: box.label, cls: box.cls, shape: box.shape, x: box.x, y: box.y, w: box.w, h: box.h, source: box.source ?? 'manual', confidence: box.confidence })),
+  });
 const parseAnnotationPayload = (scene?: string, rawJson?: string | null) => {
   if (!rawJson?.trim()) {
-    return scene === 'IMAGE_SEGMENTATION'
-      ? { boxes: [] as AnnotationBox[], polygons: [...prototypeSegmentationPolygons, ...aiSuggestionPolygons] as AnnotationPolygon[] }
-      : { boxes: [...prototypeBoxes, ...aiSuggestionBoxes] as AnnotationBox[], polygons: [] as AnnotationPolygon[] };
+    return { boxes: [] as AnnotationBox[], polygons: [] as AnnotationPolygon[] };
   }
   try {
     const parsed = JSON.parse(rawJson) as { boxes?: unknown[]; polygons?: unknown[] };
@@ -270,7 +384,7 @@ const parseAnnotationPayload = (scene?: string, rawJson?: string | null) => {
           } satisfies AnnotationPolygon;
         }).filter(Boolean) as AnnotationPolygon[]
         : [];
-      return { boxes: [] as AnnotationBox[], polygons: fallbackPolygons.length ? fallbackPolygons : [...prototypeSegmentationPolygons, ...aiSuggestionPolygons] };
+      return { boxes: [] as AnnotationBox[], polygons: fallbackPolygons };
     }
     const boxes = Array.isArray(parsed.boxes)
       ? parsed.boxes.map((item, index) => {
@@ -290,18 +404,20 @@ const parseAnnotationPayload = (scene?: string, rawJson?: string | null) => {
         } satisfies AnnotationBox;
       }).filter(Boolean) as AnnotationBox[]
       : [];
-    return { boxes: boxes.length ? boxes : [...prototypeBoxes, ...aiSuggestionBoxes], polygons: [] as AnnotationPolygon[] };
+    return { boxes, polygons: [] as AnnotationPolygon[] };
   } catch {
-    return scene === 'IMAGE_SEGMENTATION'
-      ? { boxes: [] as AnnotationBox[], polygons: [...prototypeSegmentationPolygons, ...aiSuggestionPolygons] as AnnotationPolygon[] }
-      : { boxes: [...prototypeBoxes, ...aiSuggestionBoxes] as AnnotationBox[], polygons: [] as AnnotationPolygon[] };
+    return { boxes: [] as AnnotationBox[], polygons: [] as AnnotationPolygon[] };
   }
 };
+const normalizeAnnotationPayload = (scene?: string, rawJson?: string | null) => {
+  const parsed = parseAnnotationPayload(scene, rawJson);
+  return serializeAnnotationPayload(scene, parsed.boxes, parsed.polygons);
+};
 const initialAnnotationEditorState: AnnotationEditorState = {
-  boxes: [...prototypeBoxes, ...aiSuggestionBoxes],
+  boxes: [],
   polygons: [],
-  selectedShapeId: prototypeBoxes[0]?.id ?? '',
-  history: [{ boxes: [...prototypeBoxes, ...aiSuggestionBoxes], polygons: [], selectedShapeId: prototypeBoxes[0]?.id ?? '' }],
+  selectedShapeId: '',
+  history: [{ boxes: [], polygons: [], selectedShapeId: '' }],
   historyIndex: 0,
 };
 const pushAnnotationHistory = (state: AnnotationEditorState, boxes: AnnotationBox[], polygons: AnnotationPolygon[], selectedShapeId?: string): AnnotationEditorState => {
@@ -362,6 +478,9 @@ export function AnnotationTasksPage() {
     sourceDatasetId?: string;
     sourceVersionId?: string | null;
     templateId?: string;
+    templateMode?: 'EXISTING' | 'INLINE_CREATE';
+    inlineLabels?: string;
+    inlineTemplateName?: string;
     scene: string;
     reviewEnabled: boolean;
     prelabelEnabled: boolean;
@@ -371,6 +490,7 @@ export function AnnotationTasksPage() {
   const [templateForm] = Form.useForm<AnnotationLabelTemplateInput>();
   const taskScene = Form.useWatch('scene', taskForm) ?? 'IMAGE_TAGGING';
   const selectedTaskDatasetId = Form.useWatch('sourceDatasetId', taskForm);
+  const taskTemplateMode = Form.useWatch('templateMode', taskForm) ?? 'INLINE_CREATE';
   const templateScene = Form.useWatch('scene', templateForm);
   const templateSchema = Form.useWatch('labelSchemaJson', templateForm);
   const overview = useQuery({ queryKey: ['annotation-overview'], queryFn: dataApi.annotationOverview });
@@ -383,8 +503,44 @@ export function AnnotationTasksPage() {
     qc.invalidateQueries({ queryKey: ['annotation-templates'] }),
   ]), [qc]);
   const createTask = useMutation({
-    mutationFn: dataApi.createAnnotationTask,
-    onSuccess: async () => { setWizardOpen(false); await inv(); msg.success('标注任务已创建并完成分派'); },
+    mutationFn: async (values: {
+      name: string;
+      sourceDatasetId: string;
+      sourceVersionId?: string | null;
+      templateId?: string;
+      templateMode?: 'EXISTING' | 'INLINE_CREATE';
+      inlineLabels?: string;
+      inlineTemplateName?: string;
+      scene: string;
+      reviewEnabled: boolean;
+      prelabelEnabled: boolean;
+      labelStudioEnabled: boolean;
+      note?: string;
+    }) => {
+      let templateId = values.templateId;
+      let inlineLabels: string[] | undefined;
+      let inlineTemplateName: string | undefined;
+      if (values.templateMode === 'INLINE_CREATE' || !templateId) {
+        inlineLabels = parseInlineLabels(values.inlineLabels);
+        if (inlineLabels.length === 0) {
+          throw new Error('请至少输入一个标签。');
+        }
+        inlineTemplateName = values.inlineTemplateName?.trim() || `${selectedTaskDataset?.name ?? '数据集'} ${txt(values.scene)}模板`;
+        templateId = undefined;
+      }
+      return dataApi.createAnnotationTask({
+        ...values,
+        prelabelEnabled: false,
+        templateId,
+        inlineLabels,
+        inlineTemplateName,
+        assigneeIds: [],
+        reviewerIds: [],
+        prelabelModelSource: 'TODO_CONFIRM_PRELABEL_MODEL_SOURCE',
+        prelabelConfidence: 0.7,
+      });
+    },
+    onSuccess: async () => { setWizardOpen(false); await inv(); msg.success('标注任务已创建'); },
     onError: (e: Error) => msg.error(e.message),
   });
   const createTemplate = useMutation({
@@ -427,6 +583,9 @@ export function AnnotationTasksPage() {
       sourceDatasetId: selectedDataset?.datasetId,
       sourceVersionId: selectedDataset?.currentVersionId ?? undefined,
       templateId: defaultTemplateId,
+      templateMode: 'INLINE_CREATE',
+      inlineLabels: annotationClasses.join('，'),
+      inlineTemplateName: `${selectedDataset?.name ?? '数据集'} ${txt(defaultScene)}模板`,
     });
   }, [annotationDatasets, publishedTemplates, taskForm]);
 
@@ -435,12 +594,14 @@ export function AnnotationTasksPage() {
     const currentTemplateId = taskForm.getFieldValue('templateId');
     if (currentTemplateId && !selectableTaskTemplates.some((item) => item.templateId === currentTemplateId)) {
       taskForm.setFieldValue('templateId', selectableTaskTemplates[0]?.templateId);
-      return;
     }
-    if (!currentTemplateId && selectableTaskTemplates.length) {
+    if (taskTemplateMode === 'EXISTING' && !currentTemplateId && selectableTaskTemplates.length) {
       taskForm.setFieldValue('templateId', selectableTaskTemplates[0]?.templateId);
     }
-  }, [taskForm, selectableTaskTemplates, wizardOpen]);
+    if (selectableTaskTemplates.length === 0 && taskTemplateMode !== 'INLINE_CREATE') {
+      taskForm.setFieldValue('templateMode', 'INLINE_CREATE');
+    }
+  }, [taskForm, selectableTaskTemplates, taskTemplateMode, wizardOpen]);
 
   useEffect(() => {
     if (!wizardOpen || !selectedTaskDataset) return;
@@ -475,7 +636,7 @@ export function AnnotationTasksPage() {
       <div className="page-hero">
         <div>
           <Typography.Title level={3}>标注任务管理</Typography.Title>
-          <Typography.Text type="secondary">数据集 · 标签模板/任务 · AI 预标注 · Label Studio 生产化联通 · 发布 ANNOTATED 数据集</Typography.Text>
+          <Typography.Text type="secondary">数据集 · 标签模板/任务 · Label Studio 生产化联通 · 发布 ANNOTATED 数据集</Typography.Text>
         </div>
         <Space wrap>
           <Button onClick={() => setTemplateOpen(true)}>标签模板</Button>
@@ -502,7 +663,7 @@ export function AnnotationTasksPage() {
         pagination={{ pageSize: 8 }}
         columns={[
           { title: '任务名称', dataIndex: 'name', render: (v, r) => <Space direction="vertical" size={0}><Typography.Text strong>{v}</Typography.Text><Typography.Text type="secondary">{r.sourceDatasetName}</Typography.Text></Space> },
-          { title: '标注类型', dataIndex: 'sceneLabel', render: (v, r) => <Space><Tag>{v}</Tag>{r.prelabelEnabled ? <Tag color="purple">AI 预标注</Tag> : null}</Space> },
+          { title: '标注类型', dataIndex: 'sceneLabel', render: (v) => <Tag>{v}</Tag> },
           { title: '进度', render: (_, r) => `${pct(r.annotatedCount, r.totalCount)}%（${r.annotatedCount}/${r.totalCount}）` },
           { title: '标注员', render: (_, r) => r.assignees.filter((u) => u.role === 'ANNOTATOR').map((u) => u.displayName).join('、') || '-' },
           { title: '质量评分', dataIndex: 'qualityScore', render: (v) => v == null ? '待质检' : <Tag color={v >= 90 ? 'green' : 'orange'}>{v}</Tag> },
@@ -513,10 +674,10 @@ export function AnnotationTasksPage() {
       />
       <Modal title="＋ 新建标注任务" open={wizardOpen} onCancel={() => setWizardOpen(false)} footer={null} destroyOnHidden width={760}>
         <Steps size="small" current={1} items={[{ title: '选择数据集' }, { title: '配置模板' }, { title: '分派审核' }]} style={{ marginBottom: 16 }} />
-        <Alert type="info" showIcon title="数据集范围说明" description="这里不是数据集总览页；仅展示可用于创建标注任务的 ACTIVE 图片数据集。默认自动选中首个可用数据集与模板，仍可手动改选。" style={{ marginBottom: 12 }} />
+        <Alert type="info" showIcon title="数据集范围说明" description="这里不是数据集总览页；仅展示可用于创建标注任务的 ACTIVE 图片数据集。默认自动选中首个可用数据集，并优先使用“直接输入标签”；如需复用模板也可手动切换。" style={{ marginBottom: 12 }} />
         <Form form={taskForm} layout="vertical" onFinish={(v) => {
-          if (!v.sourceDatasetId || !v.templateId) return;
-          createTask.mutate({ ...v, sourceDatasetId: v.sourceDatasetId, templateId: v.templateId, assigneeIds: ['USR-ANNOTATOR'], reviewerIds: ['USR-BU-CABIN'], prelabelModelSource: 'TODO_CONFIRM_PRELABEL_MODEL_SOURCE', prelabelConfidence: 0.7 });
+          if (!v.sourceDatasetId) return;
+          createTask.mutate({ ...v, sourceDatasetId: v.sourceDatasetId, sourceVersionId: v.sourceVersionId ?? undefined });
         }} initialValues={annotationTaskDefaults}>
           <Form.Item name="sourceDatasetId" label="源数据集（仅 ACTIVE 图片数据集）" rules={[{ required: true, message: '请选择源数据集' }]}>
             <Select
@@ -525,21 +686,28 @@ export function AnnotationTasksPage() {
             />
           </Form.Item>
           <Form.Item name="sourceVersionId" label="数据版本"><Input placeholder="选择数据集后自动带出 currentVersionId" /></Form.Item>
-          <Form.Item name="templateId" label="标签模板（按场景过滤，必须 PUBLISHED）" rules={[{ required: true, message: '请选择标签模板' }]}>
-            <Select
-              placeholder={selectableTaskTemplates.length ? '请选择标签模板' : '当前场景无可用模板'}
-              disabled={!selectableTaskTemplates.length}
-              options={selectableTaskTemplates.map((t) => ({ value: t.templateId, label: `${t.name} · ${t.scene}` }))}
-            />
-          </Form.Item>
           <Form.Item name="name" label="任务名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="scene" label="标注场景"><Select options={annotationSceneOptions} onChange={() => taskForm.setFieldValue('templateId', undefined)} /></Form.Item>
+          <Form.Item name="scene" label="标注场景"><Select options={annotationSceneOptions} onChange={(scene) => taskForm.setFieldsValue({ templateId: undefined, templateMode: 'INLINE_CREATE', inlineTemplateName: `${selectedTaskDataset?.name ?? '数据集'} ${txt(scene)}模板` })} /></Form.Item>
+          <Form.Item name="templateMode" label="标签来源"><Select options={[{ value: 'EXISTING', label: '选择已发布模板' }, { value: 'INLINE_CREATE', label: '直接输入标签并自动建模板' }]} /></Form.Item>
+          {taskTemplateMode === 'EXISTING' ? (
+            <Form.Item name="templateId" label="标签模板（按场景过滤，必须 PUBLISHED）" rules={[{ required: true, message: '请选择标签模板，或切换为直接输入标签。' }]} extra={selectableTaskTemplates.length === 0 ? '当前场景无可用模板，可切换为“直接输入标签并自动建模板”。' : undefined}>
+              <Select
+                placeholder={selectableTaskTemplates.length ? '请选择标签模板' : '当前场景无可用模板'}
+                disabled={!selectableTaskTemplates.length}
+                options={selectableTaskTemplates.map((t) => ({ value: t.templateId, label: `${t.name} · ${t.scene}` }))}
+              />
+            </Form.Item>
+          ) : (
+            <>
+              <Form.Item name="inlineTemplateName" label="自动生成的模板名称"><Input /></Form.Item>
+              <Form.Item name="inlineLabels" label="标签列表" rules={[{ required: true, message: '请至少输入一个标签' }, { validator: async (_rule, value) => { if (parseInlineLabels(value).length === 0) throw new Error('请至少输入一个标签'); } }]} extra="支持逗号、顿号或换行分隔，例如：裂纹，气孔，夹渣"><Input.TextArea rows={4} placeholder="裂纹，气孔，夹渣" /></Form.Item>
+            </>
+          )}
           <Space wrap>
             <Form.Item name="reviewEnabled" label="审核"><Select options={[{ value: true, label: '启用审核' }, { value: false, label: '不审核' }]} /></Form.Item>
-            <Form.Item name="prelabelEnabled" label="AI 预标注"><Select options={[{ value: true, label: '启用 AI 预标注' }, { value: false, label: '不启用' }]} /></Form.Item>
           </Space>
           <Form.Item name="note" label="备注"><Input.TextArea rows={2} /></Form.Item>
-          <Alert type="info" showIcon title="分派策略" description="示例任务默认分派给 USR-ANNOTATOR 标注、USR-BU-CABIN 审核；DAT-004 阻断自审。" style={{ marginBottom: 12 }} />
+          <Alert type="info" showIcon title="分派策略" description="默认先创建未分派任务，避免跨 BU 账号拦截；后续可在任务页再分派标注员/审核员。" style={{ marginBottom: 12 }} />
           <Button type="primary" htmlType="submit" loading={createTask.isPending}>创建任务</Button>
         </Form>
       </Modal>
@@ -572,10 +740,18 @@ export function AnnotationWorkbenchPage() {
   const nav = useNavigate();
   const loc = useLocation() as { state?: { taskId?: string }; search?: string };
   const canvasRef = useRef<SVGSVGElement | null>(null);
+  const thumbListRef = useRef<HTMLElement | null>(null);
   const [msg, holder] = message.useMessage();
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [thumbListHeight, setThumbListHeight] = useState(ANNOTATION_THUMB_PANEL_FALLBACK_HEIGHT);
+  const [thumbScrollTop, setThumbScrollTop] = useState(0);
+  const [failedThumbPreviewIds, setFailedThumbPreviewIds] = useState<Record<string, true>>({});
+  const [failedCanvasPreviewKeys, setFailedCanvasPreviewKeys] = useState<Record<string, true>>({});
   const [editor, dispatchEditor] = useReducer(annotationEditorReducer, initialAnnotationEditorState);
   const { boxes, polygons, selectedShapeId } = editor;
+  const latestAnnotationPayloadRef = useRef('');
+  const silentSaveRef = useRef(false);
+  const [isAutoNavigating, setIsAutoNavigating] = useState(false);
   const [activeClass, setActiveClass] = useState(0);
   const [activeShape, setActiveShape] = useState<AnnotationShape>('rect');
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
@@ -586,7 +762,6 @@ export function AnnotationWorkbenchPage() {
   const [polygonEdgeDrag, setPolygonEdgeDrag] = useState<PolygonEdgeDragState | null>(null);
   const [selectedPolygonEdgeIndex, setSelectedPolygonEdgeIndex] = useState<number | null>(null);
   const [selectedPolygonPointIndex, setSelectedPolygonPointIndex] = useState<number | null>(null);
-  const [aiMode, setAiMode] = useState(true);
   const [shortcutOpen, setShortcutOpen] = useState(false);
   const [syncedBinding, setSyncedBinding] = useState<AnnotationExternalBinding | null>(null);
   const requestedTaskId = useMemo(() => {
@@ -598,22 +773,69 @@ export function AnnotationWorkbenchPage() {
   const tasks = useQuery({ queryKey: ['annotation-workbench-tasks'], queryFn: () => dataApi.annotationTasks({ status: 'IN_PROGRESS' }) });
   const taskId = requestedTaskId ?? tasks.data?.items[0]?.taskId ?? 'ANN-WELD-Q2';
   const detail = useQuery({ queryKey: ['annotation-detail', taskId], queryFn: () => dataApi.annotationTaskDetail(taskId), enabled: Boolean(taskId) });
-  const save = useMutation({ mutationFn: ({ id, payload }: { id: string; payload: string }) => dataApi.saveAnnotationDraft(id, payload), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); msg.success('草稿已保存'); }, onError: (e: Error) => msg.error(e.message) });
-  const submit = useMutation({ mutationFn: ({ id, payload }: { id: string; payload: string }) => dataApi.submitAnnotationWorkItem(id, payload), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); msg.success('标注结果已提交，等待审核'); }, onError: (e: Error) => msg.error(e.message) });
+  const taskTotalCount = detail.data?.task.totalCount ?? 0;
+  const currentPage = Math.floor(selectedIndex / ANNOTATION_WORKBENCH_PAGE_SIZE) + 1;
+  const workItemsPage = useQuery({
+    queryKey: ['annotation-work-items', taskId, currentPage],
+    queryFn: () => dataApi.annotationWorkItems(taskId, { page: currentPage, pageSize: ANNOTATION_WORKBENCH_PAGE_SIZE }),
+    enabled: Boolean(taskId),
+    placeholderData: (previousData) => previousData,
+  });
+  const prevPage = currentPage > 1 ? currentPage - 1 : null;
+  const nextPage = taskTotalCount > currentPage * ANNOTATION_WORKBENCH_PAGE_SIZE ? currentPage + 1 : null;
+  useQuery({
+    queryKey: ['annotation-work-items', taskId, prevPage],
+    queryFn: () => dataApi.annotationWorkItems(taskId, { page: prevPage ?? 1, pageSize: ANNOTATION_WORKBENCH_PAGE_SIZE }),
+    enabled: Boolean(taskId) && prevPage != null,
+  });
+  useQuery({
+    queryKey: ['annotation-work-items', taskId, nextPage],
+    queryFn: () => dataApi.annotationWorkItems(taskId, { page: nextPage ?? 1, pageSize: ANNOTATION_WORKBENCH_PAGE_SIZE }),
+    enabled: Boolean(taskId) && nextPage != null,
+  });
+  const save = useMutation({ mutationFn: ({ id, payload }: { id: string; payload: string }) => dataApi.saveAnnotationDraft(id, payload), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); await qc.invalidateQueries({ queryKey: ['annotation-work-items', taskId] }); if (!silentSaveRef.current) msg.success('草稿已保存'); silentSaveRef.current = false; }, onError: (e: Error) => { silentSaveRef.current = false; msg.error(e.message); } });
+  const submit = useMutation({ mutationFn: ({ id, payload }: { id: string; payload: string }) => dataApi.submitAnnotationWorkItem(id, payload), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); await qc.invalidateQueries({ queryKey: ['annotation-work-items', taskId] }); msg.success('标注结果已提交，等待审核'); }, onError: (e: Error) => msg.error(e.message) });
   const sync = useMutation({ mutationFn: dataApi.syncLabelStudioTask, onSuccess: async (r) => { setSyncedBinding(r); await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] }); (r.lastSyncStatus === 'TASK_SYNCED' ? msg.success : msg.warning)(`Label Studio ${r.lastSyncStatus}: ${r.diagnosticMessage}`); }, onError: (e: Error) => msg.error(e.message) });
   const task = detail.data?.task;
   const scene = task?.scene ?? 'IMAGE_TAGGING';
   const isSegmentation = scene === 'IMAGE_SEGMENTATION';
-  const items = detail.data?.workItems ?? [];
+  const items = workItemsPage.data?.items ?? [];
+  const queueItems = items.length
+    ? items
+    : [{ workItemId: 'EMPTY', taskId, sampleKey: '暂无样本', sampleFileId: null, annotatorId: null, annotatorName: null, status: 'DRAFT', predictionJson: null, annotationJson: null, submittedAt: null, updatedAt: '' }];
   const editableIndex = items.findIndex((item) => canEditWorkItem(item.status));
-  const effectiveSelectedIndex = selectedIndex === 0 && items[0] && items[0].status === 'REVIEW_PENDING' && editableIndex > 0 ? editableIndex : selectedIndex;
+  const pageOffset = (currentPage - 1) * ANNOTATION_WORKBENCH_PAGE_SIZE;
+  const pageSelectedIndex = Math.max(0, selectedIndex - pageOffset);
+  const effectiveSelectedIndex = pageSelectedIndex === 0 && items[0] && items[0].status === 'REVIEW_PENDING' && editableIndex > 0 ? editableIndex : pageSelectedIndex;
+  const visibleThumbCount = Math.max(1, Math.ceil(thumbListHeight / ANNOTATION_THUMB_ITEM_HEIGHT));
+  const thumbStartIndex = Math.max(0, Math.floor(thumbScrollTop / ANNOTATION_THUMB_ITEM_HEIGHT) - ANNOTATION_THUMB_OVERSCAN);
+  const thumbEndIndex = Math.min(queueItems.length, thumbStartIndex + visibleThumbCount + ANNOTATION_THUMB_OVERSCAN * 2);
+  const visibleThumbItems = queueItems.slice(thumbStartIndex, thumbEndIndex);
   const selectedItem = items[effectiveSelectedIndex] ?? items[0];
+  const sampleFileIds = useMemo(() => {
+    const indexes = new Set<number>();
+    for (let index = Math.max(0, thumbStartIndex - 1); index < Math.min(queueItems.length, thumbEndIndex + 1); index += 1) {
+      indexes.add(index);
+    }
+    for (let index = Math.max(0, effectiveSelectedIndex - 1); index <= Math.min(queueItems.length - 1, effectiveSelectedIndex + 1); index += 1) {
+      indexes.add(index);
+    }
+    return Array.from(indexes)
+      .map((index) => queueItems[index]?.sampleFileId)
+      .filter((fileId): fileId is string => Boolean(fileId));
+  }, [effectiveSelectedIndex, queueItems, thumbEndIndex, thumbStartIndex]);
+  const samplePreviewUrls = useAnnotationSamplePreviewUrls(sampleFileIds);
   const externalBinding = syncedBinding ?? detail.data?.externalBinding;
-  const total = task?.totalCount ?? Math.max(items.length, 1);
-  const currentNo = Math.min(effectiveSelectedIndex + 1, total);
+  const total = task?.totalCount ?? workItemsPage.data?.total ?? Math.max(items.length, 1);
+  const currentNo = Math.min(selectedIndex + 1, total);
   const canEditSelectedItem = canEditWorkItem(selectedItem?.status);
   const canSubmit = selectedItem && selectedItem.status !== 'APPROVED' && selectedItem.status !== 'REVIEW_PENDING';
-  const selectedSampleImage = selectedItem ? (industrialSampleImages[selectedItem.sampleKey] ?? (selectedItem.sampleImageUrl ? { url: selectedItem.sampleImageUrl, title: '????', source: 'annotation_work_item.sampleImageUrl' } : null)) : null;
+  const selectedSamplePreviewUrl = selectedItem?.sampleFileId ? samplePreviewUrls[selectedItem.sampleFileId] : null;
+  const selectedSampleImage = selectedItem ? (selectedItem.sampleFileId
+    ? (selectedSamplePreviewUrl ? { url: selectedSamplePreviewUrl, title: selectedItem.sampleKey, source: 'annotation_work_item.sampleFileId' } : null)
+    : (industrialSampleImages[selectedItem.sampleKey] ?? (selectedItem.sampleImageUrl ? { url: selectedItem.sampleImageUrl, title: selectedItem.sampleKey, source: 'annotation_work_item.sampleImageUrl' } : null))) : null;
+  const selectedSampleImageKey = selectedItem?.sampleFileId ?? selectedItem?.sampleImageUrl ?? selectedItem?.sampleKey ?? 'EMPTY';
+  const selectedSampleImageFailed = Boolean(selectedSampleImage && failedCanvasPreviewKeys[selectedSampleImageKey]);
   const currentBox = boxes.find((box) => box.id === selectedShapeId);
   const currentPolygon = polygons.find((polygon) => polygon.id === selectedShapeId);
   const currentPolygonCenter = currentPolygon ? polygonCentroid(currentPolygon.points) : null;
@@ -625,11 +847,9 @@ export function AnnotationWorkbenchPage() {
     { group: '分割工具', items: [['P', '开始多边形'], ['Enter / Double Click', '完成闭合'], ['Delete', '删除顶点/区域'], ['单击线条', '选中连接线'], ['双击线条', '新增顶点'], ['鼠标拖拽', '移动选中顶点/连接线']] },
     { group: '类别选择', items: [['1-4', '切换类别'], ['Ctrl+Z', '撤销'], ['Ctrl+Y', '重做'], ['Space', '下一张']] },
   ] : shortcutGroups, [isSegmentation]);
-  const annotationPayload = useMemo(() => JSON.stringify(isSegmentation ? {
-    polygons: polygons.map((polygon) => ({ id: polygon.id, label: polygon.label, cls: polygon.cls, source: polygon.source ?? 'manual', confidence: polygon.confidence, points: polygon.points })),
-  } : {
-    boxes: boxes.map((box) => ({ id: box.id, label: box.label, cls: box.cls, shape: box.shape, x: box.x, y: box.y, w: box.w, h: box.h, source: box.source ?? 'manual', confidence: box.confidence })),
-  }), [boxes, isSegmentation, polygons]);
+  const annotationPayload = useMemo(() => serializeAnnotationPayload(scene, boxes, polygons), [boxes, polygons, scene]);
+  const selectedItemSavedPayload = useMemo(() => normalizeAnnotationPayload(scene, selectedItem?.annotationJson), [scene, selectedItem?.annotationJson]);
+  const hasUnsavedChanges = canEditSelectedItem && Boolean(selectedItem?.workItemId) && annotationPayload !== selectedItemSavedPayload;
   const commitBoxes = useCallback((updater: AnnotationBox[] | ((items: AnnotationBox[]) => AnnotationBox[]), nextSelectedId?: string) => {
     const next = typeof updater === 'function' ? updater(boxes) : updater;
     dispatchEditor({ type: 'commit', boxes: next, polygons, selectedShapeId: nextSelectedId });
@@ -640,10 +860,33 @@ export function AnnotationWorkbenchPage() {
   }, [boxes, polygons]);
   const undo = useCallback(() => dispatchEditor({ type: 'undo' }), []);
   const redo = useCallback(() => dispatchEditor({ type: 'redo' }), []);
+  const handleThumbListScroll = useCallback((event: ReactUIEvent<HTMLElement>) => {
+    setThumbScrollTop(event.currentTarget.scrollTop);
+  }, []);
 
-  const goPrev = useCallback(() => setSelectedIndex((i) => Math.max(0, i - 1)), []);
-  const goNext = useCallback(() => setSelectedIndex((i) => Math.min(Math.max(items.length - 1, 0), i + 1)), [items.length]);
   const syncCurrent = () => selectedItem?.workItemId && sync.mutate(selectedItem.workItemId);
+  const markThumbPreviewFailed = useCallback((fileId: string) => {
+    setFailedThumbPreviewIds((current) => current[fileId] ? current : { ...current, [fileId]: true });
+  }, []);
+  const clearThumbPreviewFailed = useCallback((fileId: string) => {
+    setFailedThumbPreviewIds((current) => {
+      if (!current[fileId]) return current;
+      const next = { ...current };
+      delete next[fileId];
+      return next;
+    });
+  }, []);
+  const markCanvasPreviewFailed = useCallback((imageKey: string) => {
+    setFailedCanvasPreviewKeys((current) => current[imageKey] ? current : { ...current, [imageKey]: true });
+  }, []);
+  const clearCanvasPreviewFailed = useCallback((imageKey: string) => {
+    setFailedCanvasPreviewKeys((current) => {
+      if (!current[imageKey]) return current;
+      const next = { ...current };
+      delete next[imageKey];
+      return next;
+    });
+  }, []);
   const finalizePolygon = useCallback(() => {
     if (polygonDraftPoints.length < 3) {
       msg.warning('图片分割至少需要 3 个点才能闭合多边形');
@@ -657,14 +900,22 @@ export function AnnotationWorkbenchPage() {
     setSelectedPolygonEdgeIndex(null);
     msg.success(`已新增分割区域：${annotationClasses[activeClass]}`);
   }, [activeClass, commitPolygons, msg, polygonDraftPoints]);
-  const saveCurrent = useCallback(() => {
-    if (!selectedItem?.workItemId) return;
+  const saveCurrent = useCallback(async (options?: { silent?: boolean }) => {
+    if (!selectedItem?.workItemId) return false;
     if (!canEditWorkItem(selectedItem.status)) {
-      msg.warning('当前样本已提交/已审核，不能保存草稿，请切换到草稿或待标注样本');
-      return;
+      if (!options?.silent) {
+        msg.warning('当前样本已提交/已审核，不能保存草稿，请切换到草稿或待标注样本');
+      }
+      return false;
     }
-    save.mutate({ id: selectedItem.workItemId, payload: annotationPayload });
-  }, [annotationPayload, msg, save, selectedItem]);
+    const payload = latestAnnotationPayloadRef.current || annotationPayload;
+    if (options?.silent && payload === selectedItemSavedPayload) {
+      return true;
+    }
+    silentSaveRef.current = Boolean(options?.silent);
+    await save.mutateAsync({ id: selectedItem.workItemId, payload });
+    return true;
+  }, [annotationPayload, msg, save, selectedItem, selectedItemSavedPayload]);
   const submitCurrent = useCallback(() => {
     if (!selectedItem?.workItemId) return;
     if (!canEditWorkItem(selectedItem.status) && selectedItem.status !== 'SUBMITTED') {
@@ -673,14 +924,25 @@ export function AnnotationWorkbenchPage() {
     }
     submit.mutate({ id: selectedItem.workItemId, payload: annotationPayload });
   }, [annotationPayload, msg, selectedItem, submit]);
+  const navigateToIndex = useCallback(async (nextIndex: number) => {
+    const boundedIndex = Math.max(0, Math.min(Math.max(total - 1, 0), nextIndex));
+    if (boundedIndex === selectedIndex || isAutoNavigating) return;
+    try {
+      setIsAutoNavigating(true);
+      if (hasUnsavedChanges) {
+        const saved = await saveCurrent({ silent: true });
+        if (!saved) return;
+      }
+      setSelectedIndex(boundedIndex);
+    } finally {
+      setIsAutoNavigating(false);
+    }
+  }, [hasUnsavedChanges, isAutoNavigating, saveCurrent, selectedIndex, total]);
+  const goPrev = useCallback(() => void navigateToIndex(selectedIndex - 1), [navigateToIndex, selectedIndex]);
+  const goNext = useCallback(() => void navigateToIndex(selectedIndex + 1), [navigateToIndex, selectedIndex]);
   const selectClass = useCallback((idx: number) => {
     setActiveClass(idx);
-    if (isSegmentation && selectedShapeId) {
-      commitPolygons((items) => items.map((polygon) => polygon.id === selectedShapeId ? { ...polygon, cls: idx, label: annotationClasses[idx] } : polygon), selectedShapeId);
-      return;
-    }
-    commitBoxes((items) => items.map((box) => box.id === selectedShapeId ? { ...box, cls: idx, label: annotationClasses[idx] } : box), selectedShapeId);
-  }, [commitBoxes, commitPolygons, isSegmentation, selectedShapeId]);
+  }, []);
   const updatePolygonVertex = useCallback((polygonId: string, pointIndex: number, point: AnnotationPoint, commit: boolean) => {
     const nextPolygons = polygons.map((polygon) => {
       if (polygon.id !== polygonId) return polygon;
@@ -773,21 +1035,6 @@ export function AnnotationWorkbenchPage() {
     commitBoxes((items) => [...items, box], id);
     msg.success(`已新增标注框：${annotationClasses[activeClass]}（${shapeText(shape)}）`);
   }, [activeClass, boxes.length, commitBoxes, isSegmentation, msg]);
-  const acceptAiShape = useCallback(() => {
-    const selectedPolygon = polygons.find((item) => item.id === selectedShapeId);
-    if (selectedPolygon?.source === 'ai') {
-      commitPolygons((items) => items.map((item) => item.id === selectedPolygon.id ? { ...item, source: 'manual', confidence: undefined } : item), selectedPolygon.id);
-      setActiveClass(selectedPolygon.cls);
-      msg.success(`已采纳 AI 建议：${selectedPolygon.label}`);
-      return;
-    }
-    const selectedBox = boxes.find((item) => item.id === selectedShapeId);
-    if (selectedBox?.source === 'ai') {
-      commitBoxes((items) => items.map((item) => item.id === selectedBox.id ? { ...item, source: 'manual', confidence: undefined } : item), selectedBox.id);
-      setActiveClass(selectedBox.cls);
-      msg.success(`已采纳 AI 建议：${selectedBox.label}`);
-    }
-  }, [boxes, commitBoxes, commitPolygons, msg, polygons, selectedShapeId]);
   const svgPoint = (event: { clientX: number; clientY: number }) => {
     const svg = canvasRef.current;
     if (!svg) return { x: 0, y: 0 };
@@ -962,6 +1209,10 @@ export function AnnotationWorkbenchPage() {
     msg.success('已在线条上新增顶点');
   }, [canEditSelectedItem, insertPolygonVertex, msg]);
   useEffect(() => {
+    latestAnnotationPayloadRef.current = annotationPayload;
+  }, [annotationPayload]);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => {
       setPolygonDraftPoints([]);
       setPolygonVertexDrag(null);
@@ -973,7 +1224,7 @@ export function AnnotationWorkbenchPage() {
   }, [selectedIndex, scene, taskId]);
   useEffect(() => {
     if (!selectedItem) return;
-    const parsed = parseAnnotationPayload(scene, selectedItem.annotationJson ?? selectedItem.predictionJson);
+    const parsed = parseAnnotationPayload(scene, selectedItem.annotationJson);
     const selectedId = parsed.polygons[0]?.id ?? parsed.boxes[0]?.id ?? '';
     dispatchEditor({ type: 'reset', boxes: parsed.boxes, polygons: parsed.polygons, selectedShapeId: selectedId });
     const current = parsed.polygons[0] ?? parsed.boxes[0];
@@ -990,6 +1241,46 @@ export function AnnotationWorkbenchPage() {
     return () => window.clearTimeout(timer);
   }, [scene, selectedItem]);
   useEffect(() => {
+    const thumbList = thumbListRef.current;
+    if (!thumbList) return;
+
+    const measure = () => {
+      setThumbListHeight(thumbList.clientHeight || ANNOTATION_THUMB_PANEL_FALLBACK_HEIGHT);
+    };
+
+    measure();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(measure);
+      observer.observe(thumbList);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+
+  useEffect(() => {
+    const thumbList = thumbListRef.current;
+    if (!thumbList || queueItems.length <= 1) return;
+    const itemTop = effectiveSelectedIndex * ANNOTATION_THUMB_ITEM_HEIGHT;
+    const itemBottom = itemTop + ANNOTATION_THUMB_ITEM_HEIGHT;
+    const viewportTop = thumbList.scrollTop;
+    const viewportBottom = viewportTop + (thumbList.clientHeight || ANNOTATION_THUMB_PANEL_FALLBACK_HEIGHT);
+
+    if (itemTop < viewportTop) {
+      thumbList.scrollTop = itemTop;
+      setThumbScrollTop(itemTop);
+      return;
+    }
+    if (itemBottom > viewportBottom) {
+      const nextScrollTop = Math.max(0, itemBottom - (thumbList.clientHeight || ANNOTATION_THUMB_PANEL_FALLBACK_HEIGHT));
+      thumbList.scrollTop = nextScrollTop;
+      setThumbScrollTop(nextScrollTop);
+    }
+  }, [effectiveSelectedIndex, queueItems.length]);
+
+  useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
@@ -1000,7 +1291,7 @@ export function AnnotationWorkbenchPage() {
         redo();
         event.preventDefault();
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
-        saveCurrent();
+        void saveCurrent();
         event.preventDefault();
       } else if (/^[1-4]$/.test(event.key)) {
         selectClass(Number(event.key) - 1);
@@ -1050,10 +1341,8 @@ export function AnnotationWorkbenchPage() {
           <Tag color="green" className="mono">● 00:47:23 / ~60m</Tag>
           <Space className="annotation-toolbar-actions" wrap>
             <Button size="small" onClick={() => setShortcutOpen(true)}>快捷键 ?</Button>
-            <Button size="small" type={aiMode ? 'primary' : 'default'} ghost={aiMode} onClick={() => setAiMode((v) => !v)}>✦ AI 辅助{aiMode ? ' ON' : ''}</Button>
-            <Button size="small" onClick={acceptAiShape} disabled={!aiMode || (currentPolygon?.source !== 'ai' && currentBox?.source !== 'ai')}>采纳 AI 建议</Button>
-            <Button size="small" onClick={goPrev} disabled={effectiveSelectedIndex === 0}>上一张 ←</Button>
-            <Button size="small" onClick={goNext} disabled={!items.length || effectiveSelectedIndex >= items.length - 1}>下一张 →</Button>
+            <Button size="small" onClick={goPrev} disabled={selectedIndex === 0 || isAutoNavigating}>上一张 ←</Button>
+            <Button size="small" onClick={goNext} disabled={!total || selectedIndex >= total - 1 || isAutoNavigating}>下一张 →</Button>
             {!isSegmentation ? <Button size="small" type={activeShape === 'rect' ? 'primary' : 'default'} ghost={activeShape === 'rect'} onClick={() => createManualShape('rect')}>矩形框 W</Button> : null}
             {!isSegmentation ? <Button size="small" type={activeShape === 'ellipse' ? 'primary' : 'default'} ghost={activeShape === 'ellipse'} onClick={() => createManualShape('ellipse')}>椭圆框 E</Button> : null}
             <Button size="small" type={activeShape === 'polygon' ? 'primary' : 'default'} ghost={activeShape === 'polygon'} onClick={() => createManualShape('polygon')}>{isSegmentation ? '开始多边形 P' : '多边形框 P'}</Button>
@@ -1064,7 +1353,7 @@ export function AnnotationWorkbenchPage() {
             <Button size="small" onClick={redo} disabled={editor.historyIndex >= editor.history.length - 1}>重做 Ctrl+Y</Button>
             <Button size="small" onClick={syncCurrent} loading={sync.isPending} disabled={!selectedItem}>同步 Label Studio task</Button>
             {externalBinding?.externalTaskId ? <Button size="small" href={externalBinding.externalTaskUrl ?? externalBinding.launchUrl ?? undefined} target="_blank">打开 Label Studio task</Button> : null}
-            <Button size="small" onClick={saveCurrent} loading={save.isPending} disabled={!selectedItem || !canEditSelectedItem}>保存标注</Button>
+            <Button size="small" onClick={() => { void saveCurrent(); }} loading={save.isPending} disabled={!selectedItem || !canEditSelectedItem}>保存标注</Button>
             <Button size="small" type="primary" onClick={submitCurrent} loading={submit.isPending} disabled={!canSubmit}>提交审核</Button>
           </Space>
         </div>
@@ -1087,15 +1376,28 @@ export function AnnotationWorkbenchPage() {
         ) : null}
 
         <div className="annotation-workbench-layout">
-          <aside className="annotation-thumb-list" aria-label="样本队列">
+          <aside ref={thumbListRef} className="annotation-thumb-list" aria-label="样本队列" onScroll={handleThumbListScroll}>
             <h4 className="annotation-panel-title">样本队列</h4>
-            {(items.length ? items : [{ workItemId: 'EMPTY', taskId, sampleKey: '暂无样本', sampleFileId: null, annotatorId: null, annotatorName: null, status: 'DRAFT', predictionJson: null, annotationJson: null, submittedAt: null, updatedAt: '' }]).map((item, idx) => (
-              <button key={item.workItemId} className={`annotation-thumb ${idx === effectiveSelectedIndex ? 'active' : ''}`} onClick={() => setSelectedIndex(idx)} type="button">
-                <span className="annotation-thumb-image">{industrialSampleImages[item.sampleKey] ? <img src={industrialSampleImages[item.sampleKey].url} alt={`${item.sampleKey} ?????????`} loading="lazy" /> : <span className="annotation-thumb-weld" />}{item.status === 'REVIEW_PENDING' || item.status === 'APPROVED' ? <span className="annotation-thumb-done" /> : null}</span>
-                <span className="annotation-thumb-name">{item.sampleKey}</span>
-                <Tag color={item.predictionJson ? 'purple' : color(item.status)}>{item.predictionJson ? 'AI 预标注' : annStatusText(item.status)}</Tag>
-              </button>
-            ))}
+            <div style={{ paddingTop: thumbStartIndex * ANNOTATION_THUMB_ITEM_HEIGHT, paddingBottom: (queueItems.length - thumbEndIndex) * ANNOTATION_THUMB_ITEM_HEIGHT }}>
+              {visibleThumbItems.map((item, offset) => {
+                const idx = thumbStartIndex + offset;
+                const absoluteIndex = pageOffset + idx;
+                return (
+                  <button key={item.workItemId} className={`annotation-thumb ${idx === effectiveSelectedIndex ? 'active' : ''}`} onClick={() => void navigateToIndex(absoluteIndex)} type="button">
+                    <span className="annotation-thumb-image">
+                      {item.sampleFileId && !failedThumbPreviewIds[item.sampleFileId] && samplePreviewUrls[item.sampleFileId]
+                        ? <img src={samplePreviewUrls[item.sampleFileId]} alt={item.sampleKey} loading="lazy" onLoad={() => clearThumbPreviewFailed(item.sampleFileId!)} onError={() => markThumbPreviewFailed(item.sampleFileId!)} />
+                        : industrialSampleImages[item.sampleKey]
+                          ? <img src={industrialSampleImages[item.sampleKey].url} alt={item.sampleKey} loading="lazy" />
+                          : <span className="annotation-thumb-weld">{item.sampleFileId ? '加载中' : ''}</span>}
+                      {item.status === 'REVIEW_PENDING' || item.status === 'APPROVED' ? <span className="annotation-thumb-done" /> : null}
+                    </span>
+                    <span className="annotation-thumb-name">{item.sampleKey}</span>
+                    <Tag color={color(item.status)}>{annStatusText(item.status)}</Tag>
+                  </button>
+                );
+              })}
+            </div>
             {!canEditSelectedItem ? <Alert type="warning" showIcon title="只读样本" description="已提交/已审核样本不能拖动或保存草稿，请选择 DRAFT/PENDING/REJECTED 样本。" className="annotation-readonly-alert" /> : null}
           </aside>
 
@@ -1121,9 +1423,9 @@ export function AnnotationWorkbenchPage() {
                 </linearGradient>
               </defs>
               <rect width="520" height="340" fill="url(#ann-img-bg)" />
-              {selectedSampleImage ? (
+              {selectedSampleImage && !selectedSampleImageFailed ? (
                 <>
-                  <image href={selectedSampleImage.url} x="0" y="0" width="520" height="340" preserveAspectRatio="xMidYMid slice" data-testid="annotation-industrial-image" />
+                  <image href={selectedSampleImage.url} x="0" y="0" width="520" height="340" preserveAspectRatio="xMidYMid slice" data-testid="annotation-industrial-image" onLoad={() => clearCanvasPreviewFailed(selectedSampleImageKey)} onError={() => markCanvasPreviewFailed(selectedSampleImageKey)} />
                   <rect width="520" height="340" fill="rgba(7, 12, 24, .28)" />
                 </>
               ) : (
@@ -1197,14 +1499,15 @@ export function AnnotationWorkbenchPage() {
                 </>
               ) : null}
             </svg>
-            {selectedSampleImage ? <div className="annotation-sample-caption" data-testid="annotation-sample-caption">{selectedSampleImage.title} ? {selectedSampleImage.source}</div> : null}
+            {selectedSampleImageFailed ? <div className="annotation-image-error">当前样本图片加载失败，请切换样本或稍后重试</div> : null}
+            {selectedSampleImage ? <div className="annotation-sample-caption" data-testid="annotation-sample-caption">{selectedSampleImage.title} · {selectedSampleImage.source}</div> : null}
             <div className="annotation-canvas-hint">{isSegmentation ? '逐点点击绘制分割区域 · 双击/Enter 完成闭合 · 单击线条可选中并拖动连接线 · 双击线条可新增顶点 · Space 下一张 · Ctrl+S 保存当前标注' : '拖拽绘制框 · 右键删除 · Space 下一张 · Ctrl+S 保存当前标注'}</div>
           </main>
 
           <aside className="annotation-right-panel">
             <h4 className="annotation-panel-title">标注类别</h4>
             {annotationClasses.map((name, idx) => (
-              <button key={name} className={`annotation-class-row ${activeClass === idx ? 'active' : ''}`} style={{ borderColor: activeClass === idx ? annotationClassColors[idx] : 'transparent' }} onClick={() => selectClass(idx)} type="button">
+              <button key={name} className={`annotation-class-row ${activeClass === idx ? 'active' : ''}`} style={{ borderColor: activeClass === idx ? annotationClassColors[idx] : 'transparent' }} onClick={() => selectClass(idx)} type="button" aria-pressed={activeClass === idx}>
                 <span className="annotation-class-color" style={{ background: annotationClassColors[idx] }} />
                 <span>{name}</span>
                 <kbd>{idx + 1}</kbd>
@@ -1213,21 +1516,19 @@ export function AnnotationWorkbenchPage() {
             <div className="annotation-panel-divider" />
             <h4 className="annotation-panel-title">{isSegmentation ? '当前分割区域属性' : '当前框属性'}</h4>
             {currentPolygon ? <div className="annotation-box-meta">
-              <div>类别：<span style={{ color: annotationClassColors[currentPolygon.cls] }}>{currentPolygon.label}</span></div>
+              <div>类别：<span data-testid="annotation-current-label" style={{ color: annotationClassColors[currentPolygon.cls] }}>{currentPolygon.label}</span></div>
               <div>顶点数：<span data-testid="annotation-polygon-point-count">{currentPolygon.points.length}</span></div>
               <div>选中顶点：<span data-testid="annotation-selected-polygon-point">{selectedPolygonPointIndex == null ? '未选择' : `#${selectedPolygonPointIndex + 1}`}</span></div>
               <div>选中线段：<span data-testid="annotation-selected-polygon-edge">{selectedPolygonEdgeIndex == null ? '未选择' : `#${selectedPolygonEdgeIndex + 1}`}</span></div>
               <div>顶点坐标：<span data-testid="annotation-selected-polygon-point-coords">{selectedPolygonPoint ? `(${selectedPolygonPoint.x}, ${selectedPolygonPoint.y})` : '-'}</span></div>
               <div>中心：({currentPolygonCenter?.x ?? 0}, {currentPolygonCenter?.y ?? 0})</div>
               <div>形状：<span data-testid="annotation-current-shape">多边形区域</span></div>
-              <div>置信度：<span>{currentPolygon.source === 'ai' ? `${Math.round((currentPolygon.confidence ?? 0) * 100)}%` : '手动'}</span></div>
               <div>分割区域数：<span data-testid="annotation-polygon-count">{polygons.length}</span></div>
             </div> : currentBox ? <div className="annotation-box-meta">
-              <div>类别：<span style={{ color: annotationClassColors[currentBox.cls] }}>{currentBox.label}</span></div>
+              <div>类别：<span data-testid="annotation-current-label" style={{ color: annotationClassColors[currentBox.cls] }}>{currentBox.label}</span></div>
               <div>坐标：({currentBox.x}, {currentBox.y})</div>
               <div>尺寸：{currentBox.w} × {currentBox.h}</div>
               <div>形状：<span data-testid="annotation-current-shape">{shapeText(currentBox.shape)}</span></div>
-              <div>置信度：<span>{currentBox.source === 'ai' ? `${Math.round((currentBox.confidence ?? 0) * 100)}%` : '手动'}</span></div>
               <div>标注框数：<span data-testid="annotation-box-count">{boxes.length}</span></div>
             </div> : <Typography.Text type="secondary">{isSegmentation ? '点击区域或在画布上逐点创建多边形' : '点击框体选中'}</Typography.Text>}
             <div className="annotation-panel-divider" />
@@ -1944,6 +2245,7 @@ export function DatasetUploadPage() {
   const [uploadSession, setUploadSession] = useState<DatasetUploadSession | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<string>();
   const [selectedLocalFiles, setSelectedLocalFiles] = useState<File[]>([]);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
   const qc = useQueryClient();
   const sources = useQuery({ queryKey: ['data-sources'], queryFn: dataApi.dataSources });
   const datasetsQuery = useQuery({ queryKey: ['upload-target-datasets'], queryFn: () => dataApi.datasets() });
@@ -1964,6 +2266,22 @@ export function DatasetUploadPage() {
   const activeUploadSession = uploadSessionQuery.data ?? uploadSession;
   const isCommitPolling = activeUploadSession?.status === 'PROCESSING';
   const handledTerminalSessionRef = useRef<string | null>(null);
+  const appendLocalFiles = useCallback((files: File[]) => {
+    setSelectedLocalFiles((items) => {
+      const next = [...items, ...files];
+      const seen = new Set<string>();
+      return next.filter((item) => {
+        const key = localFileRowKey(item);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    });
+  }, []);
+  const handleFolderInputChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    appendLocalFiles(Array.from(event.target.files ?? []));
+    event.currentTarget.value = '';
+  }, [appendLocalFiles]);
   useEffect(() => {
     if (!uploadSessionQuery.data) return;
     if (!['READY', 'SECURITY_PENDING', 'FAILED', 'CANCELLED'].includes(uploadSessionQuery.data.status)) return;
@@ -2015,11 +2333,22 @@ export function DatasetUploadPage() {
     onError: (e: Error) => msg.error(e.message),
   });
   const uploadFiles = useMutation({
-    mutationFn: ({ sessionId, uploadFiles }: { sessionId: string; uploadFiles: File[] }) => dataApi.uploadDatasetSessionFiles(sessionId, uploadFiles),
-    onSuccess: (session) => {
+    mutationFn: async ({ sessionId, uploadFiles }: { sessionId: string; uploadFiles: File[] }) => {
+      const batches = splitLocalUploadBatches(uploadFiles);
+      let session: DatasetUploadSession | null = null;
+      for (const batch of batches) {
+        session = await dataApi.uploadDatasetSessionFiles(sessionId, batch);
+      }
+      if (!session) {
+        throw new Error('请选择本地图片或 zip 包后再上传。');
+      }
+      return { session, batchCount: batches.length, fileCount: uploadFiles.length };
+    },
+    onSuccess: ({ session, batchCount, fileCount }) => {
       setUploadSession(session);
       setStep(2);
-      msg.success('文件已上传并完成平台登记。');
+      setSelectedLocalFiles([]);
+      msg.success(batchCount > 1 ? `文件已分 ${batchCount} 批上传并完成平台登记（共 ${fileCount} 个文件）。` : '文件已上传并完成平台登记。');
     },
     onError: (e: Error) => msg.error(e.message),
   });
@@ -2190,8 +2519,13 @@ export function DatasetUploadPage() {
         {step === 1 && effectiveCreationMode === 'DATA_SOURCE_IMPORT' && (
           <Space direction="vertical" className="full-width">
             <Alert type="info" showIcon title="文件登记 seam" description="选择 F007 platform_file_object，提交后后端执行 AVAILABLE、sha256 与 size 校验，并绑定到当前版本草稿。" />
-            <Typography.Text>拖拽文件或文件夹</Typography.Text>
-            <div className="ant-upload ant-upload-drag"><div className="ant-upload-btn"><span>拖拽文件或文件夹</span><input type="file" multiple accept="image/*,.zip" /></div></div>
+            <div className="dataset-upload-drop">
+              <Upload.Dragger multiple directory accept="image/*,.zip" showUploadList={false} beforeUpload={() => false}>
+                <p className="ant-upload-drag-icon">⬆</p>
+                <p className="ant-upload-text">拖拽文件或文件夹</p>
+                <p className="ant-upload-hint">数据源导入路径仅展示拖拽能力占位；实际绑定仍以下方 F007 文件对象清单为准。</p>
+              </Upload.Dragger>
+            </div>
             <Table<FileObjectSummary> rowKey="fileId" dataSource={fileRows} pagination={false} rowSelection={{ type: 'radio', selectedRowKeys: selectedFileId ? [selectedFileId] : [], onChange: (keys) => setSelectedFileId(String(keys[0])) }} columns={[{ title: '文件 ID', dataIndex: 'fileId' }, { title: 'Object Key', dataIndex: 'objectKey' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: 'hash 校验', render: (_, r) => r.expectedSha256 === r.sha256 ? '通过' : '不一致' }, { title: '大小', render: (_, r) => fmtSize(r.sizeBytes) }]} />
             <Button type="primary" disabled={!selectedFileId} loading={attach.isPending} onClick={() => selectedFileId && attach.mutate({ fileId: selectedFileId })}>完成文件登记并绑定版本</Button>
           </Space>
@@ -2200,10 +2534,50 @@ export function DatasetUploadPage() {
           <Space direction="vertical" className="full-width">
             <Alert type="info" showIcon title={`上传会话 ${uploadSession.sessionId}`} description={`阶段：${uploadSession.progress.phase} · ${uploadSession.progress.percent}%`} />
             {uploadSession.targetAction === 'APPEND_VERSION' ? <Alert type="warning" showIcon title="本次将追加到既有版本" description={`${uploadSession.targetDatasetId ?? '-'} / ${uploadSession.targetVersionId ?? '-'}`} /> : null}
-            <Typography.Text>拖拽文件或文件夹</Typography.Text>
-            <div className="ant-upload ant-upload-drag"><div className="ant-upload-btn"><span>拖拽文件或文件夹</span><input type="file" multiple accept="image/*,.zip" onChange={(event) => setSelectedLocalFiles(Array.from(event.target.files ?? []))} /></div></div>
-            <Table rowKey="name" dataSource={selectedLocalFiles.map((file) => ({ name: file.name, type: file.type || 'application/octet-stream', size: file.size }))} pagination={false} locale={{ emptyText: '请选择本地图片或 zip 包。' }} columns={[{ title: '文件名', dataIndex: 'name' }, { title: '类型', dataIndex: 'type' }, { title: '大小', dataIndex: 'size', render: (value: number) => fmtSize(value) }]} />
-            <Button type="primary" disabled={selectedLocalFiles.length === 0} loading={uploadFiles.isPending} onClick={() => uploadFiles.mutate({ sessionId: uploadSession.sessionId, uploadFiles: selectedLocalFiles })}>上传并登记到平台</Button>
+            <div className="dataset-upload-drop">
+              <Upload.Dragger
+                multiple
+                accept="image/*,.zip"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  appendLocalFiles([file as File]);
+                  return false;
+                }}
+              >
+                <p className="ant-upload-drag-icon">⬆</p>
+                <p className="ant-upload-text">拖拽文件，或点击选择图片 / zip 包</p>
+                <p className="ant-upload-hint">如果要导入整个文件夹，请使用下方“选择文件夹”。选择后会先展示在下方表格，再点击“上传并登记到平台”。平台会按大小自动分批上传，避免大批量图片一次性提交失败。</p>
+              </Upload.Dragger>
+            </div>
+            <input
+              ref={folderInputRef}
+              type="file"
+              multiple
+              accept="image/*,.zip"
+              onChange={handleFolderInputChange}
+              style={{ display: 'none' }}
+              {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+            />
+            <Space wrap>
+              <Button onClick={() => folderInputRef.current?.click()}>选择文件夹</Button>
+              <Button onClick={() => setSelectedLocalFiles([])} disabled={selectedLocalFiles.length === 0 || uploadFiles.isPending}>清空已选</Button>
+              <Button type="primary" disabled={selectedLocalFiles.length === 0} loading={uploadFiles.isPending} onClick={() => uploadFiles.mutate({ sessionId: uploadSession.sessionId, uploadFiles: selectedLocalFiles })}>上传并登记到平台</Button>
+            </Space>
+            <Table<{ key: string; name: string; relativePath?: string; type: string; size: number }>
+              rowKey="key"
+              dataSource={selectedLocalFiles.map((file) => ({ key: localFileRowKey(file), name: file.name, relativePath: localFileRelativePath(file), type: file.type || 'application/octet-stream', size: file.size }))}
+              pagination={false}
+              locale={{ emptyText: '请选择本地图片或 zip 包。' }}
+              columns={[
+                {
+                  title: '文件名',
+                  dataIndex: 'name',
+                  render: (value: string, row: { relativePath?: string }) => <Space direction="vertical" size={0}><Typography.Text strong>{value}</Typography.Text>{row.relativePath ? <Typography.Text type="secondary">{row.relativePath}</Typography.Text> : null}</Space>,
+                },
+                { title: '类型', dataIndex: 'type' },
+                { title: '大小', dataIndex: 'size', render: (value: number) => fmtSize(value) },
+              ]}
+            />
           </Space>
         )}
         {step === 2 && effectiveCreationMode === 'DATA_SOURCE_IMPORT' && (
@@ -2250,7 +2624,7 @@ export function DatasetDetailPage() {
   const annTasks = useQuery({ queryKey: ['dataset-annotation-tasks', datasetId], queryFn: () => dataApi.datasetAnnotationTasks(datasetId) });
   const ref = useMutation({ mutationFn: () => dataApi.reference(datasetId), onError: () => undefined });
   const [msg, holder] = message.useMessage();
-  const [taskForm] = Form.useForm<{ name: string; scene: string; templateId?: string }>();
+  const [taskForm] = Form.useForm<{ name: string; scene: string; templateId?: string; templateMode?: 'EXISTING' | 'INLINE_CREATE'; inlineLabels?: string; inlineTemplateName?: string }>();
   const [taskOpen, setTaskOpen] = useState(false);
   const [exportTask, setExportTask] = useState<DatasetAnnotationTask | null>(null);
   const [previewFile, setPreviewFile] = useState<{ fileId: string; name: string } | null>(null);
@@ -2335,8 +2709,39 @@ export function DatasetDetailPage() {
     onError: (e: Error) => msg.error(e.message),
   });
   const createTask = useMutation({
-    mutationFn: (values: { name: string; templateId: string; scene: string }) => dataApi.createDatasetAnnotationTask(datasetId, { ...values, sourceDatasetId: datasetId, sourceVersionId: candidate.data?.currentVersionId, reviewEnabled: true, labelStudioEnabled: true, assigneeIds: ['USR-ANNOTATOR'], reviewerIds: ['USR-BU-CABIN'] }),
-    onSuccess: async () => { setTaskOpen(false); await qc.invalidateQueries({ queryKey: ['dataset-annotation-tasks', datasetId] }); msg.success('已从数据集创建标注任务'); },
+    mutationFn: async (values: { name: string; templateId?: string; scene: string; templateMode?: 'EXISTING' | 'INLINE_CREATE'; inlineLabels?: string; inlineTemplateName?: string }) => {
+      let templateId = values.templateId;
+      let inlineLabels: string[] | undefined;
+      let inlineTemplateName: string | undefined;
+      if (values.templateMode === 'INLINE_CREATE' || !templateId) {
+        inlineLabels = parseInlineLabels(values.inlineLabels);
+        if (inlineLabels.length === 0) {
+          throw new Error('请至少输入一个标签。');
+        }
+        inlineTemplateName = values.inlineTemplateName?.trim() || `${d?.dataset.name ?? '数据集'} ${txt(values.scene)}模板`;
+        templateId = undefined;
+      }
+      return dataApi.createDatasetAnnotationTask(datasetId, {
+        ...values,
+        sourceDatasetId: datasetId,
+        sourceVersionId: candidate.data?.currentVersionId,
+        templateId,
+        inlineLabels,
+        inlineTemplateName,
+        reviewEnabled: true,
+        labelStudioEnabled: true,
+        assigneeIds: [],
+        reviewerIds: [],
+      });
+    },
+    onSuccess: async () => {
+      setTaskOpen(false);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['dataset-annotation-tasks', datasetId] }),
+        qc.invalidateQueries({ queryKey: ['dataset-annotation-candidate', datasetId] }),
+      ]);
+      msg.success('已从数据集创建标注任务');
+    },
     onError: (e: Error) => msg.error(e.message),
   });
   const createExport = useMutation({
@@ -2372,12 +2777,38 @@ export function DatasetDetailPage() {
     { title: '绑定 ID', dataIndex: 'bindingId', render: (v: string) => <Typography.Text className="mono" copyable>{v}</Typography.Text> },
     { title: '解绑', render: (_: unknown, r: { bindingId: string; versionId: string }) => canWriteSelectedVersion ? <Button size="small" danger loading={unbind.isPending} onClick={() => Modal.confirm({ title: '解绑当前版本文件？', content: '仅删除当前版本的绑定关系，不删除底层文件对象。', okText: '确认解绑', onOk: () => unbind.mutateAsync({ versionId: r.versionId, bindingId: r.bindingId }) })}>解绑</Button> : null },
   ];
-  const canCreateAnnotationTask = candidate.data?.eligible ?? (d?.dataset.status === 'ACTIVE');
+  const canCreateAnnotationTask = Boolean(
+    candidate.data
+      ? candidate.data.status === 'ACTIVE' && candidate.data.dataType === 'IMAGE' && candidate.data.currentVersionId
+      : d?.dataset.status === 'ACTIVE' && d?.dataset.dataType === 'IMAGE' && d?.selectedVersionId,
+  );
   const nextVersionName = d ? `v${(d.dataset.versionCount ?? 0) + 1}` : 'v2';
   const taskScene = Form.useWatch('scene', taskForm) ?? 'IMAGE_TAGGING';
+  const taskTemplateMode = Form.useWatch('templateMode', taskForm) ?? 'INLINE_CREATE';
   const sceneTemplates = useMemo(() => (candidate.data?.templates ?? []).filter((template) => template.scene === taskScene), [candidate.data?.templates, taskScene]);
-  useEffect(() => { if (!taskOpen) return; const currentTemplateId = taskForm.getFieldValue('templateId'); if (sceneTemplates.some((template) => template.templateId === currentTemplateId)) return; taskForm.setFieldsValue({ templateId: sceneTemplates[0]?.templateId }); }, [sceneTemplates, taskForm, taskOpen]);
-  useEffect(() => { if (!taskOpen) return; taskForm.setFieldsValue({ name: `${d?.dataset.name ?? '数据集'} 标注任务`, scene: 'IMAGE_TAGGING', templateId: (candidate.data?.templates ?? []).find((template) => template.scene === 'IMAGE_TAGGING')?.templateId }); }, [candidate.data?.templates, d?.dataset.name, taskForm, taskOpen]);
+  useEffect(() => {
+    if (!taskOpen) return;
+    const currentTemplateId = taskForm.getFieldValue('templateId');
+    if (!sceneTemplates.some((template) => template.templateId === currentTemplateId)) {
+      taskForm.setFieldsValue({ templateId: sceneTemplates[0]?.templateId });
+    }
+    if (sceneTemplates.length === 0 && taskTemplateMode !== 'INLINE_CREATE') {
+      taskForm.setFieldsValue({ templateMode: 'INLINE_CREATE' });
+    }
+  }, [sceneTemplates, taskForm, taskOpen, taskTemplateMode]);
+  useEffect(() => {
+    if (!taskOpen) return;
+    const defaultScene = 'IMAGE_TAGGING';
+    const defaultTemplateId = (candidate.data?.templates ?? []).find((template) => template.scene === defaultScene)?.templateId;
+    taskForm.setFieldsValue({
+      name: `${d?.dataset.name ?? '数据集'} 标注任务`,
+      scene: defaultScene,
+      templateId: defaultTemplateId,
+      templateMode: 'INLINE_CREATE',
+      inlineLabels: annotationClasses.join('，'),
+      inlineTemplateName: `${d?.dataset.name ?? '数据集'} ${txt(defaultScene)}模板`,
+    });
+  }, [candidate.data?.templates, d?.dataset.name, taskForm, taskOpen]);
   return (
     <div className="content-page">
       {holder}
@@ -2394,10 +2825,10 @@ export function DatasetDetailPage() {
           <Button onClick={() => nav('/up', { state: { appendTarget: canWriteSelectedVersion ? { datasetId, versionId: d!.selectedVersionId } : undefined } })} disabled={!canWriteSelectedVersion}>上传向导追加</Button>
           <Button onClick={() => Modal.confirm({ title: '归档当前数据集？', content: '归档后所有写操作将被禁止，仅保留只读查看。', okText: '确认归档', onOk: () => archive.mutateAsync() })} disabled={d?.dataset.status === 'ARCHIVED' || !d?.dataset.mutable}>归档</Button>
           {isSuperAdmin ? <Button danger disabled={!d?.dataset.hardDeletable} onClick={() => Modal.confirm({ title: '彻底删除当前数据集？', content: '仅用于已归档且无引用的数据集，删除后不可恢复。', okText: '确认彻底删除', okButtonProps: { danger: true }, onOk: () => hardDelete.mutateAsync() })}>彻底删除</Button> : null}
-          <Button type="primary" disabled={!canCreateAnnotationTask} onClick={() => loc.state?.fromLocalUpload ? nav('/ann', { state: { openCreateTask: true, datasetId } }) : setTaskOpen(true)}>创建标注任务</Button>
+          <Button type="primary" disabled={!canCreateAnnotationTask} onClick={() => setTaskOpen(true)}>创建标注任务</Button>
         </Space>
       </div>
-      {!canCreateAnnotationTask ? <Alert type="warning" showIcon style={{ marginBottom: 16 }} title="当前数据集尚未达到可发起标注任务的状态" description="仅 ACTIVE / 可用状态的数据集可继续发起标注任务；如处于 SECURITY_PENDING，请等待内容安全结果。" /> : null}
+      {!canCreateAnnotationTask ? <Alert type="warning" showIcon style={{ marginBottom: 16 }} title="当前数据集尚未达到可发起标注任务的状态" description="仅 ACTIVE / 可用状态的 IMAGE 数据集可继续发起标注任务。" /> : null}
       {d && !canWriteSelectedVersion ? <Alert type="info" showIcon style={{ marginBottom: 16 }} title="当前为只读版本视图" description="只有“当前版本”且版本可变时，才允许追加文件、解绑文件或使用上传向导追加。" /> : null}
       {ref.data ? <Alert type="success" showIcon title={`DatasetReference 可用：${ref.data.versionId}`} style={{ marginBottom: 16 }} /> : null}
       {loc.state?.targetAction === 'APPEND_VERSION' && loc.state?.versionStatus ? (
@@ -2475,8 +2906,8 @@ export function DatasetDetailPage() {
             key: 'annotation',
             label: '标注任务/训练导出',
             children: <Space direction="vertical" className="full-width">
-              <Alert type={candidate.data?.eligible ? 'success' : 'warning'} showIcon title="ACTIVE IMAGE 数据集可创建标注任务" description={`${candidate.data?.diagnosticCode ?? 'LOADING'} · ${candidate.data?.diagnosticMessage ?? '正在加载候选状态'}；COCO/YOLO/VOC/Mask 均包含图片副本，训练环境默认采用自包含导出包。`} />
-              {loc.state?.fromLocalUpload ? null : <Space wrap><Button type="primary" disabled={!candidate.data?.eligible} onClick={() => setTaskOpen(true)}>从数据集创建标注任务</Button><Typography.Text type="secondary">当前版本：{candidate.data?.currentVersionId ?? '-'}</Typography.Text></Space>}
+              <Alert type={canCreateAnnotationTask ? 'success' : 'warning'} showIcon title="ACTIVE IMAGE 数据集可创建标注任务" description={`${candidate.data?.diagnosticCode ?? 'LOADING'} · ${candidate.data?.diagnosticMessage ?? '正在加载候选状态'}；${candidate.data?.diagnosticCode === 'ANNOTATION_TEMPLATE_REQUIRED' ? '当前可在创建任务时直接输入标签，系统会自动生成并发布模板。' : 'COCO/YOLO/VOC/Mask 均包含图片副本，训练环境默认采用自包含导出包。'}`} />
+              <Space wrap><Button type="primary" disabled={!canCreateAnnotationTask} onClick={() => setTaskOpen(true)}>从数据集创建标注任务</Button><Typography.Text type="secondary">当前版本：{candidate.data?.currentVersionId ?? '-'}</Typography.Text></Space>
               <Table<DatasetAnnotationTask> rowKey={(r) => r.task.taskId} dataSource={annTasks.data ?? []} loading={annTasks.isLoading} expandable={{ expandedRowRender: (r) => <Table<AnnotationTrainingExport> rowKey="exportId" dataSource={r.exports} pagination={false} columns={[{ title: '格式', dataIndex: 'format' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '包含', render: (_v, item) => item.packageIncludesImages ? '包含图片副本和 metadata' : '仅 metadata' }, { title: '有效期', render: (_v, item) => item.expiresAt ? item.expiresAt.slice(0, 10) : '-' }, { title: '大小', render: (_v, item) => fmtSize(item.sizeBytes) }, { title: '诊断', render: (_v, item) => `${item.diagnosticCode} · ${item.diagnosticMessage}` }, { title: '下载', render: (_v, item) => <Button size="small" disabled={!item.exportId || item.status !== 'AVAILABLE'} loading={exportDownload.isPending} onClick={() => exportDownload.mutate(item.exportId)}>获取下载链接</Button> }]} locale={{ emptyText: '暂无训练格式导出' }} /> }} columns={[{ title: '任务', render: (_v, r) => <Space direction="vertical" size={0}><Typography.Text strong>{r.task.name}</Typography.Text><Typography.Text type="secondary" className="mono">{r.task.taskId}</Typography.Text></Space> }, { title: '场景', render: (_v, r) => txt(r.task.scene) }, { title: '状态', render: (_v, r) => <Tag color={color(r.task.status)}>{annStatusText(r.task.status)}</Tag> }, { title: '进度', render: (_v, r) => `${r.task.reviewedCount}/${r.task.totalCount}` }, { title: '质量分', render: (_v, r) => r.task.qualityScore ?? '-' }, { title: '操作', render: (_v, r) => <Space wrap><Button size="small" type="primary" onClick={() => nav(`/annwork?taskId=${encodeURIComponent(r.task.taskId)}`, { state: { taskId: r.task.taskId } })}>进入标注</Button><Button size="small" onClick={() => setExportTask(r)}>生成训练包</Button></Space> }]} />
             </Space>,
           },
@@ -2532,10 +2963,19 @@ export function DatasetDetailPage() {
         />
       </Modal>
       <Modal title="从数据集创建标注任务" open={taskOpen} onCancel={() => setTaskOpen(false)} footer={null} destroyOnHidden>
-        <Form form={taskForm} layout="vertical" onFinish={(v) => { if (!v.templateId) return; createTask.mutate({ ...v, templateId: v.templateId }); }}>
+        <Form form={taskForm} layout="vertical" onFinish={(v) => createTask.mutate(v)}>
           <Form.Item name="name" label="任务名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="scene" label="标注场景"><Select options={[{ value: 'IMAGE_TAGGING', label: '图片打标' }, { value: 'IMAGE_SEGMENTATION', label: '图片分割' }]} /></Form.Item>
-          <Form.Item name="templateId" label="标签模板" rules={[{ required: true, message: '当前场景暂无已发布模板' }]} extra={sceneTemplates.length === 0 ? '当前场景暂无已发布模板，请先创建并发布对应模板。' : undefined}><Select options={sceneTemplates.map((t) => ({ value: t.templateId, label: t.name }))} placeholder={sceneTemplates.length === 0 ? '当前场景暂无已发布模板' : '请选择标签模板'} /></Form.Item>
+          <Form.Item name="scene" label="标注场景"><Select options={[{ value: 'IMAGE_TAGGING', label: '图片打标' }, { value: 'IMAGE_SEGMENTATION', label: '图片分割' }]} onChange={(scene) => taskForm.setFieldsValue({ templateId: undefined, templateMode: 'INLINE_CREATE', inlineTemplateName: `${d?.dataset.name ?? '数据集'} ${txt(scene)}模板` })} /></Form.Item>
+          <Form.Item name="templateMode" label="标签来源"><Select options={[{ value: 'EXISTING', label: '选择已发布模板' }, { value: 'INLINE_CREATE', label: '直接输入标签并自动建模板' }]} /></Form.Item>
+          {taskTemplateMode === 'EXISTING' ? (
+            <Form.Item name="templateId" label="标签模板" rules={[{ required: true, message: '请选择标签模板，或切换为直接输入标签。' }]} extra={sceneTemplates.length === 0 ? '当前场景暂无已发布模板，可切换为“直接输入标签并自动建模板”。' : undefined}><Select options={sceneTemplates.map((t) => ({ value: t.templateId, label: t.name }))} placeholder={sceneTemplates.length === 0 ? '当前场景暂无已发布模板' : '请选择标签模板'} /></Form.Item>
+          ) : (
+            <>
+              <Form.Item name="inlineTemplateName" label="自动生成的模板名称"><Input /></Form.Item>
+              <Form.Item name="inlineLabels" label="标签列表" rules={[{ required: true, message: '请至少输入一个标签' }, { validator: async (_rule, value) => { if (parseInlineLabels(value).length === 0) throw new Error('请至少输入一个标签'); } }]} extra="支持逗号、顿号或换行分隔，例如：裂纹，气孔，夹渣"><Input.TextArea rows={4} placeholder="裂纹，气孔，夹渣" /></Form.Item>
+            </>
+          )}
+          <Alert type="info" showIcon style={{ marginBottom: 12 }} title="任务创建说明" description="如果选择“直接输入标签”，系统会在后端自动生成并发布模板，再创建标注任务；你也可以直接复用已发布模板。" />
           <Button type="primary" htmlType="submit" loading={createTask.isPending}>创建任务</Button>
         </Form>
       </Modal>

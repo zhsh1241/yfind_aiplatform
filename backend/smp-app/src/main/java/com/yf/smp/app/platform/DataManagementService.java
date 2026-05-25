@@ -33,6 +33,7 @@ import java.util.zip.ZipInputStream;
 import javax.imageio.ImageIO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -148,8 +149,16 @@ class DefaultContentSafetyScanner implements ContentSafetyScanner {
     private static final Duration CONNECT_TIMEOUT = Duration.ofMillis(1200);
     private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(2);
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+    private final boolean bypassEnabled;
+
+    DefaultContentSafetyScanner(@Value("${smp.content-safety.bypass:false}") boolean bypassEnabled) {
+        this.bypassEnabled = bypassEnabled;
+    }
 
     @Override public ContentSafetyScanResult scan(String endpoint, String tenantId, String fileName, byte[] content) {
+        if (bypassEnabled) {
+            return new ContentSafetyScanResult("PASSED", "DATASET_UPLOAD_SECURITY_PASSED", "SANDBOX_CONTENT_SAFETY_PASSED");
+        }
         String normalizedEndpoint = endpoint == null ? "" : endpoint.trim();
         if (normalizedEndpoint.isBlank() || normalizedEndpoint.startsWith("TODO_CONFIRM")) {
             return new ContentSafetyScanResult("PENDING", "DATASET_UPLOAD_SECURITY_PENDING", "TODO_CONFIRM_CONTENT_SAFETY_SERVICE");
@@ -283,7 +292,7 @@ public class DataManagementService {
             .filter(t -> d.tenantId().equals(t.tenantId()))
             .filter(t -> List.of("IMAGE_TAGGING", "IMAGE_SEGMENTATION").contains(t.scene()))
             .toList();
-        if (eligible && templates.isEmpty()) { eligible = false; code = "ANNOTATION_TEMPLATE_REQUIRED"; message = "需要已发布的图片打标/图片分割标签模板"; }
+        if (eligible && templates.isEmpty()) { code = "ANNOTATION_TEMPLATE_OPTIONAL"; message = "当前无已发布模板，可在创建标注任务时直接输入标签"; }
         return new DatasetAnnotationCandidateResponse(d.datasetId(), d.name(), d.currentVersionId(), d.dataType(), d.status(), eligible, code, message, templates, AnnotationService.supportedExportFormats());
     }
 
@@ -297,7 +306,24 @@ public class DataManagementService {
     @Transactional(noRollbackFor = PlatformException.class)
     public AnnotationTaskDetailResponse createAnnotationTask(PlatformPrincipal principal, String datasetId, AnnotationTaskCreateRequest request) {
         DatasetRecord d = datasetVisibleOrNotFound(principal, datasetId);
-        AnnotationTaskCreateRequest normalized = new AnnotationTaskCreateRequest(request.name(), datasetId, blank(request.sourceVersionId(), d.currentVersionId()), request.templateId(), request.scene(), request.reviewEnabled(), request.prelabelEnabled(), request.labelStudioEnabled(), request.prelabelModelSource(), request.prelabelConfidence(), request.assigneeIds(), request.reviewerIds(), request.deadline(), request.note());
+        AnnotationTaskCreateRequest normalized = new AnnotationTaskCreateRequest(
+            request.name(),
+            datasetId,
+            blank(request.sourceVersionId(), d.currentVersionId()),
+            request.templateId(),
+            request.inlineLabels(),
+            request.inlineTemplateName(),
+            request.scene(),
+            request.reviewEnabled(),
+            request.prelabelEnabled(),
+            request.labelStudioEnabled(),
+            request.prelabelModelSource(),
+            request.prelabelConfidence(),
+            request.assigneeIds(),
+            request.reviewerIds(),
+            request.deadline(),
+            request.note()
+        );
         AnnotationTaskDetailResponse created = annotationService.createTask(principal, normalized);
         audit(principal, d.tenantId(), "ANNOTATION_TASK_CREATED_FROM_DATASET", "AnnotationTask", created.task().taskId(), "SUCCESS", "INFO", datasetId, blank(request.sourceVersionId(), d.currentVersionId()), TRACE_TAG + ";F014");
         return created;
@@ -841,9 +867,12 @@ public class DataManagementService {
         ContentSafetyScanResult scanResult = contentSafetyScanner.scan(contentSafetyEndpoint(session.tenantId()), session.tenantId(), fileName, bytes);
         String fileId = "FILE-" + randomHex(12).toUpperCase(Locale.ROOT);
         String sha = sha256Bytes(bytes);
+        String bucket = objectStorageService.datasetBucket(session.tenantId());
+        String resolvedContentType = blank(contentType, detectContentType(fileName));
         String objectKey = session.tenantId() + "/dataset/local-upload/" + session.sessionId() + "/" + sanitizeFileName(fileName);
-        jdbc.update("INSERT INTO platform_file_object (file_id,asset_type,tenant_id,project_id,bucket,object_key,expected_sha256,sha256,expected_size_bytes,size_bytes,content_type,storage_tier,status,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", fileId, "DATASET", session.tenantId(), null, objectStorageService.datasetBucket(session.tenantId()), objectKey, sha, sha, size, size, blank(contentType, detectContentType(fileName)), "STANDARD", "AVAILABLE", principal.user().id(), now, now);
-        jdbc.update("INSERT INTO dataset_upload_session_file (id,session_id,file_name,file_id,status,size_bytes,content_type,diagnostic_code,diagnostic_message,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", "DUSF-" + randomHex(10).toUpperCase(Locale.ROOT), session.sessionId(), fileName, fileId, "UPLOADED", size, blank(contentType, detectContentType(fileName)), scanResult.diagnosticCode(), scanResult.diagnosticMessage(), now);
+        objectStorageService.uploadObjectIfConfigured(bucket, objectKey, bytes, resolvedContentType);
+        jdbc.update("INSERT INTO platform_file_object (file_id,asset_type,tenant_id,project_id,bucket,object_key,expected_sha256,sha256,expected_size_bytes,size_bytes,content_type,storage_tier,status,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", fileId, "DATASET", session.tenantId(), null, bucket, objectKey, sha, sha, size, size, resolvedContentType, "STANDARD", "AVAILABLE", principal.user().id(), now, now);
+        jdbc.update("INSERT INTO dataset_upload_session_file (id,session_id,file_name,file_id,status,size_bytes,content_type,diagnostic_code,diagnostic_message,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", "DUSF-" + randomHex(10).toUpperCase(Locale.ROOT), session.sessionId(), fileName, fileId, "UPLOADED", size, resolvedContentType, scanResult.diagnosticCode(), scanResult.diagnosticMessage(), now);
         audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_ACCEPTED", "PlatformFileObject", fileId, "SUCCESS", "INFO", fileName, "UPLOADED", TRACE_TAG);
     }
     private void refreshUploadSessionCounts(String sessionId) {

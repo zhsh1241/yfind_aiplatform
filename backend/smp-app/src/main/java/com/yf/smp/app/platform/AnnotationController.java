@@ -122,8 +122,13 @@ public class AnnotationController {
     }
 
     @GetMapping("/tasks/{taskId}/work-items")
-    ResponseEntity<ApiResponse<List<AnnotationWorkItemResponse>>> workItems(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String taskId) {
-        return PlatformResponses.ok(service.workItems(principal(authorization), taskId));
+    ResponseEntity<ApiResponse<AnnotationWorkItemPageResponse>> workItems(
+        @RequestHeader(name = "Authorization", required = false) String authorization,
+        @PathVariable String taskId,
+        @RequestParam(defaultValue = "1") int page,
+        @RequestParam(defaultValue = "50") int pageSize
+    ) {
+        return PlatformResponses.ok(service.workItems(principal(authorization), taskId, page, pageSize));
     }
 
     @PostMapping("/work-items/{workItemId}/draft")

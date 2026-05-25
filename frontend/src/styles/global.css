@@ -116,6 +116,36 @@ body {
   font-size: 12px;
 }
 
+
+.header-avatar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.header-avatar-button:focus-visible {
+  outline: 2px solid #1677ff;
+  outline-offset: 3px;
+  border-radius: 999px;
+}
+
+.header-avatar {
+  background: linear-gradient(135deg, #1677ff, #69b1ff);
+}
+
+.login-language-select {
+  min-width: 120px;
+}
+
+.login-language-select .ant-select-selector {
+  color: #8d8d8d !important;
+  font-size: 12px;
+}
+
 .content-page {
   background: transparent;
 }
@@ -423,6 +453,15 @@ body {
   box-shadow: 0 0 0 8px rgb(42 61 90 / 45%);
 }
 
+.annotation-thumb-weld {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(255 255 255 / 72%);
+  font-size: 11px;
+  letter-spacing: .04em;
+}
+
 .annotation-thumb-done {
   position: absolute;
   right: 7px;
@@ -486,6 +525,19 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   transform: translateX(-50%);
+  backdrop-filter: blur(8px);
+}
+
+.annotation-image-error {
+  position: absolute;
+  inset: auto 50% 56px auto;
+  transform: translateX(50%);
+  padding: 8px 14px;
+  border: 1px solid rgb(248 113 113 / 35%);
+  border-radius: 10px;
+  background: rgb(127 29 29 / 72%);
+  color: rgb(255 255 255 / 88%);
+  font-size: 12px;
   backdrop-filter: blur(8px);
 }
 

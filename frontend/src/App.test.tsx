@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import type { CurrentUser } from './features/platform/platformApi';
+import { useLocaleStore } from './features/platform/localeStore';
 import { useSessionStore } from './features/platform/sessionStore';
 
 beforeAll(() => {
@@ -61,14 +62,14 @@ const mockDataSources = [{ sourceId: 'DSRC-CABIN-MINIO', name: '图像存储桶'
 const mockSyncTasks = [{ taskId: 'DSYNC-001', sourceId: 'DSRC-CABIN-MINIO', sourceName: '图像存储桶', targetDatasetId: 'DATASET-WELD-DEFECT', targetDatasetName: '焊缝缺陷检测数据集', name: '生产图像同步', scheduleMode: 'HOURLY', syncScope: 'prefix=/weld', status: 'PAUSED', lastRunAt: null, lastResult: 'UNCONFIGURED', diagnosticCode: 'DATA_SYNC_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_DATA_CONNECTOR_SCHEDULER' }];
 const mockDatasets = { items: [{ datasetId: 'DATASET-WELD-DEFECT', name: '焊缝缺陷检测数据集', datasetType: 'RAW', dataType: 'IMAGE', tenantId: 'TENANT-CABIN', projectId: null, currentVersionId: 'DVER-WELD-001', currentVersionName: 'v1.0.0', status: 'ACTIVE', accessLevel: 'RESTRICTED', tags: ['焊接','质检'], recordCount: 31200, sizeBytes: 1024, ownerId: 'USR-ADMIN', ownerName: '平台管理员', description: '焊缝缺陷图片样例数据集', updatedAt: '2026-05-18T00:00:00Z' }, { datasetId: 'DATASET-WELD-MASK', name: '焊缝分割训练数据集', datasetType: 'ANNOTATED', dataType: 'IMAGE', tenantId: 'TENANT-CABIN', projectId: null, currentVersionId: 'DVER-WELD-MASK-003', currentVersionName: 'v3.0.0', status: 'ACTIVE', accessLevel: 'INTERNAL', tags: ['分割','训练'], recordCount: 12800, sizeBytes: 2048, ownerId: 'USR-ADMIN', ownerName: '平台管理员', description: '焊缝分割样例数据集', updatedAt: '2026-05-20T00:00:00Z' }], total: 2, page: 1, pageSize: 20, stats: { total: 2, raw: 1, preprocessed: 0, annotated: 1, restricted: 1, totalSizeBytes: 3072 } };
 const mockAccessRequests = [{ requestId: 'DAR-001', datasetId: 'DATASET-WELD-DEFECT', datasetName: '焊缝缺陷检测数据集', tenantId: 'TENANT-CABIN', requesterId: 'USR-ANNOTATOR', requesterName: '数据标注员', purpose: '训练焊缝缺陷模型', status: 'PENDING', createdAt: '2026-05-20T08:00:00Z', reviewedBy: null, reviewerName: null, reviewedAt: null }];
-const mockAnnotationTask = { taskId: 'ANN-WELD-Q2', name: '焊缝缺陷检测标注任务', scene: 'IMAGE_TAGGING', sceneLabel: '图片打标', sourceDatasetId: 'DATASET-WELD-DEFECT', sourceDatasetName: '焊缝缺陷检测数据集', templateId: 'LT-WELD-BBOX', templateName: '焊缝图片打标模板', tenantId: 'TENANT-CABIN', status: 'IN_PROGRESS', reviewEnabled: true, prelabelEnabled: true, labelStudioEnabled: true, totalCount: 6, annotatedCount: 4, reviewedCount: 2, qualityScore: null, assignees: [{ userId: 'USR-ANNOTATOR', displayName: '标注工程师', role: 'ANNOTATOR' }, { userId: 'USR-BU-CABIN', displayName: '座舱审核员', role: 'REVIEWER' }], deadline: '2026-06-02T00:00:00Z', updatedAt: '2026-05-19T00:00:00Z' };
+const mockAnnotationTask = { taskId: 'ANN-WELD-Q2', name: '焊缝缺陷检测标注任务', scene: 'IMAGE_TAGGING', sceneLabel: '图片打标', sourceDatasetId: 'DATASET-WELD-DEFECT', sourceDatasetName: '焊缝缺陷检测数据集', templateId: 'LT-WELD-BBOX', templateName: '焊缝图片打标模板', tenantId: 'TENANT-CABIN', status: 'IN_PROGRESS', reviewEnabled: true, prelabelEnabled: false, labelStudioEnabled: true, totalCount: 6, annotatedCount: 4, reviewedCount: 2, qualityScore: null, assignees: [{ userId: 'USR-ANNOTATOR', displayName: '标注工程师', role: 'ANNOTATOR' }, { userId: 'USR-BU-CABIN', displayName: '座舱审核员', role: 'REVIEWER' }], deadline: '2026-06-02T00:00:00Z', updatedAt: '2026-05-19T00:00:00Z' };
 const mockAssignedAnnotationTask = { ...mockAnnotationTask, taskId: 'ANN-WELD-ASSIGNED', name: '焊缝缺陷待开始任务', status: 'ASSIGNED' };
 const mockSegmentationAnnotationTask = { ...mockAnnotationTask, taskId: 'ANN-WELD-SEG', name: '焊缝缺陷图片分割任务', scene: 'IMAGE_SEGMENTATION', sceneLabel: '图片分割', templateId: 'LT-WELD-POLYGON', templateName: '焊缝图片分割模板' };
 const mockAnnotationTemplate = { templateId: 'LT-WELD-BBOX', name: '焊缝图片打标模板', scene: 'IMAGE_TAGGING', labelType: 'BOUNDING_BOX', labelSchemaJson: '{"labels":["裂纹","气孔"]}', labelStudioConfigXml: '<View><Image name="image" value="$image"/></View>', status: 'PUBLISHED', tenantId: 'TENANT-CABIN', createdBy: 'USR-ADMIN', updatedAt: '2026-05-19T00:00:00Z' };
 const mockSegmentationTemplate = { templateId: 'LT-WELD-POLYGON', name: '焊缝图片分割模板', scene: 'IMAGE_SEGMENTATION', labelType: 'POLYGON', labelSchemaJson: '{"labels":["裂纹区域","气孔区域"]}', labelStudioConfigXml: '<View><Image name="image" value="$image"/><PolygonLabels name="label" toName="image"><Label value="裂纹区域"/><Label value="气孔区域"/></PolygonLabels></View>', status: 'PUBLISHED', tenantId: 'TENANT-CABIN', createdBy: 'USR-ADMIN', updatedAt: '2026-05-21T00:00:00Z' };
 const mockAnnotationBinding = { bindingId: 'AEXT-WELD-Q2', taskId: 'ANN-WELD-Q2', provider: 'LABEL_STUDIO', externalProjectId: null, externalUrl: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL', configStatus: 'UNCONFIGURED', lastSyncStatus: 'UNCONFIGURED', diagnosticCode: 'LABEL_STUDIO_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL;TODO_CONFIRM_LABEL_STUDIO_TOKEN_SECRET', launchUrl: null, lastSyncAt: null };
-const mockAnnotationWorkItems = [{ workItemId: 'AWI-WELD-001', taskId: 'ANN-WELD-Q2', sampleKey: 'weld/0001.jpg', sampleFileId: 'FILE-DATASET-WELD-001', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', status: 'DRAFT', predictionJson: '{"boxes":[{"label":"裂纹"}]}', annotationJson: null, submittedAt: null, updatedAt: '2026-05-19T00:00:00Z' }];
-const mockSegmentationWorkItems = [{ workItemId: 'AWI-WELD-SEG-001', taskId: 'ANN-WELD-SEG', sampleKey: 'weld/0001.jpg', sampleFileId: 'FILE-DATASET-WELD-001', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', status: 'DRAFT', predictionJson: '{"polygons":[{"id":"poly-crack-001","label":"裂纹区域","cls":1,"points":[{"x":146,"y":108},{"x":188,"y":92},{"x":238,"y":126},{"x":224,"y":178},{"x":162,"y":170}]}]}', annotationJson: null, submittedAt: null, updatedAt: '2026-05-21T00:00:00Z' }];
+const mockAnnotationWorkItems: Array<{ workItemId: string; taskId: string; sampleKey: string; sampleFileId: string | null; annotatorId: string; annotatorName: string; status: string; predictionJson: string | null; annotationJson: string | null; submittedAt: string | null; updatedAt: string }> = [{ workItemId: 'AWI-WELD-001', taskId: 'ANN-WELD-Q2', sampleKey: 'weld/0001.jpg', sampleFileId: 'FILE-DATASET-WELD-001', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', status: 'DRAFT', predictionJson: null, annotationJson: null, submittedAt: null, updatedAt: '2026-05-19T00:00:00Z' }];
+const mockSegmentationWorkItems = [{ workItemId: 'AWI-WELD-SEG-001', taskId: 'ANN-WELD-SEG', sampleKey: 'weld/0001.jpg', sampleFileId: 'FILE-DATASET-WELD-001', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', status: 'DRAFT', predictionJson: null, annotationJson: '{"polygons":[{"id":"poly-crack-001","label":"裂纹区域","cls":1,"points":[{"x":146,"y":108},{"x":188,"y":92},{"x":238,"y":126},{"x":224,"y":178},{"x":162,"y":170}]}]}', submittedAt: null, updatedAt: '2026-05-21T00:00:00Z' }];
 const mockAnnotationReviewItems = [{ reviewItemId: 'ARV-WELD-001', workItemId: 'AWI-WELD-002', taskId: 'ANN-WELD-Q2', taskName: '焊缝缺陷检测标注任务', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', reviewerId: 'USR-BU-CABIN', reviewerName: '座舱审核员', status: 'REVIEW_PENDING', reviewComment: null, reviewedAt: null }];
 const mockAnnotationPublication = { publicationId: 'APUB-WELD-Q2', taskId: 'ANN-WELD-Q2', qualityStatus: 'PASSED', coverageRate: 1, formatStatus: 'COCO_READY', diagnosticCode: 'ANNOTATION_QUALITY_PASSED', diagnosticMessage: 'DAT-010 quality passed', outputDatasetId: 'DATASET-WELD-ANNOTATED', outputVersionId: 'DVER-WELD-ANN-001', publishedAt: '2026-05-19T00:00:00Z' };
 const mockAnnotationOverview = { stats: { total: 2, inProgress: 1, pendingReview: 1, completed: 0, templates: 1 }, tasks: [mockAssignedAnnotationTask, mockAnnotationTask], templates: [mockAnnotationTemplate] };
@@ -92,7 +93,10 @@ vi.mock('./features/foundation/apiClient', () => ({
       if (url.includes('/api/v1/data-sources/') && url.includes('/test')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { sourceId: 'DSRC-CABIN-MINIO', result: 'SUCCESS', status: 'TESTED', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX connection verified', latencyMs: 42, traceId: 't', testedAt: '2026-05-18T00:00:00Z' } } });
       if (url.includes('/api/v1/annotation/review-items')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationReviewItems } });
       if (url.includes('/api/v1/annotation/overview')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationOverview } });
-      if (url.includes('/api/v1/annotation/tasks/') && url.includes('/work-items')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationWorkItems } });
+      if (url.includes('/api/v1/annotation/tasks/') && url.includes('/work-items')) {
+        const items = url.includes('/api/v1/annotation/tasks/ANN-WELD-SEG') ? mockSegmentationWorkItems : mockAnnotationWorkItems;
+        return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { items, total: items.length, page: 1, pageSize: 50 } } });
+      }
       if (url.includes('/api/v1/annotation/tasks/') && url.includes('/label-studio/status')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationBinding } });
       if (url.includes('/api/v1/annotation/tasks/ANN-WELD-SEG')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockSegmentationAnnotationDetail } });
       if (url.includes('/api/v1/annotation/tasks/')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationDetail } });
@@ -149,6 +153,7 @@ vi.mock('./features/foundation/apiClient', () => ({
         mockState.user = mockState.user ?? { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt'], menuPermissions: ['dash', 'usermgmt'], sessionVersion: 1 };
         return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { accessToken: 'token-refreshed', refreshToken: 'refresh-new', tokenType: 'Bearer', expiresInSeconds: 3600, user: mockState.user } } });
       }
+      if (url.includes('/auth/logout')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: null } });
       if (url.includes('/platform/users/') && url.endsWith('/unlock')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: {} } });
       if (url.includes('/api/v1/datasets/') && url.includes('/access-requests')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { ...mockAccessRequests[0], requestId: 'DAR-NEW' } } });
       if (url.includes('/platform/roles')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { code: 'CABIN_DATA_MANAGER', name: '座舱数据管理员', description: 'BU 权限角色', scope: 'TENANT', preset: false, parentRoleCode: 'BU_ADMIN', userCount: 0 } } });
@@ -188,6 +193,12 @@ function renderApp(initialEntries = ['/login']) {
   );
 }
 
+function seedWorkbenchSession() {
+  mockState.token = 'token-f014';
+  mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
+  useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
+}
+
 describe('F006 platform identity frontend', () => {
   // TASK-platform-organization-config AC-08
   beforeEach(() => {
@@ -196,6 +207,8 @@ describe('F006 platform identity frontend', () => {
     mockState.user = null;
     window.localStorage.clear();
     useSessionStore.setState({ token: null, user: null, initialized: false });
+    useLocaleStore.setState({ language: 'zh-CN' });
+    document.documentElement.lang = 'zh-CN';
   });
 
   it('restores session from localStorage after page refresh', async () => {
@@ -219,6 +232,28 @@ describe('F006 platform identity frontend', () => {
     expect(await screen.findByText('SMP 工业 AI 小模型平台')).toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem('smp.session.v1') ?? '{}').accessToken).toBe('token-refreshed');
     expect(screen.queryByText('账号登录')).not.toBeInTheDocument();
+  });
+
+
+  it('shows avatar menu, can switch language and logout', async () => {
+    mockState.token = 'token-f006';
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm'], menuPermissions: ['dash', 'usermgmt', 'perm'], sessionVersion: 1 };
+    useSessionStore.setState({ token: 'token-f006', user: mockState.user, initialized: true });
+
+    const user = userEvent.setup();
+    renderApp(['/usermgmt']);
+
+    expect(await screen.findByText('SMP 工业 AI 小模型平台')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'user-menu' }));
+    expect(await screen.findByText('切换语言')).toBeInTheDocument();
+    await user.click(screen.getByText('English'));
+    expect(await screen.findByText('SMP Industrial AI Platform')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'user-menu' }));
+    await user.click(await screen.findByText('Sign out'));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument());
+    expect(useSessionStore.getState().token).toBeNull();
   });
 
   it('renders prototype-consistent login and navigates after API login', async () => {
@@ -400,7 +435,6 @@ describe('F006 platform identity frontend', () => {
     const { unmount } = renderApp(['/ann']);
     expect(await screen.findByRole('heading', { name: '标注任务管理' })).toBeInTheDocument();
     expect(await screen.findByText('焊缝缺陷检测标注任务')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getAllByText('AI 预标注').length).toBeGreaterThan(0));
     expect(await screen.findByText(/外部标注工具 \/ Label Studio/)).toBeInTheDocument();
     unmount();
 
@@ -449,12 +483,28 @@ describe('F006 platform identity frontend', () => {
     await userEvent.click(sceneSelect);
     await userEvent.click(await screen.findByText('图片分割'));
 
-    const templateSelect = screen.getByLabelText('标签模板');
+    await userEvent.click(screen.getByLabelText('标签来源'));
+    await userEvent.click((await screen.findAllByText('选择已发布模板'))[0]);
+    const templateSelect = await screen.findByLabelText('标签模板');
     await userEvent.click(templateSelect);
 
     expect((await screen.findAllByText('焊缝图片分割模板')).length).toBeGreaterThan(0);
     expect(screen.queryByText('焊缝图片打标模板')).not.toBeInTheDocument();
-  });
+  }, 15000);
+
+  it('defaults annotation task creation to inline labels on dataset detail page', async () => {
+    mockState.token = 'token-f014';
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
+    useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
+
+    renderApp(['/dsdetail']);
+
+    expect(await screen.findByRole('heading', { name: '焊缝缺陷检测数据集' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '创建标注任务' }));
+
+    expect(await screen.findByText('直接输入标签并自动建模板')).toBeInTheDocument();
+    expect(screen.getByLabelText('标签列表')).toBeInTheDocument();
+  }, 15000);
 
   it('requires explicit dataset selection when creating annotation task from annotation page', async () => {
     mockState.token = 'token-f014';
@@ -469,6 +519,8 @@ describe('F006 platform identity frontend', () => {
     expect(await screen.findByText('数据集范围说明')).toBeInTheDocument();
     const createButton = screen.getByRole('button', { name: '创建任务' });
     expect(createButton).toBeEnabled();
+    expect(screen.getByText('直接输入标签并自动建模板')).toBeInTheDocument();
+    expect(screen.getByLabelText('标签列表')).toBeInTheDocument();
 
     await userEvent.click(screen.getByLabelText('源数据集（仅 ACTIVE 图片数据集）'));
     expect((await screen.findAllByText(/焊缝缺陷检测数据集（DATASET-WELD-DEFECT）/)).length).toBeGreaterThan(0);
@@ -479,6 +531,8 @@ describe('F006 platform identity frontend', () => {
       expect(screen.getByDisplayValue('DVER-WELD-MASK-003')).toBeInTheDocument();
     });
 
+    await userEvent.click(screen.getByLabelText('标签来源'));
+    await userEvent.click((await screen.findAllByText('选择已发布模板'))[0]);
     await userEvent.click(screen.getByLabelText('标签模板（按场景过滤，必须 PUBLISHED）'));
     expect((await screen.findAllByText('焊缝图片打标模板 · IMAGE_TAGGING')).length).toBeGreaterThan(0);
     await userEvent.click((await screen.findAllByText('焊缝图片打标模板 · IMAGE_TAGGING'))[0]);
@@ -488,10 +542,59 @@ describe('F006 platform identity frontend', () => {
     });
   });
 
-  it('allows entering annotation workbench from annotation task list', async () => {
+  it('uses authenticated blob preview instead of unauthorized direct file url in workbench', async () => {
     mockState.token = 'token-f014';
     mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
+
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(['image-bytes'], { type: 'image/jpeg' }) });
+    const originalFetch = globalThis.fetch;
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-image');
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      renderApp(['/annwork']);
+
+      expect(await screen.findByRole('heading', { name: '标注工作台' })).toBeInTheDocument();
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalled();
+      });
+      expect(fetchMock).toHaveBeenCalledWith('/api/v1/platform/files/FILE-DATASET-WELD-001/content', expect.objectContaining({ headers: { Authorization: 'Bearer token-f014' } }));
+      expect(createObjectUrl).toHaveBeenCalled();
+      expect(screen.getByTestId('annotation-sample-caption')).toHaveTextContent('weld/0001.jpg');
+    } finally {
+      globalThis.fetch = originalFetch;
+      createObjectUrl.mockRestore();
+      revokeObjectUrl.mockRestore();
+    }
+  });
+
+  it('normalizes legacy array work-item payloads in annotation workbench', async () => {
+    seedWorkbenchSession();
+
+    const getMock = vi.mocked((await import('./features/foundation/apiClient')).apiClient.get);
+    const originalImpl = getMock.getMockImplementation() as ((url: string, ...args: any[]) => Promise<any>) | undefined;
+    getMock.mockImplementation((url: string, ...args: any[]) => {
+      if (url.includes('/api/v1/annotation/tasks/') && url.includes('/work-items')) {
+        return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationWorkItems } });
+      }
+      return originalImpl ? originalImpl(url, ...args) : Promise.reject(new Error('missing mock implementation'));
+    });
+
+    try {
+      renderApp(['/annwork']);
+
+      expect(await screen.findByRole('heading', { name: '标注工作台' })).toBeInTheDocument();
+      expect(await screen.findByText('weld/0001.jpg')).toBeInTheDocument();
+      expect(screen.getByText('样本队列')).toBeInTheDocument();
+    } finally {
+      if (originalImpl) getMock.mockImplementation(originalImpl);
+    }
+  });
+
+  it('allows entering annotation workbench from annotation task list', async () => {
+    seedWorkbenchSession();
 
     renderApp(['/ann']);
 
@@ -504,9 +607,7 @@ describe('F006 platform identity frontend', () => {
   });
 
   it('auto starts assigned annotation task before entering workbench', async () => {
-    mockState.token = 'token-f014';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
-    useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
+    seedWorkbenchSession();
 
     renderApp(['/ann']);
 
@@ -518,9 +619,7 @@ describe('F006 platform identity frontend', () => {
   });
 
   it('renders segmentation workbench as polygon regions instead of boxes', async () => {
-    mockState.token = 'token-f014';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
-    useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
+    seedWorkbenchSession();
 
     renderApp([`/annwork?taskId=${mockSegmentationAnnotationTask.taskId}`]);
 
@@ -533,9 +632,7 @@ describe('F006 platform identity frontend', () => {
   });
 
   it('supports selecting and deleting a polygon vertex in segmentation workbench', async () => {
-    mockState.token = 'token-f014';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
-    useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
+    seedWorkbenchSession();
 
     renderApp([`/annwork?taskId=${mockSegmentationAnnotationTask.taskId}`]);
 
@@ -552,9 +649,7 @@ describe('F006 platform identity frontend', () => {
   });
 
   it('prevents deleting polygon vertex when only three points remain', async () => {
-    mockState.token = 'token-f014';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
-    useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
+    seedWorkbenchSession();
 
     renderApp([`/annwork?taskId=${mockSegmentationAnnotationTask.taskId}`]);
 
@@ -575,9 +670,7 @@ describe('F006 platform identity frontend', () => {
   });
 
   it('supports adding a new vertex by double clicking a polygon edge in segmentation workbench', async () => {
-    mockState.token = 'token-f014';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
-    useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
+    seedWorkbenchSession();
 
     renderApp([`/annwork?taskId=${mockSegmentationAnnotationTask.taskId}`]);
 
@@ -590,9 +683,7 @@ describe('F006 platform identity frontend', () => {
   });
 
   it('supports selecting and dragging a polygon edge in segmentation workbench', async () => {
-    mockState.token = 'token-f014';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
-    useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
+    seedWorkbenchSession();
 
     renderApp([`/annwork?taskId=${mockSegmentationAnnotationTask.taskId}`]);
 
@@ -604,6 +695,123 @@ describe('F006 platform identity frontend', () => {
     ]);
 
     expect(await screen.findByTestId('annotation-selected-polygon-edge')).toHaveTextContent('#1');
+  });
+
+  it('supports workbench keyboard shortcuts for drawing, undo redo and deleting without mutating existing labels', async () => {
+    seedWorkbenchSession();
+    const user = userEvent.setup();
+
+    renderApp(['/annwork']);
+
+    expect(await screen.findByRole('heading', { name: '标注工作台' })).toBeInTheDocument();
+
+    await user.keyboard('w');
+    expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('1');
+    expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('矩形');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('焊接气孔');
+
+    await user.keyboard('2');
+    expect(screen.getByRole('button', { name: /裂纹\s+2/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('焊接气孔');
+
+    await user.keyboard('e');
+    expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('2');
+    expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('椭圆');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
+
+    await user.keyboard('{Control>}z{/Control}');
+    expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('1');
+    expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('矩形');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('焊接气孔');
+
+    await user.keyboard('{Control>}y{/Control}');
+    expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('2');
+    expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('椭圆');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
+
+    await user.keyboard('p');
+    expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('3');
+    expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('多边形');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
+
+    await user.keyboard('{Delete}');
+    expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('2');
+
+    await user.keyboard('p');
+    expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('3');
+    await user.keyboard('d');
+    expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('2');
+  });
+
+  it('finalizes segmentation polygon with Enter shortcut', async () => {
+    seedWorkbenchSession();
+    const user = userEvent.setup();
+
+    renderApp([`/annwork?taskId=${mockSegmentationAnnotationTask.taskId}`]);
+
+    expect(await screen.findByTestId('annotation-polygon-count')).toHaveTextContent('1');
+    const drawLayer = screen.getByTestId('annotation-draw-layer');
+    await user.pointer([
+      { target: drawLayer, coords: { clientX: 80, clientY: 80 }, keys: '[MouseLeft]' },
+      { target: drawLayer, coords: { clientX: 140, clientY: 84 }, keys: '[MouseLeft]' },
+      { target: drawLayer, coords: { clientX: 128, clientY: 140 }, keys: '[MouseLeft]' },
+    ]);
+
+    await user.keyboard('{Enter}');
+
+    expect(await screen.findByTestId('annotation-polygon-count')).toHaveTextContent('2');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
+  });
+
+  it('auto saves before navigating by Space ArrowLeft ArrowRight and thumbnail click', async () => {
+    seedWorkbenchSession();
+    const user = userEvent.setup();
+    const { apiClient } = await import('./features/foundation/apiClient');
+    const postMock = vi.mocked(apiClient.post);
+    const originalItems = [...mockAnnotationWorkItems];
+    const customItems = [
+      { ...mockAnnotationWorkItems[0], workItemId: 'AWI-WELD-001', sampleKey: 'weld/0001.jpg', sampleFileId: null, status: 'DRAFT', annotationJson: null },
+      { ...mockAnnotationWorkItems[0], workItemId: 'AWI-WELD-002', sampleKey: 'TENANT-CABIN/weld/batch3/0002.jpg', sampleFileId: null, status: 'DRAFT', annotationJson: null },
+    ];
+    mockAnnotationWorkItems.splice(0, mockAnnotationWorkItems.length, ...customItems);
+
+    try {
+      renderApp(['/annwork']);
+
+      expect(await screen.findByRole('heading', { name: '标注工作台' })).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: /weld\/0001\.jpg/i })).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: /TENANT-CABIN\/weld\/batch3\/0002\.jpg/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /weld\/0001\.jpg/i })).toHaveClass('active');
+
+      postMock.mockClear();
+      await user.keyboard('w');
+      fireEvent.keyDown(window, { code: 'Space', key: ' ' });
+      await waitFor(() => {
+        expect(postMock).toHaveBeenCalledWith('/api/v1/annotation/work-items/AWI-WELD-001/draft', expect.objectContaining({ annotationJson: expect.any(String) }));
+      });
+      expect(screen.getByRole('button', { name: /TENANT-CABIN\/weld\/batch3\/0002\.jpg/i })).toHaveClass('active');
+
+      fireEvent.keyDown(window, { key: 'ArrowLeft' });
+      expect(screen.getByRole('button', { name: /weld\/0001\.jpg/i })).toHaveClass('active');
+
+      postMock.mockClear();
+      await user.keyboard('w');
+      fireEvent.keyDown(window, { key: 'ArrowRight' });
+      await waitFor(() => {
+        expect(postMock).toHaveBeenCalledWith('/api/v1/annotation/work-items/AWI-WELD-001/draft', expect.objectContaining({ annotationJson: expect.any(String) }));
+      });
+      expect(screen.getByRole('button', { name: /TENANT-CABIN\/weld\/batch3\/0002\.jpg/i })).toHaveClass('active');
+
+      postMock.mockClear();
+      await user.keyboard('w');
+      await user.click(screen.getByRole('button', { name: /weld\/0001\.jpg/i }));
+      await waitFor(() => {
+        expect(postMock).toHaveBeenCalledWith('/api/v1/annotation/work-items/AWI-WELD-002/draft', expect.objectContaining({ annotationJson: expect.any(String) }));
+      });
+      expect(screen.getByRole('button', { name: /weld\/0001\.jpg/i })).toHaveClass('active');
+    } finally {
+      mockAnnotationWorkItems.splice(0, mockAnnotationWorkItems.length, ...originalItems);
+    }
   });
 
   it('opens annotation task wizard with dataset preselected when jumping from dataset page', async () => {
@@ -622,6 +830,7 @@ describe('F006 platform identity frontend', () => {
     await waitFor(() => {
       expect(screen.getByText(/焊缝缺陷检测数据集（DATASET-WELD-DEFECT）/)).toBeInTheDocument();
       expect(screen.getByDisplayValue('DVER-WELD-001')).toBeInTheDocument();
+      expect(screen.getByText('直接输入标签并自动建模板')).toBeInTheDocument();
     });
   });
 

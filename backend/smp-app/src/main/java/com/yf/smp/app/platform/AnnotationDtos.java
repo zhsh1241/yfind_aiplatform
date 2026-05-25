@@ -37,6 +37,7 @@ record AnnotationTaskDetailResponse(
     List<AnnotationPublicationResponse> publications,
     AnnotationExternalBindingResponse externalBinding
 ) {}
+record AnnotationWorkItemPageResponse(List<AnnotationWorkItemResponse> items, long total, int page, int pageSize) {}
 record AnnotationAssignmentResponse(String assignmentId, String taskId, String assigneeId, String assigneeName, String role, String status, String assignedBy, OffsetDateTime assignedAt) {}
 record AnnotationLabelTemplateResponse(String templateId, String name, String scene, String labelType, String labelSchemaJson, String labelStudioConfigXml, String status, String tenantId, String createdBy, OffsetDateTime updatedAt) {}
 record AnnotationLabelTemplateRequest(String name, String tenantId, String scene, String labelType, String labelSchemaJson, String labelStudioConfigXml) {}
@@ -46,6 +47,8 @@ record AnnotationTaskCreateRequest(
     String sourceDatasetId,
     String sourceVersionId,
     String templateId,
+    List<String> inlineLabels,
+    String inlineTemplateName,
     String scene,
     Boolean reviewEnabled,
     Boolean prelabelEnabled,

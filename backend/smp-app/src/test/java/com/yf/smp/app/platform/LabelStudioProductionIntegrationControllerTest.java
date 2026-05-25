@@ -65,7 +65,8 @@ class LabelStudioProductionIntegrationControllerTest {
             {"name":"F013 Label Studio 生产化联通","sourceDatasetId":"DATASET-WELD-DEFECT","sourceVersionId":"DVER-WELD-001","templateId":"LT-WELD-BBOX","scene":"IMAGE_TAGGING","reviewEnabled":true,"prelabelEnabled":false,"labelStudioEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
             """, admin);
         String taskId = createdTask.at("/data/task/taskId").asText();
-        String workItemId = createdTask.at("/data/workItems/0/workItemId").asText();
+        JsonNode createdWorkItems = workItemsPage(taskId, "trace-f013-create-work-items", admin);
+        String workItemId = createdWorkItems.at("/data/items/0/workItemId").asText();
 
         JsonNode project = postJson("/api/v1/annotation/tasks/" + taskId + "/label-studio/sync-project", "trace-f013-project", "{}", admin);
         assertThat(project.at("/data/configStatus").asText()).isEqualTo("CONFIGURED");
@@ -90,11 +91,16 @@ class LabelStudioProductionIntegrationControllerTest {
         assertThat(imported.toString()).doesNotContain("f013-secret-token");
 
         JsonNode detail = getJson("/api/v1/annotation/tasks/" + taskId, "trace-f013-detail", admin);
-        assertThat(detail.at("/data/workItems/0/annotationJson").asText()).contains("LABEL_STUDIO");
+        JsonNode importedWorkItems = workItemsPage(taskId, "trace-f013-detail-work-items", admin);
+        assertThat(importedWorkItems.at("/data/items/0/annotationJson").asText()).contains("LABEL_STUDIO");
         assertThat(detail.at("/data/externalBinding/externalTaskId").asText()).isEqualTo("456");
         assertThat(detail.toString()).doesNotContain("f013-secret-token");
         assertThat(requests.stream().filter(path -> path.equals("POST /api/projects")).count()).isEqualTo(1L);
         assertThat(requests.stream().filter(path -> path.equals("POST /api/projects/123/tasks")).count()).isEqualTo(1L);
+    }
+
+    private JsonNode workItemsPage(String taskId, String traceId, String token) throws Exception {
+        return getJson("/api/v1/annotation/tasks/" + taskId + "/work-items?page=1&pageSize=50", traceId, token);
     }
 
     private static void handleProjects(HttpExchange exchange) throws IOException {

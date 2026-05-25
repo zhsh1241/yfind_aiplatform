@@ -11,6 +11,10 @@ spring:
     open-in-view: false
     hibernate:
       ddl-auto: validate
+  servlet:
+    multipart:
+      max-file-size: ${SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE:16MB}
+      max-request-size: ${SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE:128MB}
 management:
   endpoints:
     web:
@@ -23,6 +27,8 @@ management:
 server:
   port: ${SERVER_PORT:8080}
 smp:
+  content-safety:
+    bypass: ${SMP_CONTENT_SAFETY_BYPASS:false}
   storage:
     endpoint: ${SMP_STORAGE_ENDPOINT:}
     public-endpoint: ${SMP_STORAGE_PUBLIC_ENDPOINT:}

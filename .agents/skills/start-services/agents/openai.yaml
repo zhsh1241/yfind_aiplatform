@@ -1,0 +1,4 @@
+interface:
+  display_name: "启动服务"
+  short_description: "启动本地 Docker 依赖与 Java 21 后端"
+  default_prompt: "Use $start-services to start the local Docker dependencies and run the backend on host Java 21."
