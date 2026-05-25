@@ -46,6 +46,16 @@ const ANNOTATION_THUMB_OVERSCAN = 4;
 const ANNOTATION_THUMB_PANEL_FALLBACK_HEIGHT = 560;
 const ANNOTATION_WORKBENCH_PAGE_SIZE = 50;
 const SESSION_STORAGE_KEY = 'smp.session.v1';
+const ANNOTATION_POLYGON_VERTEX_RADIUS = 2.6;
+const ANNOTATION_POLYGON_VERTEX_RADIUS_SELECTED = 3.4;
+const ANNOTATION_POLYGON_VERTEX_HIT_RADIUS = 7;
+const ANNOTATION_SHAPE_STROKE_WIDTH = 1.4;
+const ANNOTATION_SHAPE_STROKE_WIDTH_SELECTED = 2.4;
+const ANNOTATION_DRAFT_STROKE_WIDTH = 1.35;
+const ANNOTATION_DRAFT_POLYGON_VERTEX_RADIUS = 2.2;
+const ANNOTATION_DRAFT_POLYGON_CLOSE_RADIUS = 3.1;
+const ANNOTATION_DRAFT_POLYGON_HIT_RADIUS = 7;
+const ANNOTATION_POLYGON_CENTER_MARK_SIZE = 6;
 
 const splitLocalUploadBatches = (files: File[]) => {
   const batches: File[][] = [];
@@ -104,7 +114,7 @@ const annStatusText = (status?: string) => ({
 const pct = (done?: number, total?: number) => !total ? 0 : Math.round(((done ?? 0) / total) * 100);
 const lsStatusType = (status?: string) => ['PROJECT_SYNCED', 'TASK_SYNCED', 'RESULT_IMPORTED'].includes(status ?? '') ? 'success' : status === 'UNCONFIGURED' ? 'warning' : status?.includes('FAILED') || status?.includes('AUTH') || status?.includes('UNREACHABLE') ? 'error' : 'info';
 const annotationClasses = ['焊接气孔', '裂纹', '夹渣', '未熔合'];
-const annotationClassColors = ['#ff6533', '#1a6bff', '#10b981', '#f59e0b'];
+const annotationClassPalette = ['#ff6533', '#1a6bff', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
 const industrialSampleImages: Record<string, { url: string; title: string; source: string }> = {
   'TENANT-CABIN/weld/batch3/0001.jpg': {
     url: '/industrial-samples/tig-welding.jpg',
@@ -242,10 +252,6 @@ type AnnotationEditorAction =
   | { type: 'select'; selectedShapeId: string }
   | { type: 'undo' }
   | { type: 'redo' };
-const shortcutGroups = [
-  { group: '绘制工具', items: [['W', '矩形框'], ['E', '椭圆框'], ['P', '多边形框'], ['D / Delete', '删除所选']] },
-  { group: '类别选择', items: [['1-4', '切换类别'], ['Ctrl+Z', '撤销'], ['Ctrl+Y', '重做'], ['Space', '下一张']] },
-];
 const editableWorkStatuses = ['PENDING', 'DRAFT', 'REJECTED'];
 const canEditWorkItem = (status?: string | null) => editableWorkStatuses.includes(status ?? '');
 const canAutoStartAnnotationTask = (status?: string | null) => status === 'ASSIGNED';
@@ -257,6 +263,18 @@ const annotationTaskDefaults = {
   labelStudioEnabled: true,
 } as const;
 const shapeText = (shape: AnnotationShape) => ({ rect: '矩形', ellipse: '椭圆', polygon: '多边形' })[shape];
+const parseTemplateLabels = (labelSchemaJson?: string | null) => {
+  try {
+    const parsed = JSON.parse(labelSchemaJson || '{}') as { labels?: unknown };
+    if (!Array.isArray(parsed.labels)) return [];
+    return parsed.labels
+      .map((item) => typeof item === 'string' ? item : (item && typeof item === 'object' && 'name' in item ? String((item as { name?: unknown }).name ?? '') : ''))
+      .map((item) => item.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+};
 const annotationSceneOptions = [
   { value: 'IMAGE_TAGGING', label: '图片打标' },
   { value: 'IMAGE_SEGMENTATION', label: '图片分割' },
@@ -279,17 +297,8 @@ const defaultLabelSchema = (scene?: string) => scene === 'IMAGE_SEGMENTATION'
 const parseInlineLabels = (value?: string) => Array.from(new Set(String(value ?? '').split(/[\n,，]/).map((item) => item.trim()).filter(Boolean)));
 const labelStudioXmlForTemplate = (scene?: string, labelSchemaJson?: string, fallbackXml?: string) => {
   if (fallbackXml?.trim()) return fallbackXml.trim();
-  let labels = ['待确认标签'];
-  try {
-    const parsed = JSON.parse(labelSchemaJson || '{}') as { labels?: unknown };
-    if (Array.isArray(parsed.labels)) {
-      labels = parsed.labels
-        .map((item) => typeof item === 'string' ? item : (item && typeof item === 'object' && 'name' in item ? String((item as { name?: unknown }).name ?? '') : ''))
-        .filter(Boolean);
-    }
-  } catch {
-    // 保留默认标签，避免用户暂存中的 JSON 破坏页面操作。
-  }
+  const parsedLabels = parseTemplateLabels(labelSchemaJson);
+  const labels = parsedLabels.length ? parsedLabels : ['待确认标签'];
   if (scene === 'TEXT_LABELING') {
     const choiceNodes = labels.map((label) => `<Choice value="${label}"/>`).join('');
     return `<View><Text name="text" value="$text"/><Choices name="label" toName="text" choice="single">${choiceNodes}</Choices></View>`;
@@ -325,6 +334,12 @@ const safeReleasePointerCapture = (element: Element | null | undefined, pointerI
     element.releasePointerCapture(pointerId);
   }
 };
+const normalizeLabelIndex = (value: unknown, labels: string[]) => {
+  const total = Math.max(labels.length, 1);
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(Math.trunc(numeric), total - 1));
+};
 const clampAnnotationPoint = (point: AnnotationPoint): AnnotationPoint => ({
   x: Math.max(0, Math.min(520, Math.round(point.x))),
   y: Math.max(0, Math.min(340, Math.round(point.y))),
@@ -343,7 +358,7 @@ const serializeAnnotationPayload = (scene: string | undefined, boxes: Annotation
   : {
     boxes: boxes.map((box) => ({ id: box.id, label: box.label, cls: box.cls, shape: box.shape, x: box.x, y: box.y, w: box.w, h: box.h, source: box.source ?? 'manual', confidence: box.confidence })),
   });
-const parseAnnotationPayload = (scene?: string, rawJson?: string | null) => {
+const parseAnnotationPayload = (scene?: string, rawJson?: string | null, labels: string[] = annotationClasses) => {
   if (!rawJson?.trim()) {
     return { boxes: [] as AnnotationBox[], polygons: [] as AnnotationPolygon[] };
   }
@@ -356,10 +371,11 @@ const parseAnnotationPayload = (scene?: string, rawJson?: string | null) => {
             ? ((item as { points?: unknown[] }).points ?? []).map(normalizePoint).filter(Boolean) as AnnotationPoint[]
             : [];
           if (points.length < 3) return null;
+          const cls = normalizeLabelIndex((item as { cls?: unknown }).cls ?? index, labels);
           return {
             id: String((item as { id?: unknown }).id ?? `poly-${index + 1}`),
-            label: String((item as { label?: unknown }).label ?? annotationClasses[index % annotationClasses.length]),
-            cls: Number((item as { cls?: unknown }).cls ?? index % annotationClasses.length),
+            label: String((item as { label?: unknown }).label ?? labels[cls] ?? annotationClasses[cls % annotationClasses.length]),
+            cls,
             confidence: typeof (item as { confidence?: unknown }).confidence === 'number' ? Number((item as { confidence?: unknown }).confidence) : undefined,
             source: ((item as { source?: unknown }).source === 'ai' ? 'ai' : 'manual') as 'manual' | 'ai',
             points,
@@ -374,10 +390,11 @@ const parseAnnotationPayload = (scene?: string, rawJson?: string | null) => {
           const w = Number((item as { w?: unknown }).w);
           const h = Number((item as { h?: unknown }).h);
           if (![x, y, w, h].every(Number.isFinite)) return null;
+          const cls = normalizeLabelIndex((item as { cls?: unknown }).cls ?? index, labels);
           return {
             id: String((item as { id?: unknown }).id ?? `poly-box-${index + 1}`),
-            label: String((item as { label?: unknown }).label ?? annotationClasses[index % annotationClasses.length]),
-            cls: Number((item as { cls?: unknown }).cls ?? index % annotationClasses.length),
+            label: String((item as { label?: unknown }).label ?? labels[cls] ?? annotationClasses[cls % annotationClasses.length]),
+            cls,
             confidence: typeof (item as { confidence?: unknown }).confidence === 'number' ? Number((item as { confidence?: unknown }).confidence) : undefined,
             source: ((item as { source?: unknown }).source === 'ai' ? 'ai' : 'manual') as 'manual' | 'ai',
             points: [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }],
@@ -388,6 +405,7 @@ const parseAnnotationPayload = (scene?: string, rawJson?: string | null) => {
     }
     const boxes = Array.isArray(parsed.boxes)
       ? parsed.boxes.map((item, index) => {
+        const cls = normalizeLabelIndex((item as { cls?: unknown }).cls ?? index, labels);
         const x = Number((item as { x?: unknown }).x);
         const y = Number((item as { y?: unknown }).y);
         const w = Number((item as { w?: unknown }).w);
@@ -396,8 +414,8 @@ const parseAnnotationPayload = (scene?: string, rawJson?: string | null) => {
         return {
           id: String((item as { id?: unknown }).id ?? `box-${index + 1}`),
           x, y, w, h,
-          label: String((item as { label?: unknown }).label ?? annotationClasses[index % annotationClasses.length]),
-          cls: Number((item as { cls?: unknown }).cls ?? index % annotationClasses.length),
+          label: String((item as { label?: unknown }).label ?? labels[cls] ?? annotationClasses[cls % annotationClasses.length]),
+          cls,
           shape: (((item as { shape?: unknown }).shape ?? 'rect') === 'ellipse' ? 'ellipse' : ((item as { shape?: unknown }).shape ?? 'rect') === 'polygon' ? 'polygon' : 'rect') as AnnotationShape,
           confidence: typeof (item as { confidence?: unknown }).confidence === 'number' ? Number((item as { confidence?: unknown }).confidence) : undefined,
           source: ((item as { source?: unknown }).source === 'ai' ? 'ai' : 'manual') as 'manual' | 'ai',
@@ -409,8 +427,8 @@ const parseAnnotationPayload = (scene?: string, rawJson?: string | null) => {
     return { boxes: [] as AnnotationBox[], polygons: [] as AnnotationPolygon[] };
   }
 };
-const normalizeAnnotationPayload = (scene?: string, rawJson?: string | null) => {
-  const parsed = parseAnnotationPayload(scene, rawJson);
+const normalizeAnnotationPayload = (scene?: string, rawJson?: string | null, labels: string[] = annotationClasses) => {
+  const parsed = parseAnnotationPayload(scene, rawJson, labels);
   return serializeAnnotationPayload(scene, parsed.boxes, parsed.polygons);
 };
 const initialAnnotationEditorState: AnnotationEditorState = {
@@ -799,6 +817,30 @@ export function AnnotationWorkbenchPage() {
   const task = detail.data?.task;
   const scene = task?.scene ?? 'IMAGE_TAGGING';
   const isSegmentation = scene === 'IMAGE_SEGMENTATION';
+  const templatesQuery = useQuery({
+    queryKey: ['annotation-workbench-templates', scene],
+    queryFn: () => dataApi.labelTemplates({ scene }),
+    enabled: Boolean(scene),
+  });
+  const activeTemplate = useMemo(
+    () => (templatesQuery.data ?? []).find((item) => item.templateId === task?.templateId),
+    [task?.templateId, templatesQuery.data],
+  );
+  const workbenchLabels = useMemo(() => {
+    const taskSchemaLabels = parseTemplateLabels((detail.data?.task as AnnotationTaskSummary & { labelSchemaJson?: string | null } | undefined)?.labelSchemaJson);
+    if (taskSchemaLabels.length) return taskSchemaLabels;
+    const templateSchemaLabels = parseTemplateLabels(activeTemplate?.labelSchemaJson);
+    return templateSchemaLabels.length ? templateSchemaLabels : annotationClasses;
+  }, [activeTemplate?.labelSchemaJson, detail.data?.task]);
+  const workbenchClassColors = useMemo(
+    () => workbenchLabels.map((_, index) => annotationClassPalette[index % annotationClassPalette.length]),
+    [workbenchLabels],
+  );
+  const effectiveActiveClass = normalizeLabelIndex(activeClass, workbenchLabels);
+  const workbenchClassHotkeyText = useMemo(() => {
+    const upper = Math.min(workbenchLabels.length, 9);
+    return upper <= 1 ? '1' : `1-${upper}`;
+  }, [workbenchLabels.length]);
   const items = workItemsPage.data?.items ?? [];
   const queueItems = items.length
     ? items
@@ -845,10 +887,13 @@ export function AnnotationWorkbenchPage() {
   const selectedPolygonPoint = currentPolygon && effectiveSelectedPolygonPointIndex != null ? currentPolygon.points[effectiveSelectedPolygonPointIndex] ?? null : null;
   const workbenchShortcutGroups = useMemo(() => isSegmentation ? [
     { group: '分割工具', items: [['P', '开始多边形'], ['Enter / Double Click', '完成闭合'], ['Delete', '删除顶点/区域'], ['单击线条', '选中连接线'], ['双击线条', '新增顶点'], ['鼠标拖拽', '移动选中顶点/连接线']] },
-    { group: '类别选择', items: [['1-4', '切换类别'], ['Ctrl+Z', '撤销'], ['Ctrl+Y', '重做'], ['Space', '下一张']] },
-  ] : shortcutGroups, [isSegmentation]);
+    { group: '类别选择', items: [[workbenchClassHotkeyText, '切换类别'], ['Ctrl+Z', '撤销'], ['Ctrl+Y', '重做'], ['Space', '下一张']] },
+  ] : [
+    { group: '绘制工具', items: [['W', '矩形框'], ['E', '椭圆框'], ['P', '多边形框'], ['D / Delete', '删除所选']] },
+    { group: '类别选择', items: [[workbenchClassHotkeyText, '切换类别'], ['Ctrl+Z', '撤销'], ['Ctrl+Y', '重做'], ['Space', '下一张']] },
+  ], [isSegmentation, workbenchClassHotkeyText]);
   const annotationPayload = useMemo(() => serializeAnnotationPayload(scene, boxes, polygons), [boxes, polygons, scene]);
-  const selectedItemSavedPayload = useMemo(() => normalizeAnnotationPayload(scene, selectedItem?.annotationJson), [scene, selectedItem?.annotationJson]);
+  const selectedItemSavedPayload = useMemo(() => normalizeAnnotationPayload(scene, selectedItem?.annotationJson, workbenchLabels), [scene, selectedItem?.annotationJson, workbenchLabels]);
   const hasUnsavedChanges = canEditSelectedItem && Boolean(selectedItem?.workItemId) && annotationPayload !== selectedItemSavedPayload;
   const commitBoxes = useCallback((updater: AnnotationBox[] | ((items: AnnotationBox[]) => AnnotationBox[]), nextSelectedId?: string) => {
     const next = typeof updater === 'function' ? updater(boxes) : updater;
@@ -893,13 +938,18 @@ export function AnnotationWorkbenchPage() {
       return;
     }
     const id = nextAnnotationShapeId('poly');
-    const polygon = { id, points: polygonDraftPoints, label: annotationClasses[activeClass], cls: activeClass, source: 'manual' as const };
+    const polygon = { id, points: polygonDraftPoints, label: workbenchLabels[effectiveActiveClass], cls: effectiveActiveClass, source: 'manual' as const };
     commitPolygons((items) => [...items, polygon], id);
     setPolygonDraftPoints([]);
     setActiveShape('polygon');
     setSelectedPolygonEdgeIndex(null);
-    msg.success(`已新增分割区域：${annotationClasses[activeClass]}`);
-  }, [activeClass, commitPolygons, msg, polygonDraftPoints]);
+    msg.success(`已新增分割区域：${workbenchLabels[effectiveActiveClass]}`);
+  }, [commitPolygons, effectiveActiveClass, msg, polygonDraftPoints, workbenchLabels]);
+  const closeDraftPolygon = useCallback((event?: { stopPropagation?: () => void }) => {
+    event?.stopPropagation?.();
+    if (polygonDraftPoints.length < 3) return;
+    finalizePolygon();
+  }, [finalizePolygon, polygonDraftPoints.length]);
   const saveCurrent = useCallback(async (options?: { silent?: boolean }) => {
     if (!selectedItem?.workItemId) return false;
     if (!canEditWorkItem(selectedItem.status)) {
@@ -941,8 +991,8 @@ export function AnnotationWorkbenchPage() {
   const goPrev = useCallback(() => void navigateToIndex(selectedIndex - 1), [navigateToIndex, selectedIndex]);
   const goNext = useCallback(() => void navigateToIndex(selectedIndex + 1), [navigateToIndex, selectedIndex]);
   const selectClass = useCallback((idx: number) => {
-    setActiveClass(idx);
-  }, []);
+    setActiveClass(normalizeLabelIndex(idx, workbenchLabels));
+  }, [workbenchLabels]);
   const updatePolygonVertex = useCallback((polygonId: string, pointIndex: number, point: AnnotationPoint, commit: boolean) => {
     const nextPolygons = polygons.map((polygon) => {
       if (polygon.id !== polygonId) return polygon;
@@ -1026,15 +1076,15 @@ export function AnnotationWorkbenchPage() {
       setPolygonDraftPoints([]);
       setSelectedPolygonEdgeIndex(null);
       setSelectedPolygonPointIndex(null);
-      msg.info('图片分割请在画布上逐点点击绘制区域，双击或点击“完成多边形”闭合');
+      msg.info('图片分割请在画布上逐点点击绘制区域，点击首点/双击或点击“完成多边形”闭合');
       return;
     }
     const id = nextAnnotationShapeId('box');
-    const box = { id, x: 86 + boxes.length * 6, y: 230, w: 96, h: 58, label: annotationClasses[activeClass], cls: activeClass, shape, source: 'manual' as const };
+    const box = { id, x: 86 + boxes.length * 6, y: 230, w: 96, h: 58, label: workbenchLabels[effectiveActiveClass], cls: effectiveActiveClass, shape, source: 'manual' as const };
     setActiveShape(shape);
     commitBoxes((items) => [...items, box], id);
-    msg.success(`已新增标注框：${annotationClasses[activeClass]}（${shapeText(shape)}）`);
-  }, [activeClass, boxes.length, commitBoxes, isSegmentation, msg]);
+    msg.success(`已新增标注框：${workbenchLabels[effectiveActiveClass]}（${shapeText(shape)}）`);
+  }, [boxes.length, commitBoxes, effectiveActiveClass, isSegmentation, msg, workbenchLabels]);
   const svgPoint = (event: { clientX: number; clientY: number }) => {
     const svg = canvasRef.current;
     if (!svg) return { x: 0, y: 0 };
@@ -1134,8 +1184,8 @@ export function AnnotationWorkbenchPage() {
     }
     if (draftBox && draftBox.w >= 8 && draftBox.h >= 8) {
       const id = nextAnnotationShapeId('box');
-      commitBoxes((items) => [...items, { id, ...draftBox, label: annotationClasses[activeClass], cls: activeClass, shape: activeShape, source: 'manual' }], id);
-      msg.success(`已新增标注框：${annotationClasses[activeClass]}`);
+      commitBoxes((items) => [...items, { id, ...draftBox, label: workbenchLabels[effectiveActiveClass], cls: effectiveActiveClass, shape: activeShape, source: 'manual' }], id);
+      msg.success(`已新增标注框：${workbenchLabels[effectiveActiveClass]}`);
     }
     setDrawStart(null);
     setDraftBox(null);
@@ -1223,13 +1273,16 @@ export function AnnotationWorkbenchPage() {
     return () => window.clearTimeout(timer);
   }, [selectedIndex, scene, taskId]);
   useEffect(() => {
+    setActiveClass((current) => normalizeLabelIndex(current, workbenchLabels));
+  }, [workbenchLabels]);
+  useEffect(() => {
     if (!selectedItem) return;
-    const parsed = parseAnnotationPayload(scene, selectedItem.annotationJson);
+    const parsed = parseAnnotationPayload(scene, selectedItem.annotationJson, workbenchLabels);
     const selectedId = parsed.polygons[0]?.id ?? parsed.boxes[0]?.id ?? '';
     dispatchEditor({ type: 'reset', boxes: parsed.boxes, polygons: parsed.polygons, selectedShapeId: selectedId });
     const current = parsed.polygons[0] ?? parsed.boxes[0];
     const timer = window.setTimeout(() => {
-      setActiveClass(current?.cls ?? 0);
+      setActiveClass(normalizeLabelIndex(current?.cls ?? 0, workbenchLabels));
       setActiveShape(scene === 'IMAGE_SEGMENTATION'
         ? 'polygon'
         : (current && 'shape' in current && (current.shape === 'rect' || current.shape === 'ellipse' || current.shape === 'polygon')
@@ -1239,7 +1292,7 @@ export function AnnotationWorkbenchPage() {
       setSelectedPolygonPointIndex(null);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [scene, selectedItem]);
+  }, [scene, selectedItem, workbenchLabels]);
   useEffect(() => {
     const thumbList = thumbListRef.current;
     if (!thumbList) return;
@@ -1293,9 +1346,12 @@ export function AnnotationWorkbenchPage() {
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         void saveCurrent();
         event.preventDefault();
-      } else if (/^[1-4]$/.test(event.key)) {
-        selectClass(Number(event.key) - 1);
-        event.preventDefault();
+      } else if (/^[1-9]$/.test(event.key)) {
+        const targetIndex = Number(event.key) - 1;
+        if (targetIndex < workbenchLabels.length) {
+          selectClass(targetIndex);
+          event.preventDefault();
+        }
       } else if (event.key.toLowerCase() === 'd' || event.key === 'Delete') {
         deleteSelectedShape();
         event.preventDefault();
@@ -1324,7 +1380,7 @@ export function AnnotationWorkbenchPage() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [createManualShape, deleteSelectedShape, finalizePolygon, goNext, goPrev, isSegmentation, redo, saveCurrent, selectClass, undo]);
+  }, [createManualShape, deleteSelectedShape, finalizePolygon, goNext, goPrev, isSegmentation, redo, saveCurrent, selectClass, undo, workbenchLabels.length]);
 
   return (
     <div className="content-page annotation-workbench-page">
@@ -1421,6 +1477,22 @@ export function AnnotationWorkbenchPage() {
                   <stop offset="50%" stopColor="#243050" />
                   <stop offset="100%" stopColor="#1a2236" />
                 </linearGradient>
+                <filter id="annotation-shape-glow" x="-30%" y="-30%" width="160%" height="160%">
+                  <feGaussianBlur stdDeviation="1.8" result="blur" />
+                  <feColorMatrix
+                    in="blur"
+                    type="matrix"
+                    values="1 0 0 0 0
+                            0 1 0 0 0
+                            0 0 1 0 0
+                            0 0 0 0.45 0"
+                    result="glow"
+                  />
+                  <feMerge>
+                    <feMergeNode in="glow" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
               </defs>
               <rect width="520" height="340" fill="url(#ann-img-bg)" />
               {selectedSampleImage && !selectedSampleImageFailed ? (
@@ -1439,18 +1511,18 @@ export function AnnotationWorkbenchPage() {
               <rect className="annotation-draw-layer" width="520" height="340" fill="transparent" data-testid="annotation-draw-layer" />
               {!isSegmentation ? boxes.map((box) => (
                 <g key={box.id} onPointerDown={(event) => startDragBox(event, box)} onClick={() => { dispatchEditor({ type: 'select', selectedShapeId: box.id }); setActiveClass(box.cls); setActiveShape(box.shape); }} className={`annotation-shape-group ${box.source === 'ai' ? 'annotation-ai-box-group' : ''}`} data-testid={`annotation-box-${box.id}`}>
-                  {box.shape === 'ellipse' ? <ellipse cx={box.x + box.w / 2} cy={box.y + box.h / 2} rx={box.w / 2} ry={box.h / 2} fill={`${annotationClassColors[box.cls]}26`} stroke={annotationClassColors[box.cls]} strokeWidth={selectedShapeId === box.id ? 3 : 1.8} strokeDasharray={selectedShapeId === box.id ? undefined : '4 2'} />
-                    : box.shape === 'polygon' ? <polygon points={polygonPoints(box)} fill={`${annotationClassColors[box.cls]}26`} stroke={annotationClassColors[box.cls]} strokeWidth={selectedShapeId === box.id ? 3 : 1.8} strokeDasharray={selectedShapeId === box.id ? undefined : '4 2'} />
-                      : <rect x={box.x} y={box.y} width={box.w} height={box.h} fill={`${annotationClassColors[box.cls]}26`} stroke={box.source === 'ai' ? '#a78bfa' : annotationClassColors[box.cls]} strokeWidth={selectedShapeId === box.id ? 3 : 1.8} strokeDasharray={box.source === 'ai' || selectedShapeId !== box.id ? '6 3' : undefined} rx="2" />}
-                  <rect x={box.x} y={box.y - 20} width={box.label.length * 13 + (box.source === 'ai' ? 42 : 8)} height={box.source === 'ai' ? 20 : 18} fill={box.source === 'ai' ? 'rgba(139,92,246,.85)' : annotationClassColors[box.cls]} rx="3" />
-                  <text x={box.x + 5} y={box.y - 6} fill="#fff" fontSize="12" fontFamily="system-ui">{box.label}{box.source === 'ai' ? ` ${Math.round((box.confidence ?? 0) * 100)}%` : ''}</text>
-                  {selectedShapeId === box.id ? [[box.x, box.y], [box.x + box.w, box.y], [box.x, box.y + box.h], [box.x + box.w, box.y + box.h]].map(([cx, cy]) => <rect key={`${cx}-${cy}`} x={cx - 4} y={cy - 4} width="8" height="8" fill="#fff" stroke={annotationClassColors[box.cls]} strokeWidth="1.5" rx="1" />) : null}
+                  {box.shape === 'ellipse' ? <ellipse cx={box.x + box.w / 2} cy={box.y + box.h / 2} rx={box.w / 2} ry={box.h / 2} fill={`${workbenchClassColors[box.cls]}18`} stroke={box.source === 'ai' ? '#a78bfa' : workbenchClassColors[box.cls]} strokeOpacity={selectedShapeId === box.id ? 1 : 0.7} strokeWidth={selectedShapeId === box.id ? ANNOTATION_SHAPE_STROKE_WIDTH_SELECTED : ANNOTATION_SHAPE_STROKE_WIDTH} strokeDasharray={selectedShapeId === box.id ? undefined : '4 2'} filter={selectedShapeId === box.id ? 'url(#annotation-shape-glow)' : undefined} />
+                    : box.shape === 'polygon' ? <polygon points={polygonPoints(box)} fill={`${workbenchClassColors[box.cls]}18`} stroke={box.source === 'ai' ? '#a78bfa' : workbenchClassColors[box.cls]} strokeOpacity={selectedShapeId === box.id ? 1 : 0.7} strokeWidth={selectedShapeId === box.id ? ANNOTATION_SHAPE_STROKE_WIDTH_SELECTED : ANNOTATION_SHAPE_STROKE_WIDTH} strokeDasharray={selectedShapeId === box.id ? undefined : '4 2'} filter={selectedShapeId === box.id ? 'url(#annotation-shape-glow)' : undefined} />
+                      : <rect x={box.x} y={box.y} width={box.w} height={box.h} fill={`${workbenchClassColors[box.cls]}18`} stroke={box.source === 'ai' ? '#a78bfa' : workbenchClassColors[box.cls]} strokeOpacity={selectedShapeId === box.id ? 1 : 0.7} strokeWidth={selectedShapeId === box.id ? ANNOTATION_SHAPE_STROKE_WIDTH_SELECTED : ANNOTATION_SHAPE_STROKE_WIDTH} strokeDasharray={box.source === 'ai' || selectedShapeId !== box.id ? '6 3' : undefined} rx="2" filter={selectedShapeId === box.id ? 'url(#annotation-shape-glow)' : undefined} />}
+                  <rect x={box.x} y={box.y - 18} width={box.label.length * 11 + (box.source === 'ai' ? 38 : 10)} height={box.source === 'ai' ? 18 : 16} fill={box.source === 'ai' ? 'rgba(139,92,246,.78)' : `${workbenchClassColors[box.cls]}dd`} rx="3" />
+                  <text x={box.x + 4} y={box.y - 6} fill="#fff" fontSize="11" fontFamily="system-ui">{box.label}{box.source === 'ai' ? ` ${Math.round((box.confidence ?? 0) * 100)}%` : ''}</text>
+                  {selectedShapeId === box.id ? [[box.x, box.y], [box.x + box.w, box.y], [box.x, box.y + box.h], [box.x + box.w, box.y + box.h]].map(([cx, cy]) => <rect key={`${cx}-${cy}`} x={cx - 4} y={cy - 4} width="8" height="8" fill="#fff" stroke={workbenchClassColors[box.cls]} strokeWidth="1.5" rx="1" />) : null}
                 </g>
               )) : polygons.map((polygon) => {
                 const center = polygonCentroid(polygon.points);
                 return (
                   <g key={polygon.id} onClick={() => { dispatchEditor({ type: 'select', selectedShapeId: polygon.id }); setActiveClass(polygon.cls); setActiveShape('polygon'); setSelectedPolygonEdgeIndex(null); setSelectedPolygonPointIndex(null); }} className={`annotation-shape-group ${polygon.source === 'ai' ? 'annotation-ai-box-group' : ''}`} data-testid={`annotation-polygon-${polygon.id}`}>
-                    <polygon points={polygonPath(polygon.points)} fill={`${annotationClassColors[polygon.cls]}26`} stroke={polygon.source === 'ai' ? '#a78bfa' : annotationClassColors[polygon.cls]} strokeWidth={selectedShapeId === polygon.id ? 3 : 1.8} strokeDasharray={polygon.source === 'ai' || selectedShapeId !== polygon.id ? '6 3' : undefined} />
+                    <polygon points={polygonPath(polygon.points)} fill={`${workbenchClassColors[polygon.cls]}18`} stroke={polygon.source === 'ai' ? '#a78bfa' : workbenchClassColors[polygon.cls]} strokeOpacity={selectedShapeId === polygon.id ? 1 : 0.7} strokeWidth={selectedShapeId === polygon.id ? ANNOTATION_SHAPE_STROKE_WIDTH_SELECTED : ANNOTATION_SHAPE_STROKE_WIDTH} strokeDasharray={polygon.source === 'ai' || selectedShapeId !== polygon.id ? '6 3' : undefined} filter={selectedShapeId === polygon.id ? 'url(#annotation-shape-glow)' : undefined} />
                     {selectedShapeId === polygon.id ? polygon.points.map((point, index) => {
                       const nextPoint = polygon.points[(index + 1) % polygon.points.length];
                       if (!nextPoint) return null;
@@ -1463,7 +1535,7 @@ export function AnnotationWorkbenchPage() {
                           y1={point.y}
                           x2={nextPoint.x}
                           y2={nextPoint.y}
-                          stroke={isEdgeSelected ? '#ffffff' : annotationClassColors[polygon.cls]}
+                          stroke={isEdgeSelected ? '#ffffff' : workbenchClassColors[polygon.cls]}
                           strokeWidth={isEdgeSelected ? 10 : 8}
                           strokeOpacity={0.001}
                           onPointerDown={(event) => startDragPolygonEdge(event, polygon, index)}
@@ -1480,43 +1552,57 @@ export function AnnotationWorkbenchPage() {
                         />
                       );
                     }) : null}
-                    <rect x={center.x - 4} y={center.y - 4} width="8" height="8" fill="#fff" stroke={annotationClassColors[polygon.cls]} strokeWidth="1.5" rx="1" />
-                    <rect x={center.x - 4} y={center.y - 24} width={polygon.label.length * 13 + (polygon.source === 'ai' ? 42 : 8)} height={polygon.source === 'ai' ? 20 : 18} fill={polygon.source === 'ai' ? 'rgba(139,92,246,.85)' : annotationClassColors[polygon.cls]} rx="3" />
-                    <text x={center.x + 1} y={center.y - 10} fill="#fff" fontSize="12" fontFamily="system-ui">{polygon.label}{polygon.source === 'ai' ? ` ${Math.round((polygon.confidence ?? 0) * 100)}%` : ''}</text>
-                    {selectedShapeId === polygon.id ? polygon.points.map((point, index) => <circle key={`${polygon.id}-${index}`} cx={point.x} cy={point.y} r="5" fill="#fff" stroke={annotationClassColors[polygon.cls]} strokeWidth={selectedPolygonPointIndex === index ? '2.5' : '1.5'} onPointerDown={(event) => startDragPolygonVertex(event, polygon, index)} onClick={(event) => { event.stopPropagation(); dispatchEditor({ type: 'select', selectedShapeId: polygon.id }); setActiveClass(polygon.cls); setActiveShape('polygon'); setSelectedPolygonEdgeIndex(null); setSelectedPolygonPointIndex(index); }} data-testid={`annotation-polygon-vertex-${polygon.id}-${index}`} />) : null}
+                    <rect x={center.x - (ANNOTATION_POLYGON_CENTER_MARK_SIZE / 2)} y={center.y - (ANNOTATION_POLYGON_CENTER_MARK_SIZE / 2)} width={ANNOTATION_POLYGON_CENTER_MARK_SIZE} height={ANNOTATION_POLYGON_CENTER_MARK_SIZE} fill="#fff" stroke={workbenchClassColors[polygon.cls]} strokeWidth="1.25" rx="1" />
+                    <rect x={center.x - 4} y={center.y - 22} width={polygon.label.length * 11 + (polygon.source === 'ai' ? 38 : 10)} height={polygon.source === 'ai' ? 18 : 16} fill={polygon.source === 'ai' ? 'rgba(139,92,246,.78)' : `${workbenchClassColors[polygon.cls]}dd`} rx="3" />
+                    <text x={center.x} y={center.y - 10} fill="#fff" fontSize="11" fontFamily="system-ui">{polygon.label}{polygon.source === 'ai' ? ` ${Math.round((polygon.confidence ?? 0) * 100)}%` : ''}</text>
+                    {selectedShapeId === polygon.id ? polygon.points.map((point, index) => (
+                      <g key={`${polygon.id}-${index}`}>
+                        <circle cx={point.x} cy={point.y} r={ANNOTATION_POLYGON_VERTEX_HIT_RADIUS} fill="transparent" onPointerDown={(event) => startDragPolygonVertex(event, polygon, index)} onClick={(event) => { event.stopPropagation(); dispatchEditor({ type: 'select', selectedShapeId: polygon.id }); setActiveClass(polygon.cls); setActiveShape('polygon'); setSelectedPolygonEdgeIndex(null); setSelectedPolygonPointIndex(index); }} data-testid={`annotation-polygon-vertex-${polygon.id}-${index}`} />
+                        <circle cx={point.x} cy={point.y} r={selectedPolygonPointIndex === index ? ANNOTATION_POLYGON_VERTEX_RADIUS_SELECTED : ANNOTATION_POLYGON_VERTEX_RADIUS} fill="#fff" stroke={workbenchClassColors[polygon.cls]} strokeWidth={selectedPolygonPointIndex === index ? '2' : '1.1'} pointerEvents="none" />
+                      </g>
+                    )) : null}
                   </g>
                 );
               })}
               {!isSegmentation && draftBox ? (activeShape === 'ellipse'
-                ? <ellipse cx={draftBox.x + draftBox.w / 2} cy={draftBox.y + draftBox.h / 2} rx={draftBox.w / 2} ry={draftBox.h / 2} fill={`${annotationClassColors[activeClass]}18`} stroke={annotationClassColors[activeClass]} strokeWidth="2" strokeDasharray="4 2" data-testid="annotation-draft-box" />
+                ? <ellipse cx={draftBox.x + draftBox.w / 2} cy={draftBox.y + draftBox.h / 2} rx={draftBox.w / 2} ry={draftBox.h / 2} fill={`${workbenchClassColors[effectiveActiveClass]}18`} stroke={workbenchClassColors[effectiveActiveClass]} strokeWidth={ANNOTATION_DRAFT_STROKE_WIDTH} strokeDasharray="4 2" data-testid="annotation-draft-box" />
                 : activeShape === 'polygon'
-                  ? <polygon points={polygonPoints(draftBox)} fill={`${annotationClassColors[activeClass]}18`} stroke={annotationClassColors[activeClass]} strokeWidth="2" strokeDasharray="4 2" data-testid="annotation-draft-box" />
-                  : <rect x={draftBox.x} y={draftBox.y} width={draftBox.w} height={draftBox.h} fill={`${annotationClassColors[activeClass]}18`} stroke={annotationClassColors[activeClass]} strokeWidth="2" strokeDasharray="4 2" rx="2" data-testid="annotation-draft-box" />) : null}
+                  ? <polygon points={polygonPoints(draftBox)} fill={`${workbenchClassColors[effectiveActiveClass]}18`} stroke={workbenchClassColors[effectiveActiveClass]} strokeWidth={ANNOTATION_DRAFT_STROKE_WIDTH} strokeDasharray="4 2" data-testid="annotation-draft-box" />
+                  : <rect x={draftBox.x} y={draftBox.y} width={draftBox.w} height={draftBox.h} fill={`${workbenchClassColors[effectiveActiveClass]}18`} stroke={workbenchClassColors[effectiveActiveClass]} strokeWidth={ANNOTATION_DRAFT_STROKE_WIDTH} strokeDasharray="4 2" rx="2" data-testid="annotation-draft-box" />) : null}
               {isSegmentation && polygonDraftPoints.length ? (
                 <>
-                  <polyline points={polygonPath(polygonDraftPoints)} fill="rgba(26,107,255,.18)" stroke={annotationClassColors[activeClass]} strokeWidth="2" strokeDasharray="4 2" data-testid="annotation-draft-polygon" />
-                  {polygonDraftPoints.map((point, index) => <circle key={`draft-${index}`} cx={point.x} cy={point.y} r="4" fill={annotationClassColors[activeClass]} />)}
+                  {polygonDraftPoints.length >= 3 ? <polygon points={polygonPath(polygonDraftPoints)} fill={`${workbenchClassColors[effectiveActiveClass]}18`} stroke="none" data-testid="annotation-draft-polygon-closed-preview" /> : null}
+                  <polyline points={polygonPath(polygonDraftPoints)} fill="none" stroke={workbenchClassColors[effectiveActiveClass]} strokeWidth={ANNOTATION_DRAFT_STROKE_WIDTH} strokeDasharray="4 2" data-testid="annotation-draft-polygon" />
+                  {polygonDraftPoints.map((point, index) => {
+                    const canClose = index === 0 && polygonDraftPoints.length >= 3;
+                    return (
+                      <g key={`draft-${index}`}>
+                        <circle cx={point.x} cy={point.y} r={ANNOTATION_DRAFT_POLYGON_HIT_RADIUS} fill="transparent" style={canClose ? { cursor: 'pointer' } : undefined} onPointerDown={(event) => event.stopPropagation()} onClick={canClose ? closeDraftPolygon : (event) => event.stopPropagation()} data-testid={canClose ? 'annotation-draft-polygon-close-target' : `annotation-draft-polygon-point-${index}`} />
+                        <circle cx={point.x} cy={point.y} r={canClose ? ANNOTATION_DRAFT_POLYGON_CLOSE_RADIUS : ANNOTATION_DRAFT_POLYGON_VERTEX_RADIUS} fill={canClose ? '#fff' : workbenchClassColors[effectiveActiveClass]} stroke={workbenchClassColors[effectiveActiveClass]} strokeWidth={canClose ? '1.5' : '0.95'} pointerEvents="none" />
+                      </g>
+                    );
+                  })}
                 </>
               ) : null}
             </svg>
             {selectedSampleImageFailed ? <div className="annotation-image-error">当前样本图片加载失败，请切换样本或稍后重试</div> : null}
             {selectedSampleImage ? <div className="annotation-sample-caption" data-testid="annotation-sample-caption">{selectedSampleImage.title} · {selectedSampleImage.source}</div> : null}
-            <div className="annotation-canvas-hint">{isSegmentation ? '逐点点击绘制分割区域 · 双击/Enter 完成闭合 · 单击线条可选中并拖动连接线 · 双击线条可新增顶点 · Space 下一张 · Ctrl+S 保存当前标注' : '拖拽绘制框 · 右键删除 · Space 下一张 · Ctrl+S 保存当前标注'}</div>
+            <div className="annotation-canvas-hint">{isSegmentation ? '逐点点击绘制分割区域 · 点击首点/双击/Enter 完成闭合 · 单击线条可选中并拖动连接线 · 双击线条可新增顶点 · Space 下一张 · Ctrl+S 保存当前标注' : '拖拽绘制框 · 右键删除 · Space 下一张 · Ctrl+S 保存当前标注'}</div>
           </main>
 
           <aside className="annotation-right-panel">
             <h4 className="annotation-panel-title">标注类别</h4>
-            {annotationClasses.map((name, idx) => (
-              <button key={name} className={`annotation-class-row ${activeClass === idx ? 'active' : ''}`} style={{ borderColor: activeClass === idx ? annotationClassColors[idx] : 'transparent' }} onClick={() => selectClass(idx)} type="button" aria-pressed={activeClass === idx}>
-                <span className="annotation-class-color" style={{ background: annotationClassColors[idx] }} />
+            {workbenchLabels.map((name, idx) => (
+              <button key={name} className={`annotation-class-row ${effectiveActiveClass === idx ? 'active' : ''}`} style={{ borderColor: effectiveActiveClass === idx ? workbenchClassColors[idx] : 'transparent' }} onClick={() => selectClass(idx)} type="button" aria-pressed={effectiveActiveClass === idx}>
+                <span className="annotation-class-color" style={{ background: workbenchClassColors[idx] }} />
                 <span>{name}</span>
-                <kbd>{idx + 1}</kbd>
+                {idx < 9 ? <kbd>{idx + 1}</kbd> : null}
               </button>
             ))}
             <div className="annotation-panel-divider" />
             <h4 className="annotation-panel-title">{isSegmentation ? '当前分割区域属性' : '当前框属性'}</h4>
             {currentPolygon ? <div className="annotation-box-meta">
-              <div>类别：<span data-testid="annotation-current-label" style={{ color: annotationClassColors[currentPolygon.cls] }}>{currentPolygon.label}</span></div>
+              <div>类别：<span data-testid="annotation-current-label" style={{ color: workbenchClassColors[currentPolygon.cls] }}>{currentPolygon.label}</span></div>
               <div>顶点数：<span data-testid="annotation-polygon-point-count">{currentPolygon.points.length}</span></div>
               <div>选中顶点：<span data-testid="annotation-selected-polygon-point">{selectedPolygonPointIndex == null ? '未选择' : `#${selectedPolygonPointIndex + 1}`}</span></div>
               <div>选中线段：<span data-testid="annotation-selected-polygon-edge">{selectedPolygonEdgeIndex == null ? '未选择' : `#${selectedPolygonEdgeIndex + 1}`}</span></div>
@@ -1525,7 +1611,7 @@ export function AnnotationWorkbenchPage() {
               <div>形状：<span data-testid="annotation-current-shape">多边形区域</span></div>
               <div>分割区域数：<span data-testid="annotation-polygon-count">{polygons.length}</span></div>
             </div> : currentBox ? <div className="annotation-box-meta">
-              <div>类别：<span data-testid="annotation-current-label" style={{ color: annotationClassColors[currentBox.cls] }}>{currentBox.label}</span></div>
+              <div>类别：<span data-testid="annotation-current-label" style={{ color: workbenchClassColors[currentBox.cls] }}>{currentBox.label}</span></div>
               <div>坐标：({currentBox.x}, {currentBox.y})</div>
               <div>尺寸：{currentBox.w} × {currentBox.h}</div>
               <div>形状：<span data-testid="annotation-current-shape">{shapeText(currentBox.shape)}</span></div>

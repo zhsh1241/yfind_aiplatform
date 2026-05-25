@@ -51,11 +51,14 @@ class AnnotationTaskRealImageBindingTest {
         String taskId = create.at("/data/task/taskId").asText();
         JsonNode workItems = getJson("/api/v1/annotation/tasks/" + taskId + "/work-items?page=1&pageSize=50", "trace-ann-real-image-task-items", adminToken).at("/data/items");
         assertThat(workItems.isArray()).isTrue();
-        assertThat(workItems.size()).isEqualTo(6);
+        assertThat(workItems.size()).isEqualTo(5);
         assertThat(workItems.findValuesAsText("sampleFileId"))
             .doesNotContainNull()
             .doesNotContain("")
             .doesNotHaveDuplicates();
+        assertThat(workItems.findValuesAsText("sampleFileId"))
+            .allSatisfy(fileId -> assertThat(jdbc.queryForObject("SELECT content_type FROM platform_file_object WHERE file_id=?", String.class, fileId))
+                .startsWith("image/"));
     }
 
     @Test
@@ -145,6 +148,81 @@ class AnnotationTaskRealImageBindingTest {
         String labelSchema = jdbc.queryForObject("SELECT label_schema_json FROM annotation_label_template WHERE template_id=?", String.class, templateId);
         assertThat(templateStatus).isEqualTo("PUBLISHED");
         assertThat(labelSchema).contains("裂纹").contains("气孔").contains("夹渣");
+    }
+
+    @Test
+    void segmentationTaskUsesImageFilesAndCanSubmitWithTenantReviewerFallback() throws Exception {
+        seedAdditionalDatasetFiles();
+        String adminToken = login("admin", "YF");
+
+        JsonNode create = postJson("/api/v1/annotation/tasks", "trace-ann-seg-image-reviewer-fallback", """
+            {
+              "sourceDatasetId":"DATASET-WELD-DEFECT",
+              "sourceVersionId":"DVER-WELD-001",
+              "templateId":"LT-WELD-POLYGON",
+              "name":"图片分割图片文件与审核回退验证",
+              "scene":"IMAGE_SEGMENTATION",
+              "reviewEnabled":true,
+              "prelabelEnabled":false,
+              "labelStudioEnabled":false
+            }
+            """, adminToken);
+
+        assertThat(create.at("/code").asInt()).isZero();
+        String taskId = create.at("/data/task/taskId").asText();
+        JsonNode workItems = getJson("/api/v1/annotation/tasks/" + taskId + "/work-items?page=1&pageSize=50", "trace-ann-seg-image-reviewer-fallback-items", adminToken).at("/data/items");
+        assertThat(workItems.isArray()).isTrue();
+        assertThat(workItems.size()).isGreaterThanOrEqualTo(1);
+        assertThat(workItems.findValuesAsText("sampleFileId"))
+            .allMatch(value -> value != null && !value.isBlank());
+
+        String firstWorkItemId = workItems.get(0).at("/workItemId").asText();
+        JsonNode submitted = postJson("/api/v1/annotation/work-items/" + firstWorkItemId + "/submit", "trace-ann-seg-image-reviewer-fallback-submit", """
+            {"annotationJson":"{\\"polygons\\":[{\\"label\\":\\"螺丝\\",\\"cls\\":0,\\"points\\":[{\\"x\\":101,\\"y\\":80},{\\"x\\":150,\\"y\\":82},{\\"x\\":148,\\"y\\":130}]}]}"}
+            """, adminToken);
+        assertThat(submitted.at("/code").asInt()).isZero();
+        assertThat(submitted.at("/data/status").asText()).isEqualTo("REVIEW_PENDING");
+
+        String reviewerId = jdbc.queryForObject("SELECT reviewer_id FROM annotation_review_item WHERE work_item_id=?", String.class, firstWorkItemId);
+        assertThat(reviewerId).isEqualTo("USR-BU-CABIN");
+    }
+
+    @Test
+    void submitRollbackKeepsWorkItemEditableWhenReviewerCreationFails() throws Exception {
+        seedAdditionalDatasetFiles();
+        String adminToken = login("admin", "YF");
+
+        JsonNode create = postJson("/api/v1/annotation/tasks", "trace-ann-submit-rollback-create", """
+            {
+              "sourceDatasetId":"DATASET-WELD-DEFECT",
+              "sourceVersionId":"DVER-WELD-001",
+              "templateId":"LT-WELD-POLYGON",
+              "name":"提交失败应回滚工作项状态",
+              "scene":"IMAGE_SEGMENTATION",
+              "reviewEnabled":true,
+              "prelabelEnabled":false,
+              "labelStudioEnabled":false
+            }
+            """, adminToken);
+
+        assertThat(create.at("/code").asInt()).isZero();
+        String taskId = create.at("/data/task/taskId").asText();
+        jdbc.update("UPDATE annotation_task SET tenant_id='TENANT-YF', updated_at=CURRENT_TIMESTAMP WHERE task_id=?", taskId);
+
+        JsonNode workItems = getJson("/api/v1/annotation/tasks/" + taskId + "/work-items?page=1&pageSize=20", "trace-ann-submit-rollback-items", adminToken).at("/data/items");
+        String firstWorkItemId = workItems.get(0).at("/workItemId").asText();
+
+        JsonNode submitted = postJson("/api/v1/annotation/work-items/" + firstWorkItemId + "/submit", "trace-ann-submit-rollback-submit", """
+            {"annotationJson":"{\\"polygons\\":[{\\"label\\":\\"螺丝\\",\\"cls\\":0,\\"points\\":[{\\"x\\":120,\\"y\\":90},{\\"x\\":160,\\"y\\":92},{\\"x\\":158,\\"y\\":140}]}]}"}
+            """, adminToken);
+        assertThat(submitted.at("/code").asInt()).isEqualTo(42200);
+
+        assertThat(jdbc.queryForObject("SELECT status FROM annotation_work_item WHERE work_item_id=?", String.class, firstWorkItemId))
+            .isEqualTo("PENDING");
+        assertThat(jdbc.queryForObject("SELECT submitted_at FROM annotation_work_item WHERE work_item_id=?", Object.class, firstWorkItemId))
+            .isNull();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM annotation_review_item WHERE work_item_id=?", Integer.class, firstWorkItemId))
+            .isZero();
     }
 
     private void seedAdditionalDatasetFiles() {

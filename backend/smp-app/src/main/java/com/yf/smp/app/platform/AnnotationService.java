@@ -321,7 +321,7 @@ public class AnnotationService {
         return workItem(workItemId);
     }
 
-    @Transactional(noRollbackFor = PlatformException.class)
+    @Transactional
     public AnnotationWorkItemResponse submit(PlatformPrincipal principal, String workItemId, AnnotationWorkItemRequest request) {
         identityService.requirePermission(principal, "data:annotation:submit");
         AnnotationWorkItemRecord item = workItemVisible(principal, workItemId, true);
@@ -661,7 +661,7 @@ public class AnnotationService {
     }
 
     private void ensureReviewItemForWork(AnnotationTaskRecord task, String workItemId, String annotatorId, OffsetDateTime at) {
-        String reviewer = activeReviewers(task.taskId()).stream().filter(id -> !id.equals(annotatorId)).findFirst().orElse(null);
+        String reviewer = candidateReviewers(task).stream().filter(id -> !id.equals(annotatorId)).findFirst().orElse(null);
         if (reviewer == null) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "不允许审核自己提交的标注结果：任务缺少非提交人的审核员");
         List<String> existing = jdbc.queryForList("SELECT review_item_id FROM annotation_review_item WHERE work_item_id=?", String.class, workItemId);
         if (existing.isEmpty()) {
@@ -815,6 +815,29 @@ public class AnnotationService {
         return jdbc.queryForList("SELECT assignee_id FROM annotation_assignment WHERE task_id=? AND role='REVIEWER' AND status='ACTIVE' ORDER BY assigned_at", String.class, taskId);
     }
 
+    private List<String> candidateReviewers(AnnotationTaskRecord task) {
+        List<String> assigned = activeReviewers(task.taskId()).stream().distinct().toList();
+        if (!assigned.isEmpty()) {
+            return assigned;
+        }
+        return jdbc.queryForList("""
+            SELECT DISTINCT om.user_id
+            FROM platform_organization_member om
+            JOIN platform_user u ON u.id = om.user_id
+            WHERE om.organization_id=?
+              AND om.status='ACTIVE'
+              AND u.status='ACTIVE'
+              AND om.user_id IN (
+                SELECT ur.user_id
+                FROM platform_user_role ur
+                WHERE ur.active=TRUE
+                  AND (ur.expires_at IS NULL OR ur.expires_at > ?)
+                  AND ur.role_code IN ('DATA_REVIEWER', 'BU_ADMIN', 'SUPER_ADMIN')
+              )
+            ORDER BY om.user_id
+            """, String.class, task.tenantId(), now());
+    }
+
     private String reviewTenant(String taskId) {
         return taskRecord(taskId).tenantId();
     }
@@ -850,7 +873,20 @@ public class AnnotationService {
     }
 
     private List<String> sampleFiles(String versionId) {
-        return jdbc.queryForList("SELECT file_id FROM dataset_file WHERE version_id=? ORDER BY created_at", String.class, versionId);
+        List<String> imageFiles = jdbc.queryForList("""
+            SELECT df.file_id
+            FROM dataset_file df
+            JOIN platform_file_object pfo ON pfo.file_id = df.file_id
+            WHERE df.version_id=?
+              AND df.status='BOUND'
+              AND pfo.status='AVAILABLE'
+              AND pfo.content_type LIKE 'image/%'
+            ORDER BY df.created_at, df.file_id
+            """, String.class, versionId);
+        if (!imageFiles.isEmpty()) {
+            return imageFiles;
+        }
+        return jdbc.queryForList("SELECT file_id FROM dataset_file WHERE version_id=? ORDER BY created_at, file_id", String.class, versionId);
     }
 
     private long countDatasetFiles(String versionId) {

@@ -627,7 +627,10 @@ describe('F006 platform identity frontend', () => {
     expect(await screen.findByRole('button', { name: '开始多边形 P' })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '完成多边形 Enter' })).toBeDisabled();
     expect(await screen.findByText('当前分割区域属性')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /裂纹区域\s+1/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /气孔区域\s+2/ })).toBeInTheDocument();
     expect(await screen.findByTestId('annotation-polygon-count')).toHaveTextContent('1');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹区域');
     expect(screen.queryByTestId('annotation-box-count')).not.toBeInTheDocument();
   });
 
@@ -708,31 +711,31 @@ describe('F006 platform identity frontend', () => {
     await user.keyboard('w');
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('1');
     expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('矩形');
-    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('焊接气孔');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
 
     await user.keyboard('2');
-    expect(screen.getByRole('button', { name: /裂纹\s+2/ })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('焊接气孔');
+    expect(screen.getByRole('button', { name: /气孔\s+2/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
 
     await user.keyboard('e');
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('2');
     expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('椭圆');
-    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('气孔');
 
     await user.keyboard('{Control>}z{/Control}');
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('1');
     expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('矩形');
-    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('焊接气孔');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
 
     await user.keyboard('{Control>}y{/Control}');
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('2');
     expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('椭圆');
-    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('气孔');
 
     await user.keyboard('p');
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('3');
     expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('多边形');
-    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('气孔');
 
     await user.keyboard('{Delete}');
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('2');
@@ -760,7 +763,51 @@ describe('F006 platform identity frontend', () => {
     await user.keyboard('{Enter}');
 
     expect(await screen.findByTestId('annotation-polygon-count')).toHaveTextContent('2');
-    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('气孔区域');
+  });
+
+  it('loads segmentation labels from template instead of default detection labels', async () => {
+    seedWorkbenchSession();
+    const user = userEvent.setup();
+
+    renderApp([`/annwork?taskId=${mockSegmentationAnnotationTask.taskId}`]);
+
+    expect(await screen.findByRole('button', { name: /裂纹区域\s+1/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /气孔区域\s+2/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /焊接气孔\s+1/ })).not.toBeInTheDocument();
+
+    await user.keyboard('1');
+    const drawLayer = screen.getByTestId('annotation-draw-layer');
+    await user.pointer([
+      { target: drawLayer, coords: { clientX: 84, clientY: 80 }, keys: '[MouseLeft]' },
+      { target: drawLayer, coords: { clientX: 136, clientY: 88 }, keys: '[MouseLeft]' },
+      { target: drawLayer, coords: { clientX: 126, clientY: 142 }, keys: '[MouseLeft]' },
+    ]);
+    await user.keyboard('{Enter}');
+
+    expect(await screen.findByTestId('annotation-polygon-count')).toHaveTextContent('2');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹区域');
+  });
+
+  it('finalizes segmentation polygon by clicking the first point close target', async () => {
+    seedWorkbenchSession();
+    const user = userEvent.setup();
+
+    renderApp([`/annwork?taskId=${mockSegmentationAnnotationTask.taskId}`]);
+
+    expect(await screen.findByTestId('annotation-polygon-count')).toHaveTextContent('1');
+    const drawLayer = screen.getByTestId('annotation-draw-layer');
+    await user.pointer([
+      { target: drawLayer, coords: { clientX: 92, clientY: 88 }, keys: '[MouseLeft]' },
+      { target: drawLayer, coords: { clientX: 156, clientY: 90 }, keys: '[MouseLeft]' },
+      { target: drawLayer, coords: { clientX: 138, clientY: 146 }, keys: '[MouseLeft]' },
+    ]);
+
+    expect(screen.getByTestId('annotation-draft-polygon-close-target')).toBeInTheDocument();
+    await user.click(screen.getByTestId('annotation-draft-polygon-close-target'));
+
+    expect(await screen.findByTestId('annotation-polygon-count')).toHaveTextContent('2');
+    expect(screen.queryByTestId('annotation-draft-polygon')).not.toBeInTheDocument();
   });
 
   it('auto saves before navigating by Space ArrowLeft ArrowRight and thumbnail click', async () => {
