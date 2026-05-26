@@ -196,8 +196,7 @@ describe('DataPipelineStandardPage operator config panel', () => {
   it('deletes selected node and prunes related edges before save', async () => {
     renderPage();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: /图片加水印 图片加水印/i }));
-    await user.click(screen.getByRole('button', { name: '删除节点' }));
+    await user.click(await screen.findByLabelText('删除 图片加水印'));
 
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /图片加水印 图片加水印/i })).not.toBeInTheDocument();

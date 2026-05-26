@@ -21,8 +21,7 @@ test('TASK-visual-preprocess-operators-pipeline AC-01 AC-02 AC-03 AC-06 AC-07 AC
   await expect(page.getByText('已添加算子：图片加水印')).toBeVisible();
   await expect(page.getByText(/当前节点 4 个/)).toBeVisible();
 
-  await page.getByRole('button', { name: /图片加水印/ }).nth(1).click();
-  await page.getByRole('button', { name: '删除节点' }).click();
+  await page.getByLabel('删除 图片加水印').click();
   await expect(page.getByText(/已删除节点：图片加水印/)).toBeVisible();
   await expect(page.getByText(/当前节点 3 个/)).toBeVisible();
 

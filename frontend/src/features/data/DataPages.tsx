@@ -2123,16 +2123,22 @@ export function DataPipelineStandardPage() {
   const updateSelectedNodeConfig = (configJson: string) => {
     setNodes((items) => items.map((item) => item.nodeId === selectedNode?.nodeId ? { ...item, configJson } : item));
   };
-  const deleteSelectedNode = () => {
-    if (!selectedNode) return;
-    const targetId = selectedNode.nodeId;
+  const deleteNodeById = (nodeId: string) => {
+    const targetNode = nodes.find((item) => item.nodeId === nodeId);
+    if (!targetNode) return;
+    const targetId = targetNode.nodeId;
     const remainingNodes = nodes.filter((item) => item.nodeId !== targetId);
     const remainingEdges = edges.filter((item) => item.sourceNodeId !== targetId && item.targetNodeId !== targetId);
     setDraftNodes(remainingNodes);
     setDraftEdges(remainingEdges);
-    const nextNode = remainingNodes[Math.min(selectedNodeIndex, Math.max(remainingNodes.length - 1, 0))];
+    const deletedIndex = nodes.findIndex((item) => item.nodeId === targetId);
+    const nextNode = remainingNodes[Math.min(deletedIndex, Math.max(remainingNodes.length - 1, 0))];
     setSelectedNodeId(nextNode?.nodeId);
-    msg.success(`已删除节点：${selectedNode.label}`);
+    msg.success(`已删除节点：${targetNode.label}`);
+  };
+  const deleteSelectedNode = () => {
+    if (!selectedNode) return;
+    deleteNodeById(selectedNode.nodeId);
   };
   const formatSelectedNodeConfig = () => {
     const config = parseObjectConfig(selectedNode?.configJson);
@@ -2216,7 +2222,7 @@ export function DataPipelineStandardPage() {
       </div>
       <div className="pipeline-grid">
         <Card title={<Space><span>DAG 画布</span><Tag color={pipeline.data.validation.valid ? 'green' : 'red'}>{pipeline.data.validation.diagnosticCode}</Tag></Space>} className="pipeline-canvas-card">
-          <PipelineCanvas nodes={nodes} edges={edges} selectedNodeId={selectedNode?.nodeId} onSelect={setSelectedNodeId} onMove={moveNode} />
+          <PipelineCanvas nodes={nodes} edges={edges} selectedNodeId={selectedNode?.nodeId} onSelect={setSelectedNodeId} onMove={moveNode} onDelete={deleteNodeById} />
           <Typography.Text type="secondary">拖拽节点可重新排序 · 从左侧算子库拖入可添加新节点 · 当前节点 {nodes.length} 个</Typography.Text>
           <div className="pipeline-validation-panel">
             {validationIssues.length > 0 ? (
@@ -2757,7 +2763,7 @@ function DatasetVersionList({ datasetId }: { datasetId?: string }) {
   return <Table<DatasetVersion> rowKey="versionId" dataSource={q.data?.versions ?? []} pagination={false} columns={[{ title: '版本', render: (_, r) => <Space><span>{r.versionName}</span>{r.isCurrent ? <Tag color="blue">当前</Tag> : null}</Space> }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '来源版本', dataIndex: 'sourceVersionId', render: (v) => v ?? '首版本' }, { title: '文件数', dataIndex: 'fileCount' }, { title: '安全', dataIndex: 'contentSafetyStatus' }, { title: '可删除', render: (_, r) => r.deletable ? '是' : r.deleteBlockedReason ?? '否' }, { title: '文件大小', render: (_, r) => fmtSize(r.sizeBytes) }]} />;
 }
 
-function PipelineCanvas({ nodes, edges, selectedNodeId, onSelect, onMove }: { nodes: PipelineNode[]; edges: PipelineEdge[]; selectedNodeId?: string; onSelect: (nodeId: string) => void; onMove: (nodeId: string, dx: number, dy: number) => void }) {
+function PipelineCanvas({ nodes, edges, selectedNodeId, onSelect, onMove, onDelete }: { nodes: PipelineNode[]; edges: PipelineEdge[]; selectedNodeId?: string; onSelect: (nodeId: string) => void; onMove: (nodeId: string, dx: number, dy: number) => void; onDelete: (nodeId: string) => void }) {
   const nodeMap = useMemo(() => new Map(nodes.map((node) => [node.nodeId, node])), [nodes]);
   const dragRef = useRef<{ nodeId: string; startX: number; startY: number } | null>(null);
   return (
@@ -2806,6 +2812,18 @@ function PipelineCanvas({ nodes, edges, selectedNodeId, onSelect, onMove }: { no
           }}
           type="button"
         >
+          <span
+            role="button"
+            aria-label={`删除 ${node.label}`}
+            className="pipeline-node-delete"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete(node.nodeId);
+            }}
+          >
+            ×
+          </span>
           <span>{node.label}</span>
           <small>{node.operatorName ?? node.operatorId}</small>
         </button>
