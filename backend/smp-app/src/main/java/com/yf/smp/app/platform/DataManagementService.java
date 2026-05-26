@@ -546,7 +546,9 @@ public class DataManagementService {
         List<DatasetVersionResponse> versions = versions(datasetId, dataset.currentVersionId(), dataset.status());
         DatasetVersionResponse selectedVersion = versions.stream().filter(i -> i.versionId().equals(effectiveVersionId)).findFirst().orElseThrow(() -> new PlatformException(PlatformError.NOT_FOUND, "RESOURCE_NOT_FOUND: 数据集版本不存在"));
         List<DatasetFileResponse> selectedFiles = filesByVersion(effectiveVersionId);
-        String preview = selectedFiles.stream().anyMatch(f -> f.contentType() != null && f.contentType().startsWith("image/")) ? "PREVIEWABLE" : "UNSUPPORTED";
+        boolean previewable = "PREPROCESSED".equalsIgnoreCase(dataset.datasetType())
+            && selectedFiles.stream().anyMatch(f -> f.contentType() != null && f.contentType().startsWith("image/"));
+        String preview = previewable ? "PREVIEWABLE" : "UNSUPPORTED";
         return new DatasetDetailResponse(
             datasetSummary(principal, dataset),
             effectiveVersionId,

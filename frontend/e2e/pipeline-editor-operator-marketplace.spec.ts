@@ -1,44 +1,59 @@
 ﻿import { test, expect } from '@playwright/test';
 import { seedAuthenticatedSession } from './helpers';
 
-test('TASK-pipeline-editor-operator-marketplace AC-01 AC-02 AC-03 AC-05 AC-06 AC-07 pipeline editor and operator marketplace', async ({ page }) => {
+test('TASK-visual-preprocess-operators-pipeline AC-01 AC-02 AC-03 AC-06 AC-07 AC-08 AC-09 pipeline editor and operator marketplace', async ({ page }) => {
   await seedAuthenticatedSession(page);
 
   await page.getByText('Pipeline编辑器').click();
   await expect(page.getByRole('heading', { name: 'Pipeline编辑器' })).toBeVisible();
   await expect(page.getByText('算子库', { exact: true })).toBeVisible();
   await expect(page.getByText('DAG 画布', { exact: true })).toBeVisible();
-  await expect(page.getByText(/归一化|算子配置/).first()).toBeVisible();
+  await expect(page.getByText(/视频抽帧|算子配置/).first()).toBeVisible();
   await expect(page.getByText('运行历史', { exact: true })).toBeVisible();
   await expect(page.getByText('版本快照', { exact: true })).toBeVisible();
-  await expect(page.getByText('全局变量', { exact: true })).toBeVisible();
-  await expect(page.getByText('TODO_CONFIRM_PIPELINE_SCHEDULER_TARGET')).toBeVisible();
-  await expect(page.getByRole('button', { name: /归一化/ }).first()).toBeVisible();
+  await expect(page.getByText('全局变量与结果策略', { exact: true })).toBeVisible();
+  await expect(page.getByText('视频抽帧默认输出图片型 PREPROCESSED 数据集', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /图片质量提高/ }).first()).toBeVisible();
 
   await page.getByRole('button', { name: /＋ 添加算子/ }).click();
   await expect(page.getByText('添加算子', { exact: true })).toBeVisible();
-  await page.locator('.ant-drawer').getByText('归一化').first().click();
-  await expect(page.getByText('已添加算子：归一化')).toBeVisible();
-  await expect(page.getByText(/当前节点 5 个/)).toBeVisible();
+  await page.locator('.ant-drawer').getByText('图片加水印').first().click();
+  await expect(page.getByText('已添加算子：图片加水印')).toBeVisible();
+  await expect(page.getByText(/当前节点 4 个/)).toBeVisible();
 
   await page.getByRole('button', { name: '保存快照' }).click();
   await expect(page.getByText('版本快照已保存')).toBeVisible();
 
   await page.getByRole('button', { name: /沙箱运行/ }).click();
-  await expect(page.getByText('沙箱运行完成，已生成输出数据集与血缘')).toBeVisible();
-  await expect(page.getByText('SANDBOX_PIPELINE_RUN_SUCCEEDED')).toBeVisible();
+  await expect(page.getByText('视觉预处理运行完成，已生成待确认预处理数据集。')).toBeVisible();
+  await expect(page.getByLabel('沙箱运行详情').getByText('VISUAL_PREPROCESS_RUN_SUCCEEDED')).toBeVisible();
+  await expect(page.getByLabel('沙箱运行详情').getByText('结果处置工作台')).toBeVisible();
+  await expect(page.getByLabel('沙箱运行详情').getByText('样例预览工作台')).toBeVisible();
+  await expect(page.getByLabel('沙箱运行详情').getByText('下一步请先人工确认结果，再执行激活')).toBeVisible();
+  await expect(page.getByLabel('沙箱运行详情').getByText('抽帧样本', { exact: true })).toBeVisible();
+  await expect(page.getByText(/失败原因：少量帧解码失败/)).toBeVisible();
+  await expect(page.getByRole('button', { name: '确认预处理结果' })).toBeVisible();
+  await page.getByRole('button', { name: '确认预处理结果' }).click();
+  await expect(page.getByText('预处理结果已确认，可继续激活。')).toBeVisible();
+  await page.getByRole('button', { name: '激活为标注可用数据集' }).click();
+  await expect(page.getByText('预处理数据集已激活，可用于后续标注。')).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(page.getByText('SANDBOX_PIPELINE_RUN_SUCCEEDED')).toBeHidden();
+  await expect(page.getByLabel('沙箱运行详情')).toBeHidden();
 
   await page.getByText('算子广场').click();
   await expect(page.getByRole('heading', { name: '算子广场' })).toBeVisible();
-  await expect(page.getByText('HTTP 算子安全说明')).toBeVisible();
-  await expect(page.getByText('TODO_CONFIRM_OPERATOR_CATALOG_SOURCE')).toBeVisible();
-  await expect(page.getByText('归一化').first()).toBeVisible();
+  await expect(page.getByText('视觉预处理冻结能力说明')).toBeVisible();
+  await expect(page.getByText('图片/视频处理目录')).toBeVisible();
+  await expect(page.getByText('图片质量提高').first()).toBeVisible();
   await expect(page.getByText('引用Pipeline数').first()).toBeVisible();
+  await expect(page.getByText('一期固定传统增强：锐化、去噪、亮度/对比度优化')).toBeVisible();
+  await expect(page.getByText('支持预览', { exact: true }).first()).toBeVisible();
+  await page.locator('.opmarket-layout .ant-select').first().click();
+  await page.locator('.ant-select-dropdown:visible').getByText('视频', { exact: true }).click();
+  await expect(page.getByRole('heading', { name: '视频抽帧' })).toBeVisible();
+  await page.locator('.opmarket-layout .ant-select .ant-select-clear').first().click();
 
   await page.getByText('HTTP 自定义算子').first().click();
-  await expect(page.getByText('Before / After 示例')).toBeVisible();
   await expect(page.getByText('参数 Schema', { exact: true })).toBeVisible();
   await expect(page.getByText('TODO_CONFIRM_OPERATOR_HTTP_ENDPOINT')).toBeVisible();
   await expect(page.getByRole('button', { name: '审核通过并发布' })).toBeVisible();

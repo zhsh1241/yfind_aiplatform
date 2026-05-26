@@ -106,7 +106,7 @@ test.describe('已完成功能跨模块串联演示', () => {
             await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e-flow', timestamp: new Date().toISOString(), data: detailResponse.lineage } });
           });
         }
-        await page.getByRole('cell', { name: dataset.name }).click();
+        await page.getByRole('row', { name: new RegExp(dataset.name) }).getByText('详情').click();
         await expect(page.getByRole('heading', { name: dataset.name })).toBeVisible();
         await expect(page.getByText(dataset.type === 'IMAGE' ? '图片' : '文本', { exact: true })).toBeVisible();
         await expect(page.getByText('版本历史')).toBeVisible();
@@ -120,9 +120,9 @@ test.describe('已完成功能跨模块串联演示', () => {
       await test.step(`3. Pipeline 数据集读取节点绑定当前数据集：${dataset.name}`, async () => {
         await page.getByText('Pipeline编辑器').click();
         await expect(page.getByRole('heading', { name: 'Pipeline编辑器' })).toBeVisible();
-        await expect(page.getByText('F011 完整 Pipeline 能力')).toBeVisible();
+        await expect(page.getByText('F017 视觉预处理闭环')).toBeVisible();
         await expect(page.getByText('DAG 画布', { exact: true })).toBeVisible();
-        await expect(page.getByText('数据集读取', { exact: true }).first()).toBeVisible();
+        await expect(page.getByText('图片质量提高').first()).toBeVisible();
         await page.locator('.node-config-card textarea').fill(JSON.stringify({ datasetId: dataset.id }, null, 2));
         await page.getByRole('button', { name: '💾 保存' }).click();
         await expect(page.getByText('Pipeline DAG 已保存并通过校验')).toBeVisible();
@@ -131,15 +131,15 @@ test.describe('已完成功能跨模块串联演示', () => {
       await test.step(`4. Pipeline DAG 配置、快照与沙箱运行：${dataset.name}`, async () => {
         await page.getByRole('button', { name: /＋ 添加算子/ }).click();
         await expect(page.getByText('添加算子', { exact: true })).toBeVisible();
-        await page.locator('.ant-drawer').getByText(dataset.type === 'IMAGE' ? '图像缩放' : '格式转换').first().click();
+        await page.locator('.ant-drawer').getByText(dataset.type === 'IMAGE' ? '图片加水印' : '固定帧率抽帧').first().click();
         await expect(page.getByText(/已添加算子：/)).toBeVisible();
         await page.getByRole('button', { name: '保存快照' }).click();
         await expect(page.getByText('版本快照已保存')).toBeVisible();
         await page.getByRole('button', { name: /沙箱运行/ }).click();
-        await expect(page.getByText('沙箱运行完成，已生成输出数据集与血缘')).toBeVisible();
-        await expect(page.getByText('SANDBOX_PIPELINE_RUN_SUCCEEDED')).toBeVisible();
+        await expect(page.getByText('视觉预处理运行完成，已生成待确认预处理数据集。')).toBeVisible();
+        await expect(page.getByLabel('沙箱运行详情').getByText('VISUAL_PREPROCESS_RUN_SUCCEEDED')).toBeVisible();
         await page.keyboard.press('Escape');
-        await expect(page.getByText('SANDBOX_PIPELINE_RUN_SUCCEEDED')).toBeHidden();
+        await expect(page.getByLabel('沙箱运行详情')).toBeHidden();
       });
 
       if (dataset.shouldAnnotate) {
@@ -148,12 +148,13 @@ test.describe('已完成功能跨模块串联演示', () => {
           await expect(page.getByRole('heading', { name: '标注任务管理' })).toBeVisible();
           await page.getByRole('button', { name: '＋ 新建标注任务' }).click();
           await expect(page.getByRole('dialog', { name: '＋ 新建标注任务' })).toBeVisible();
+          await page.getByRole('textbox', { name: '标签列表' }).fill('裂纹，气孔，夹渣');
           await page.getByRole('button', { name: '创建任务' }).click();
-          await expect(page.getByText('标注任务已创建并完成分派')).toBeVisible();
+          await expect(page.getByRole('dialog', { name: '＋ 新建标注任务' })).toBeHidden();
           await page.locator('a', { hasText: '同步 Label Studio project' }).click();
           await expect(page.getByText(/PROJECT_SYNCED/)).toBeVisible();
 
-          await page.getByText('标注工作台').click();
+          await page.getByRole('button', { name: '进入标注' }).first().click();
           await expect(page.getByRole('heading', { name: '标注工作台' })).toBeVisible();
           await expect(page.getByLabel('原生标注画布')).toBeVisible();
           await page.getByRole('button', { name: '同步 Label Studio task' }).click();
@@ -175,8 +176,8 @@ test.describe('已完成功能跨模块串联演示', () => {
         await test.step('5. 文本数据集不进入图像标注，演示停在加工后可供下游模型使用', async () => {
           await page.getByText('算子广场').click();
           await expect(page.getByRole('heading', { name: '算子广场' })).toBeVisible();
-          await expect(page.getByText('HTTP 算子安全说明')).toBeVisible();
-          await expect(page.getByText('格式转换').first()).toBeVisible();
+          await expect(page.getByText('视觉预处理冻结能力说明')).toBeVisible();
+          await expect(page.getByText('视频抽帧').first()).toBeVisible();
         });
       }
     });

@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Descriptions, Drawer, Form, Input, Modal, Select, Space, Steps, Table, Tabs, Tag, Typography, Upload, message } from 'antd';
+import { Alert, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Modal, Select, Space, Steps, Table, Tabs, Tag, Typography, Upload, message } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ChangeEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
@@ -8,6 +8,7 @@ import {
   platformApi,
   type AnnotationLabelTemplate,
   type AnnotationLabelTemplateInput,
+  type AnnotationSourceDataset,
   type AnnotationExternalBinding,
   type AnnotationReviewItem,
   type AnnotationTaskSummary,
@@ -27,6 +28,7 @@ import {
   type PipelineDetail,
   type PipelineEdge,
   type PipelineNode,
+  type PipelineRunDetail,
   type PipelineSaveInput,
   type PipelineVariable,
 } from '../platform/platformApi';
@@ -36,7 +38,7 @@ const color = (status?: string) => ['ACTIVE', 'PUBLISHED', 'TESTED', 'OK', 'AVAI
   ? 'green'
   : ['UNCONFIGURED', 'DRAFT', 'PAUSED'].includes(status ?? '') ? 'orange' : ['FAILED', 'DISABLED', 'ARCHIVED'].includes(status ?? '') ? 'red' : 'blue';
 const fmtSize = (n?: number | null) => !n ? '0 B' : n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : n > 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${n} B`;
-const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', AUDIO_VIDEO: '影音', TEXT: '文本', TABULAR: '表格', EVENT: '事件', TIME_SERIES: '时序库', TELEMETRY: '遥测', FILE: '文件', OBJECT: '对象', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '外部接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
+const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', AUDIO_VIDEO: '影音', TEXT: '文本', TABULAR: '表格', EVENT: '事件', TIME_SERIES: '时序库', TELEMETRY: '遥测', FILE: '文件', OBJECT: '对象', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '外部接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件', VISUAL_PREPROCESS: '视觉预处理', IMAGE_PROCESSING: '图片处理', VIDEO_PROCESSING: '视频处理', QUALITY_ENHANCEMENT: '质量增强', WATERMARK: '水印', FRAME_EXTRACTION: '抽帧', TRADITIONAL_ONLY: '传统增强', CONFIRMED: '已确认', PENDING_CONFIRMATION: '待确认', READY: '就绪' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
 const localFileRowKey = (file: File) => `${(file as File & { webkitRelativePath?: string }).webkitRelativePath ?? file.name}-${file.size}-${file.lastModified}`;
 const localFileRelativePath = (file: File) => (file as File & { webkitRelativePath?: string }).webkitRelativePath ?? '';
 const LOCAL_UPLOAD_BATCH_MAX_FILES = 10;
@@ -89,11 +91,33 @@ const safeJson = (value?: string | null) => {
   }
 };
 
+const parseObjectConfig = (value?: string | null) => {
+  try {
+    const parsed = JSON.parse(value || '{}') as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+};
+
+const stringifyObjectConfig = (value: Record<string, unknown>) => JSON.stringify(value, null, 2);
+const stableJson = (value: unknown) => JSON.stringify(value);
+const fmtDateTime = (value?: string | null) => value ? value.replace('T', ' ').replace('Z', '') : '-';
+
 const toSaveInput = (detail: PipelineDetail, nodes: PipelineNode[], variables: PipelineVariable[]): PipelineSaveInput => ({
   name: detail.pipeline.name,
   tenantId: detail.pipeline.tenantId,
   projectId: detail.pipeline.projectId,
   description: detail.pipeline.description,
+  templateCode: detail.pipeline.templateCode,
+  sourceDatasetId: detail.pipeline.sourceDatasetId,
+  sourceVersionId: detail.pipeline.sourceVersionId,
+  resultDatasetConfig: {
+    datasetName: `${detail.pipeline.name} 输出`,
+    datasetType: 'PREPROCESSED',
+    datasetDataType: detail.pipeline.sourceDatasetDataType === 'AUDIO_VIDEO' ? 'IMAGE' : 'IMAGE',
+    autoActivate: false,
+  },
   nodes,
   edges: detail.edges,
   variables,
@@ -224,6 +248,266 @@ function useAnnotationSamplePreviewUrls(fileIds: string[]) {
   );
 
   return previewUrls;
+}
+
+const visualOperatorLabel = (operator: OperatorSummary) => {
+  const parts = [
+    operator.categoryGroup ? txt(operator.categoryGroup) : null,
+    txt(operator.category),
+    operator.subCategory ? txt(operator.subCategory) : null,
+  ].filter(Boolean);
+  return parts.join(' / ');
+};
+
+const datasetStatusText = (status?: string | null) => ({
+  ACTIVE: '已激活',
+  CONFIRMED: '已确认',
+  PENDING_CONFIRMATION: '待确认',
+  READY: '就绪',
+  DRAFT: '草稿',
+  ARCHIVED: '已归档',
+} as Record<string, string>)[status ?? ''] ?? status ?? '-';
+
+const annotationSourceLabel = (item: AnnotationSourceDataset) => [
+  item.name,
+  `（${item.datasetId}）`,
+  `· ${txt(item.datasetType)}/${txt(item.dataType)}`,
+  item.sourceDatasetName ? `· 来源 ${item.sourceDatasetName}` : '',
+  `· ${datasetStatusText(item.status)}`,
+].join('');
+
+const defaultPipelineNodeConfig = (operator: OperatorSummary, detail: PipelineDetail) => {
+  switch (operator.operatorId) {
+    case 'OP-READ-DATASET':
+      return JSON.stringify({ datasetId: detail.pipeline.sourceDatasetId ?? 'DATASET-WELD-DEFECT' });
+    case 'OP-IMG-WATERMARK':
+      return JSON.stringify({
+        previewWatermarkEnabled: true,
+        artifactWatermarkEnabled: false,
+        watermarkText: '',
+        position: 'BOTTOM_RIGHT',
+        opacity: 0.4,
+      });
+    case 'OP-IMG-ENHANCE':
+      return JSON.stringify({
+        enhancementMode: 'TRADITIONAL_ONLY',
+        sharpen: true,
+        denoise: true,
+        brightnessContrastOptimize: true,
+      });
+    case 'OP-IMG-DENOISE':
+      return JSON.stringify({ strength: 0.4 });
+    case 'OP-IMG-SHARPEN':
+      return JSON.stringify({ strength: 0.6 });
+    case 'OP-VIDEO-FRAME-EXTRACT':
+      return JSON.stringify({ mode: 'FIXED_INTERVAL', intervalSeconds: 2, outputImageFormat: 'JPG' });
+    case 'OP-VIDEO-FPS-EXTRACT':
+      return JSON.stringify({ mode: 'FIXED_FPS', targetFps: 5, outputImageFormat: 'JPG' });
+    case 'OP-VIDEO-KEYFRAME':
+      return JSON.stringify({ mode: 'KEYFRAME' });
+    case 'OP-VIDEO-SEGMENT':
+      return JSON.stringify({ segmentSeconds: 10 });
+    case 'OP-VIDEO-RESOLUTION-UNIFY':
+      return JSON.stringify({ width: 1280, height: 720 });
+    case 'OP-VIDEO-FPS-UNIFY':
+      return JSON.stringify({ targetFps: 25 });
+    case 'OP-IMAGE-RESIZE':
+      return JSON.stringify({ width: 1280, height: 720, keepAspectRatio: true });
+    case 'OP-FORMAT-CONVERT':
+      return JSON.stringify({ targetFormat: 'COCO' });
+    default:
+      return '{}';
+  }
+};
+
+function PipelineNodeConfigForm({
+  node,
+  operator,
+  onChange,
+}: {
+  node?: PipelineNode;
+  operator?: Pick<OperatorSummary, 'operatorId' | 'name' | 'enhancementMode' | 'defaultOutputDatasetDataType' | 'annotationRiskLevel'> | null;
+  onChange: (configJson: string) => void;
+}) {
+  const config = useMemo(() => parseObjectConfig(node?.configJson), [node?.configJson]);
+  const operatorId = operator?.operatorId ?? node?.operatorId;
+  if (!node || !operatorId) {
+    return <Typography.Text type="secondary">请选择一个算子后编辑参数。</Typography.Text>;
+  }
+  if (!config) {
+    return <Alert type="warning" showIcon message="当前参数 JSON 无法解析" description="请先修复原始 JSON，再继续使用结构化参数面板。" />;
+  }
+
+  const updateField = (key: string, value: unknown) => {
+    onChange(stringifyObjectConfig({ ...config, [key]: value }));
+  };
+  const booleanOptions = [
+    { value: true, label: '开启' },
+    { value: false, label: '关闭' },
+  ];
+
+  const renderBoolean = (label: string, field: string) => (
+    <Form.Item label={label}>
+      <Select value={Boolean(config[field])} onChange={(value) => updateField(field, value)} options={booleanOptions} />
+    </Form.Item>
+  );
+
+  switch (operatorId) {
+    case 'OP-READ-DATASET':
+      return (
+        <Form layout="vertical">
+          <Form.Item label="源数据集ID">
+            <Input value={String(config.datasetId ?? '')} onChange={(event) => updateField('datasetId', event.target.value)} />
+          </Form.Item>
+        </Form>
+      );
+    case 'OP-IMG-WATERMARK':
+      return (
+        <Space direction="vertical" className="full-width">
+          <Alert type="info" showIcon message="预览水印与产物水印分离" description="默认仅开启预览水印；若开启产物水印，结果集默认不可进入标注链路。" />
+          <Form layout="vertical">
+            {renderBoolean('预览水印', 'previewWatermarkEnabled')}
+            {renderBoolean('产物水印', 'artifactWatermarkEnabled')}
+            <Form.Item label="水印文本">
+              <Input value={String(config.watermarkText ?? '')} onChange={(event) => updateField('watermarkText', event.target.value)} placeholder="例如：SMP Preview" />
+            </Form.Item>
+            <Form.Item label="位置">
+              <Select
+                value={String(config.position ?? 'BOTTOM_RIGHT')}
+                onChange={(value) => updateField('position', value)}
+                options={[
+                  { value: 'TOP_LEFT', label: '左上' },
+                  { value: 'TOP_RIGHT', label: '右上' },
+                  { value: 'BOTTOM_LEFT', label: '左下' },
+                  { value: 'BOTTOM_RIGHT', label: '右下' },
+                  { value: 'CENTER', label: '居中' },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item label="透明度">
+              <InputNumber min={0.1} max={1} step={0.1} style={{ width: '100%' }} value={typeof config.opacity === 'number' ? config.opacity : 0.4} onChange={(value) => updateField('opacity', value ?? 0.4)} />
+            </Form.Item>
+          </Form>
+        </Space>
+      );
+    case 'OP-IMG-ENHANCE':
+      return (
+        <Space direction="vertical" className="full-width">
+          <Alert type="info" showIcon message="一期仅支持传统增强" description="固定支持锐化、去噪、亮度/对比度优化，不支持 AI 超分或生成式修复。" />
+          <Form layout="vertical">
+            <Form.Item label="增强模式">
+              <Select value={String(config.enhancementMode ?? operator?.enhancementMode ?? 'TRADITIONAL_ONLY')} onChange={(value) => updateField('enhancementMode', value)} options={[{ value: 'TRADITIONAL_ONLY', label: '传统增强' }]} />
+            </Form.Item>
+            {renderBoolean('锐化增强', 'sharpen')}
+            {renderBoolean('去噪增强', 'denoise')}
+            {renderBoolean('亮度/对比度优化', 'brightnessContrastOptimize')}
+          </Form>
+        </Space>
+      );
+    case 'OP-IMG-DENOISE':
+    case 'OP-IMG-SHARPEN':
+      return (
+        <Form layout="vertical">
+          <Form.Item label="强度">
+            <InputNumber min={0} max={1} step={0.1} style={{ width: '100%' }} value={typeof config.strength === 'number' ? config.strength : operatorId === 'OP-IMG-SHARPEN' ? 0.6 : 0.4} onChange={(value) => updateField('strength', value ?? (operatorId === 'OP-IMG-SHARPEN' ? 0.6 : 0.4))} />
+          </Form.Item>
+        </Form>
+      );
+    case 'OP-VIDEO-FRAME-EXTRACT':
+      return (
+        <Space direction="vertical" className="full-width">
+          <Alert type="info" showIcon message="抽帧结果默认输出图片型 PREPROCESSED 数据集" />
+          <Form layout="vertical">
+            <Form.Item label="抽帧模式">
+              <Select value={String(config.mode ?? 'FIXED_INTERVAL')} onChange={(value) => updateField('mode', value)} options={[{ value: 'FIXED_INTERVAL', label: '固定间隔抽帧' }]} />
+            </Form.Item>
+            <Form.Item label="抽帧间隔（秒）">
+              <InputNumber min={1} step={1} style={{ width: '100%' }} value={typeof config.intervalSeconds === 'number' ? config.intervalSeconds : 2} onChange={(value) => updateField('intervalSeconds', value ?? 2)} />
+            </Form.Item>
+            <Form.Item label="输出图片格式">
+              <Select value={String(config.outputImageFormat ?? 'JPG')} onChange={(value) => updateField('outputImageFormat', value)} options={[{ value: 'JPG', label: 'JPG' }, { value: 'PNG', label: 'PNG' }]} />
+            </Form.Item>
+          </Form>
+        </Space>
+      );
+    case 'OP-VIDEO-FPS-EXTRACT':
+      return (
+        <Space direction="vertical" className="full-width">
+          <Alert type="info" showIcon message="抽帧结果默认输出图片型 PREPROCESSED 数据集" />
+          <Form layout="vertical">
+            <Form.Item label="抽帧模式">
+              <Select value={String(config.mode ?? 'FIXED_FPS')} onChange={(value) => updateField('mode', value)} options={[{ value: 'FIXED_FPS', label: '固定帧率抽帧' }]} />
+            </Form.Item>
+            <Form.Item label="目标帧率">
+              <InputNumber min={1} step={1} style={{ width: '100%' }} value={typeof config.targetFps === 'number' ? config.targetFps : 5} onChange={(value) => updateField('targetFps', value ?? 5)} />
+            </Form.Item>
+            <Form.Item label="输出图片格式">
+              <Select value={String(config.outputImageFormat ?? 'JPG')} onChange={(value) => updateField('outputImageFormat', value)} options={[{ value: 'JPG', label: 'JPG' }, { value: 'PNG', label: 'PNG' }]} />
+            </Form.Item>
+          </Form>
+        </Space>
+      );
+    case 'OP-VIDEO-KEYFRAME':
+      return (
+        <Space direction="vertical" className="full-width">
+          <Alert type="info" showIcon message="关键帧提取为次优先策略" description="一期仍优先推荐固定间隔抽帧或固定帧率抽帧。" />
+          <Form layout="vertical">
+            <Form.Item label="抽帧模式">
+              <Select value={String(config.mode ?? 'KEYFRAME')} onChange={(value) => updateField('mode', value)} options={[{ value: 'KEYFRAME', label: '关键帧提取' }]} />
+            </Form.Item>
+          </Form>
+        </Space>
+      );
+    case 'OP-VIDEO-SEGMENT':
+      return (
+        <Form layout="vertical">
+          <Form.Item label="分段时长（秒）">
+            <InputNumber min={1} step={1} style={{ width: '100%' }} value={typeof config.segmentSeconds === 'number' ? config.segmentSeconds : 10} onChange={(value) => updateField('segmentSeconds', value ?? 10)} />
+          </Form.Item>
+        </Form>
+      );
+    case 'OP-VIDEO-RESOLUTION-UNIFY':
+    case 'OP-IMAGE-RESIZE':
+      return (
+        <Form layout="vertical">
+          <Form.Item label="宽度">
+            <InputNumber min={1} step={1} style={{ width: '100%' }} value={typeof config.width === 'number' ? config.width : 1280} onChange={(value) => updateField('width', value ?? 1280)} />
+          </Form.Item>
+          <Form.Item label="高度">
+            <InputNumber min={1} step={1} style={{ width: '100%' }} value={typeof config.height === 'number' ? config.height : 720} onChange={(value) => updateField('height', value ?? 720)} />
+          </Form.Item>
+          {operatorId === 'OP-IMAGE-RESIZE' ? renderBoolean('保持宽高比', 'keepAspectRatio') : null}
+        </Form>
+      );
+    case 'OP-VIDEO-FPS-UNIFY':
+      return (
+        <Form layout="vertical">
+          <Form.Item label="统一目标帧率">
+            <InputNumber min={1} step={1} style={{ width: '100%' }} value={typeof config.targetFps === 'number' ? config.targetFps : 25} onChange={(value) => updateField('targetFps', value ?? 25)} />
+          </Form.Item>
+        </Form>
+      );
+    case 'OP-FORMAT-CONVERT':
+      return (
+        <Form layout="vertical">
+          <Form.Item label="目标格式">
+            <Select
+              value={String(config.targetFormat ?? 'COCO')}
+              onChange={(value) => updateField('targetFormat', value)}
+              options={[
+                { value: 'COCO', label: 'COCO' },
+                { value: 'YOLO', label: 'YOLO' },
+                { value: 'JSONL', label: 'JSONL' },
+                { value: 'PNG', label: 'PNG' },
+                { value: 'JPG', label: 'JPG' },
+              ]}
+            />
+          </Form.Item>
+        </Form>
+      );
+    default:
+      return <Alert type="info" showIcon message={`${operator?.name ?? node.label} 当前未定义专属参数面板，可直接编辑下方原始 JSON。`} />;
+  }
 }
 
 type DraftBox = { x: number; y: number; w: number; h: number };
@@ -513,7 +797,7 @@ export function AnnotationTasksPage() {
   const templateSchema = Form.useWatch('labelSchemaJson', templateForm);
   const overview = useQuery({ queryKey: ['annotation-overview'], queryFn: dataApi.annotationOverview });
   const tasks = useQuery({ queryKey: ['annotation-tasks', status], queryFn: () => dataApi.annotationTasks({ status }) });
-  const datasets = useQuery({ queryKey: ['datasets-active-for-annotation'], queryFn: () => dataApi.datasets({ status: 'ACTIVE' }) });
+  const sourceDatasets = useQuery({ queryKey: ['annotation-source-datasets', taskScene], queryFn: () => dataApi.annotationSourceDatasets({ scene: taskScene, pageSize: 100 }) });
   const templates = useQuery({ queryKey: ['annotation-templates'], queryFn: () => dataApi.labelTemplates() });
   const inv = useCallback(() => Promise.all([
     qc.invalidateQueries({ queryKey: ['annotation-overview'] }),
@@ -569,8 +853,7 @@ export function AnnotationTasksPage() {
   const syncLs = useMutation({ mutationFn: dataApi.syncLabelStudioProject, onSuccess: async (r) => { await inv(); (r.lastSyncStatus === 'PROJECT_SYNCED' ? msg.success : msg.warning)(`Label Studio ${r.lastSyncStatus}: ${r.diagnosticMessage}`); }, onError: (e: Error) => msg.error(e.message) });
   const rows = tasks.data?.items ?? overview.data?.tasks ?? [];
   const publishedTemplates = (templates.data ?? overview.data?.templates ?? []).filter((item) => item.status === 'PUBLISHED');
-  const activeDatasets = (datasets.data?.items ?? []).filter((item) => item.status === 'ACTIVE');
-  const annotationDatasets = activeDatasets.filter((item) => item.dataType === 'IMAGE');
+  const annotationDatasets = (sourceDatasets.data?.items ?? []).filter((item) => item.dataType === 'IMAGE');
   const selectableTaskTemplates = publishedTemplates.filter((item) => item.scene === taskScene);
   const selectedTaskDataset = annotationDatasets.find((item) => item.datasetId === selectedTaskDatasetId);
   const openWorkbench = useCallback((taskId: string) => {
@@ -630,7 +913,7 @@ export function AnnotationTasksPage() {
   }, [selectedTaskDataset, taskForm, wizardOpen]);
 
   useEffect(() => {
-    if (!loc.state?.openCreateTask || datasets.isLoading) return;
+    if (!loc.state?.openCreateTask || sourceDatasets.isLoading) return;
     const timer = window.setTimeout(() => {
       openTaskWizard(loc.state?.datasetId);
       if (loc.state?.datasetId && !annotationDatasets.some((item) => item.datasetId === loc.state?.datasetId)) {
@@ -639,7 +922,7 @@ export function AnnotationTasksPage() {
     }, 0);
     nav('/ann', { replace: true });
     return () => window.clearTimeout(timer);
-  }, [annotationDatasets, datasets.isLoading, loc.state, msg, nav, openTaskWizard]);
+  }, [annotationDatasets, sourceDatasets.isLoading, loc.state, msg, nav, openTaskWizard]);
   const tabStatus: Record<string, string | undefined> = { all: undefined, running: 'IN_PROGRESS', assigned: 'ASSIGNED', review: 'PENDING_REVIEW', done: 'COMPLETED' };
   const annSummaryCards = [
     { n: overview.data?.stats.total ?? rows.length, l: '全部任务' },
@@ -697,10 +980,10 @@ export function AnnotationTasksPage() {
           if (!v.sourceDatasetId) return;
           createTask.mutate({ ...v, sourceDatasetId: v.sourceDatasetId, sourceVersionId: v.sourceVersionId ?? undefined });
         }} initialValues={annotationTaskDefaults}>
-          <Form.Item name="sourceDatasetId" label="源数据集（仅 ACTIVE 图片数据集）" rules={[{ required: true, message: '请选择源数据集' }]}>
+          <Form.Item name="sourceDatasetId" label="源数据集（仅 ACTIVE 且可标注图片数据集）" rules={[{ required: true, message: '请选择源数据集' }]}>
             <Select
               placeholder="请选择要创建标注任务的数据集"
-              options={annotationDatasets.map((d) => ({ value: d.datasetId, label: `${d.name}（${d.datasetId}）· 当前版本 ${d.currentVersionName ?? d.currentVersionId ?? '未发布'} · ${d.status}` }))}
+              options={annotationDatasets.map((d) => ({ value: d.datasetId, label: annotationSourceLabel(d) }))}
             />
           </Form.Item>
           <Form.Item name="sourceVersionId" label="数据版本"><Input placeholder="选择数据集后自动带出 currentVersionId" /></Form.Item>
@@ -873,9 +1156,18 @@ export function AnnotationWorkbenchPage() {
   const canEditSelectedItem = canEditWorkItem(selectedItem?.status);
   const canSubmit = selectedItem && selectedItem.status !== 'APPROVED' && selectedItem.status !== 'REVIEW_PENDING';
   const selectedSamplePreviewUrl = selectedItem?.sampleFileId ? samplePreviewUrls[selectedItem.sampleFileId] : null;
-  const selectedSampleImage = selectedItem ? (selectedItem.sampleFileId
-    ? (selectedSamplePreviewUrl ? { url: selectedSamplePreviewUrl, title: selectedItem.sampleKey, source: 'annotation_work_item.sampleFileId' } : null)
-    : (industrialSampleImages[selectedItem.sampleKey] ?? (selectedItem.sampleImageUrl ? { url: selectedItem.sampleImageUrl, title: selectedItem.sampleKey, source: 'annotation_work_item.sampleImageUrl' } : null))) : null;
+  const selectedSampleMetadata = selectedItem ? industrialSampleImages[selectedItem.sampleKey] : null;
+  const selectedSampleImage = selectedItem
+    ? selectedItem.sampleFileId
+      ? (selectedSamplePreviewUrl
+        ? {
+          url: selectedSamplePreviewUrl,
+          title: selectedSampleMetadata ? `${selectedItem.sampleKey} · ${selectedSampleMetadata.title}` : selectedItem.sampleKey,
+          source: selectedSampleMetadata?.source ?? 'annotation_work_item.sampleFileId',
+        }
+        : null)
+      : (selectedSampleMetadata ?? (selectedItem.sampleImageUrl ? { url: selectedItem.sampleImageUrl, title: selectedItem.sampleKey, source: 'annotation_work_item.sampleImageUrl' } : null))
+    : null;
   const selectedSampleImageKey = selectedItem?.sampleFileId ?? selectedItem?.sampleImageUrl ?? selectedItem?.sampleKey ?? 'EMPTY';
   const selectedSampleImageFailed = Boolean(selectedSampleImage && failedCanvasPreviewKeys[selectedSampleImageKey]);
   const currentBox = boxes.find((box) => box.id === selectedShapeId);
@@ -1272,9 +1564,6 @@ export function AnnotationWorkbenchPage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [selectedIndex, scene, taskId]);
-  useEffect(() => {
-    setActiveClass((current) => normalizeLabelIndex(current, workbenchLabels));
-  }, [workbenchLabels]);
   useEffect(() => {
     if (!selectedItem) return;
     const parsed = parseAnnotationPayload(scene, selectedItem.annotationJson, workbenchLabels);
@@ -1703,10 +1992,11 @@ export function DataPipelineStandardPage() {
   const [runOpen, setRunOpen] = useState(false);
   const [operatorKeyword, setOperatorKeyword] = useState('');
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>();
+  const [latestRun, setLatestRun] = useState<PipelineRunDetail | null>(null);
   const pipelines = useQuery({ queryKey: ['pipelines'], queryFn: () => dataApi.pipelines() });
   const pipelineId = selectedPipelineId ?? pipelines.data?.items[0]?.pipelineId;
   const pipeline = useQuery({ queryKey: ['pipeline-detail', pipelineId], queryFn: () => dataApi.pipelineDetail(pipelineId!), enabled: Boolean(pipelineId) });
-  const operators = useQuery({ queryKey: ['operators', operatorKeyword], queryFn: () => dataApi.operators({ keyword: operatorKeyword }) });
+  const operators = useQuery({ queryKey: ['operators', operatorKeyword], queryFn: () => dataApi.operators({ keyword: operatorKeyword, categoryGroup: 'VISUAL_PREPROCESS', supportsPreview: true }) });
   const overview = useQuery({ queryKey: ['data-standard-overview'], queryFn: dataApi.dataStandardOverview });
   const profile = useQuery({ queryKey: ['data-standard-profile', selectedDatasetId], queryFn: () => dataApi.dataStandardProfile(selectedDatasetId!), enabled: Boolean(selectedDatasetId) });
   const nodes = draftNodes ?? pipeline.data?.nodes ?? [];
@@ -1716,6 +2006,13 @@ export function DataPipelineStandardPage() {
   );
   const selectedNode = nodes.find((item) => item.nodeId === selectedNodeId) ?? nodes[0];
   const selectedOperator = operators.data?.items.find((item) => item.operatorId === selectedNode?.operatorId);
+  const validationIssues = pipeline.data?.validation.errors ?? [];
+  const validationWarnings = pipeline.data?.validation.warnings ?? [];
+  const selectedNodeIndex = selectedNode ? nodes.findIndex((item) => item.nodeId === selectedNode.nodeId) : -1;
+  const hasDraftChanges = useMemo(
+    () => stableJson(nodes) !== stableJson(pipeline.data?.nodes ?? []),
+    [nodes, pipeline.data?.nodes],
+  );
   const savePipeline = useMutation({
     mutationFn: () => dataApi.updatePipeline(pipelineId!, toSaveInput(pipeline.data!, nodes, variables)),
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] }); msg.success('Pipeline DAG 已保存并通过校验'); },
@@ -1733,7 +2030,39 @@ export function DataPipelineStandardPage() {
   });
   const runPipeline = useMutation({
     mutationFn: () => dataApi.runPipeline(pipelineId!, { triggerMode: 'MANUAL', sampleDatasetId: 'DATASET-WELD-DEFECT' }),
-    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] }); await qc.invalidateQueries({ queryKey: ['datasets'] }); setRunOpen(true); msg.success('沙箱运行完成，已生成输出数据集与血缘'); },
+    onSuccess: async (result) => {
+      await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+      await qc.invalidateQueries({ queryKey: ['datasets'] });
+      await qc.invalidateQueries({ queryKey: ['annotation-source-datasets'] });
+      setLatestRun(result);
+      setRunOpen(true);
+      msg.success('视觉预处理运行完成，已生成待确认预处理数据集。');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const confirmPreprocessedDataset = useMutation({
+    mutationFn: (datasetId: string) => dataApi.confirmPreprocessedDataset(datasetId, { decision: 'CONFIRM', comment: '预处理样例满足标注前检查要求' }),
+    onSuccess: async (result) => {
+      if (latestRun) {
+        setLatestRun({ ...latestRun, activation: result });
+      }
+      await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+      await qc.invalidateQueries({ queryKey: ['annotation-source-datasets'] });
+      msg.success('预处理结果已确认，可继续激活。');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const activatePreprocessedDataset = useMutation({
+    mutationFn: (input: { datasetId: string; targetVersionId?: string | null }) => dataApi.activatePreprocessedDataset(input.datasetId, { targetVersionId: input.targetVersionId ?? null, activationNote: '人工确认通过，允许进入标注来源列表' }),
+    onSuccess: async (result) => {
+      if (latestRun) {
+        setLatestRun({ ...latestRun, activation: result });
+      }
+      await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+      await qc.invalidateQueries({ queryKey: ['datasets'] });
+      await qc.invalidateQueries({ queryKey: ['annotation-source-datasets'] });
+      msg.success('预处理数据集已激活，可用于后续标注。');
+    },
     onError: (e: Error) => msg.error(e.message),
   });
   const createTask = useMutation({
@@ -1750,10 +2079,26 @@ export function DataPipelineStandardPage() {
   const tasks = overview.data?.tasks ?? [];
   const selected = profile.data ?? profiles.find((i) => i.datasetId === selectedDatasetId) ?? profiles[0];
   const marketplaceOperators = operators.data?.items ?? [];
+  const previewDatasetId = latestRun?.run.outputDatasetId ?? pipeline.data?.runs[0]?.outputDatasetId ?? null;
+  const activation = latestRun?.activation;
+  const previewProcessParams = parseObjectConfig(latestRun?.preview?.processParamsJson);
+  const previewOperatorChainJson = latestRun?.preview?.operatorChainJson ?? null;
+  const previewOperatorChain = useMemo(() => {
+    const parsed = parseObjectConfig(previewOperatorChainJson);
+    if (Array.isArray(parsed)) return parsed.map(String);
+    try {
+      const fallback = JSON.parse(previewOperatorChainJson ?? '[]') as unknown;
+      return Array.isArray(fallback) ? fallback.map(String) : [];
+    } catch {
+      return [];
+    }
+  }, [previewOperatorChainJson]);
   const setNodes = (updater: (items: PipelineNode[]) => PipelineNode[]) => {
     setDraftNodes((items) => updater(items ?? pipeline.data?.nodes ?? []));
   };
   const addNode = (operator: OperatorSummary) => {
+    const pipelineDetail = pipeline.data;
+    if (!pipelineDetail) return;
     const nextId = `node-${operator.operatorId.toLowerCase().replaceAll('_', '-').replaceAll('op-', '')}-${nodes.length + 1}`;
     const nextNode: PipelineNode = {
       nodeId: nextId,
@@ -1762,7 +2107,7 @@ export function DataPipelineStandardPage() {
       label: operator.name,
       positionX: 120 + nodes.length * 160,
       positionY: 260,
-      configJson: operator.operatorId === 'OP-READ-DATASET' ? '{"datasetId":"DATASET-WELD-DEFECT"}' : '{}',
+      configJson: defaultPipelineNodeConfig(operator, pipelineDetail),
       status: 'READY',
     };
     setNodes((items) => [...items, nextNode]);
@@ -1775,6 +2120,34 @@ export function DataPipelineStandardPage() {
   };
   const updateSelectedNodeConfig = (configJson: string) => {
     setNodes((items) => items.map((item) => item.nodeId === selectedNode?.nodeId ? { ...item, configJson } : item));
+  };
+  const formatSelectedNodeConfig = () => {
+    const config = parseObjectConfig(selectedNode?.configJson);
+    if (!config) {
+      msg.warning('当前 JSON 无法格式化，请先修复语法错误。');
+      return;
+    }
+    updateSelectedNodeConfig(stringifyObjectConfig(config));
+    msg.success('当前节点配置已格式化。');
+  };
+  const resetSelectedNodeConfig = () => {
+    if (!selectedNode || !selectedOperator || !pipeline.data) return;
+    updateSelectedNodeConfig(defaultPipelineNodeConfig(selectedOperator, pipeline.data));
+    msg.success(`已恢复 ${selectedOperator.name} 的默认参数。`);
+  };
+  const selectAdjacentNode = (offset: -1 | 1) => {
+    if (!nodes.length) return;
+    const nextIndex = selectedNodeIndex < 0 ? 0 : Math.min(nodes.length - 1, Math.max(0, selectedNodeIndex + offset));
+    setSelectedNodeId(nodes[nextIndex]?.nodeId);
+  };
+  const focusFirstValidationIssue = () => {
+    const firstIssueNodeId = validationIssues.find((item) => item.nodeId)?.nodeId;
+    if (!firstIssueNodeId) {
+      msg.info('当前校验问题没有绑定到具体节点。');
+      return;
+    }
+    setSelectedNodeId(firstIssueNodeId);
+    msg.warning('已定位到首个校验问题节点。');
   };
   const standardOperators = [
     ['数据校验', '验证 Schema 合法性、范围约束、类型一致性'],
@@ -1790,7 +2163,7 @@ export function DataPipelineStandardPage() {
       <div className="page-hero">
         <div>
           <Typography.Title level={3}>Pipeline编辑器</Typography.Title>
-          <Typography.Text type="secondary">图像预处理 Pipeline · v1.2 · 已保存 · 控制平面 + 沙箱 runner</Typography.Text>
+          <Typography.Text type="secondary">视觉预处理 Pipeline · 图片/视频预处理算子 · 运行后生成待确认 PREPROCESSED 数据集</Typography.Text>
         </div>
         <Space wrap>
           <Select
@@ -1805,11 +2178,28 @@ export function DataPipelineStandardPage() {
           />
           <Button onClick={() => setAddOpen(true)}>＋ 添加算子</Button>
           <Button onClick={() => saveVersion.mutate()} loading={saveVersion.isPending}>保存快照</Button>
-          <Button onClick={() => savePipeline.mutate()} loading={savePipeline.isPending}>💾 保存</Button>
-          <Button type="primary" onClick={() => runPipeline.mutate()} loading={runPipeline.isPending}>▶ 沙箱运行</Button>
+          <Button type={hasDraftChanges ? 'primary' : 'default'} onClick={() => savePipeline.mutate()} loading={savePipeline.isPending}>💾 保存</Button>
+          <Button type="primary" onClick={() => runPipeline.mutate()} loading={runPipeline.isPending} disabled={!pipeline.data.validation.valid || nodes.length === 0}>▶ 沙箱运行</Button>
         </Space>
       </div>
-      <Alert type="info" showIcon title="F011 完整 Pipeline 能力" description="本页按原型补齐顶部工具栏、左侧算子库、DAG 画布、节点配置、运行历史、版本快照、全局变量；真实分布式调度目标保留 TODO_CONFIRM_PIPELINE_SCHEDULER_TARGET。" style={{ marginBottom: 16 }} />
+      <Alert type="info" showIcon title="F017 视觉预处理闭环" description="固定图片传统增强、视频抽帧输出图片型 PREPROCESSED 数据集；运行成功后不会自动激活，必须先预览确认再人工激活。" style={{ marginBottom: 16 }} />
+      <div className="pipeline-summary-grid">
+        <Card size="small" title="编辑状态">
+          <Space wrap>
+            <Tag color={hasDraftChanges ? 'orange' : 'green'}>{hasDraftChanges ? '有未保存变更' : '已与后端同步'}</Tag>
+            <Tag color={pipeline.data.validation.valid ? 'green' : 'red'}>{pipeline.data.validation.valid ? '运行前校验通过' : '运行前需修复'}</Tag>
+            <Tag color="blue">当前节点 {nodes.length}</Tag>
+            <Tag color="purple">已选节点 {selectedNode ? `${selectedNodeIndex + 1}/${nodes.length}` : '0/0'}</Tag>
+          </Space>
+        </Card>
+        <Card size="small" title="输入与结果策略">
+          <Space wrap>
+            <Typography.Text>源数据集：{pipeline.data.pipeline.sourceDatasetId ?? '未绑定'}</Typography.Text>
+            <Typography.Text>源类型：{txt(pipeline.data.pipeline.sourceDatasetDataType)}</Typography.Text>
+            <Typography.Text>默认结果：PREPROCESSED / IMAGE</Typography.Text>
+          </Space>
+        </Card>
+      </div>
       <div className="pipeline-grid">
         <Card title="算子库" className="operator-library">
           <Input.Search placeholder="搜索算子名称、类型或功能描述…" value={operatorKeyword} onChange={(event) => setOperatorKeyword(event.target.value)} style={{ marginBottom: 12 }} />
@@ -1817,8 +2207,14 @@ export function DataPipelineStandardPage() {
             {marketplaceOperators.slice(0, 8).map((op) => (
               <Card key={op.operatorId} size="small" className="operator-chip" onClick={() => addNode(op)}>
                 <Space direction="vertical" size={2}>
-                  <Space><Tag color={op.kind === 'BUILTIN' ? 'blue' : 'purple'}>{op.category}</Tag><b>{op.name}</b></Space>
+                  <Space>
+                    <Tag color={op.kind === 'BUILTIN' ? 'blue' : 'purple'}>{txt(op.category)}</Tag>
+                    {op.dataType ? <Tag color="geekblue">{txt(op.dataType)}</Tag> : null}
+                    {op.supportsPreview ? <Tag color="green">支持预览</Tag> : null}
+                    <b>{op.name}</b>
+                  </Space>
                   <Typography.Text type="secondary">{op.description}</Typography.Text>
+                  <Typography.Text type="secondary">{visualOperatorLabel(op)}{op.enhancementMode ? ` · ${txt(op.enhancementMode)}` : ''}</Typography.Text>
                 </Space>
               </Card>
             ))}
@@ -1827,16 +2223,44 @@ export function DataPipelineStandardPage() {
         <Card title={<Space><span>DAG 画布</span><Tag color={pipeline.data.validation.valid ? 'green' : 'red'}>{pipeline.data.validation.diagnosticCode}</Tag></Space>} className="pipeline-canvas-card">
           <PipelineCanvas nodes={nodes} edges={pipeline.data.edges} selectedNodeId={selectedNode?.nodeId} onSelect={setSelectedNodeId} onMove={moveNode} />
           <Typography.Text type="secondary">拖拽节点可重新排序 · 从左侧算子库拖入可添加新节点 · 当前节点 {nodes.length} 个</Typography.Text>
+          <div className="pipeline-validation-panel">
+            {validationIssues.length > 0 ? (
+              <Alert
+                type="error"
+                showIcon
+                title={`存在 ${validationIssues.length} 个校验问题`}
+                description={(
+                  <Space direction="vertical" className="full-width">
+                    {validationIssues.map((issue) => <Typography.Text key={`${issue.code}-${issue.nodeId ?? 'global'}`}>{issue.nodeId ? `[${issue.nodeId}] ` : ''}{issue.message}</Typography.Text>)}
+                    <Button size="small" onClick={focusFirstValidationIssue}>定位首个问题节点</Button>
+                  </Space>
+                )}
+              />
+            ) : null}
+            {validationWarnings.length > 0 ? <Alert type="warning" showIcon title={`运行提示（${validationWarnings.length}）`} description={validationWarnings.join('；')} /> : null}
+            {!pipeline.data.validation.valid ? <Typography.Text type="secondary">当前 DAG 未通过校验，已禁用“沙箱运行”。请先修复校验问题并保存。</Typography.Text> : null}
+          </div>
         </Card>
         <Card title={`⚙ ${selectedNode?.label ?? '算子配置'}`} className="node-config-card">
           <Space direction="vertical" className="full-width">
             <Descriptions size="small" column={1} bordered>
               <Descriptions.Item label="算子">{selectedOperator?.name ?? selectedNode?.operatorName}</Descriptions.Item>
               <Descriptions.Item label="阶段">{selectedOperator?.stage ?? '-'}</Descriptions.Item>
+              <Descriptions.Item label="处理类目">{selectedOperator ? visualOperatorLabel(selectedOperator) : '-'}</Descriptions.Item>
               <Descriptions.Item label="状态"><Tag color={color(selectedNode?.status)}>{selectedNode?.status ?? 'READY'}</Tag></Descriptions.Item>
             </Descriptions>
+            <Space wrap className="pipeline-node-toolbar">
+              <Button size="small" onClick={() => selectAdjacentNode(-1)} disabled={selectedNodeIndex <= 0}>上一节点</Button>
+              <Button size="small" onClick={() => selectAdjacentNode(1)} disabled={selectedNodeIndex < 0 || selectedNodeIndex >= nodes.length - 1}>下一节点</Button>
+              <Button size="small" onClick={resetSelectedNodeConfig} disabled={!selectedNode || !selectedOperator}>恢复默认参数</Button>
+              <Button size="small" onClick={formatSelectedNodeConfig} disabled={!selectedNode}>格式化 JSON</Button>
+            </Space>
+            <Card size="small" title="结构化参数面板">
+              <PipelineNodeConfigForm node={selectedNode} operator={selectedOperator} onChange={updateSelectedNodeConfig} />
+            </Card>
+            <Typography.Text strong>原始配置 JSON</Typography.Text>
             <Input.TextArea rows={8} value={safeJson(selectedNode?.configJson)} onChange={(event) => updateSelectedNodeConfig(event.target.value)} />
-            <Alert type="success" showIcon title="算子验证通过" description="输入: 42,850 条；预计输出: 42,850 条；内存估算: 2.1 GB" />
+            <Alert type="success" showIcon title="算子验证通过" description={`输入: 42,850 条；预计输出: 42,850 条；${selectedOperator?.defaultOutputDatasetDataType ? `默认输出 ${txt(selectedOperator.defaultOutputDatasetDataType)} 型结果；` : ''}${selectedOperator?.annotationRiskLevel ? ` 标注风险 ${selectedOperator.annotationRiskLevel}` : ''}`} />
           </Space>
         </Card>
       </div>
@@ -1847,6 +2271,8 @@ export function DataPipelineStandardPage() {
             { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> },
             { title: '耗时', dataIndex: 'durationMs', render: (v) => v ? `${Math.round(v / 1000)}s` : '-' },
             { title: '输出数据集', dataIndex: 'outputDatasetId', render: (v) => v ?? '-' },
+            { title: '结果状态', dataIndex: 'resultDatasetStatus', render: (v) => v ? <Tag color={color(v)}>{datasetStatusText(v)}</Tag> : '-' },
+            { title: '结果计数', render: (_, r) => r.totalCount != null ? `${r.successCount ?? 0}/${r.totalCount} 成功 · 跳过 ${r.skippedCount ?? 0} · 失败 ${r.failedCount ?? 0}` : '-' },
             { title: '诊断', dataIndex: 'diagnosticMessage' },
           ]} />
         </Card>
@@ -1858,7 +2284,7 @@ export function DataPipelineStandardPage() {
             { title: '操作', render: (_, r) => <Button size="small" onClick={() => restoreVersion.mutate(r.versionId)}>回滚</Button> },
           ]} />
         </Card>
-        <Card title="全局变量">
+        <Card title="全局变量与结果策略">
           <Table rowKey="name" dataSource={variables} pagination={false} columns={[
             { title: '变量名', dataIndex: 'name' },
             { title: '类型', dataIndex: 'valueType' },
@@ -1866,14 +2292,135 @@ export function DataPipelineStandardPage() {
             { title: '值', render: (_, r) => r.valueJson ?? r.valueMasked },
             { title: '必填', dataIndex: 'required', render: (v) => v ? '是' : '否' },
           ]} />
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginTop: 12 }}
+            message="视频抽帧默认输出图片型 PREPROCESSED 数据集"
+            description="运行成功后不会自动激活；必须先预览/确认，再手动激活为后续标注可用数据集。"
+          />
+          <Descriptions size="small" bordered column={1} style={{ marginTop: 12 }}>
+            <Descriptions.Item label="模板代码">{pipeline.data.pipeline.templateCode ?? 'VISUAL_PREPROCESS'}</Descriptions.Item>
+            <Descriptions.Item label="源数据集">{pipeline.data.pipeline.sourceDatasetId ?? '未绑定'}</Descriptions.Item>
+            <Descriptions.Item label="源类型">{txt(pipeline.data.pipeline.sourceDatasetDataType)}</Descriptions.Item>
+            <Descriptions.Item label="默认结果策略">输出 PREPROCESSED / IMAGE；运行成功后需预览确认并人工激活</Descriptions.Item>
+          </Descriptions>
         </Card>
       </div>
       <Drawer title="添加算子" open={addOpen} onClose={() => setAddOpen(false)} width={680}>
         <Input.Search placeholder="搜索算子名称、类型或功能描述…" value={operatorKeyword} onChange={(event) => setOperatorKeyword(event.target.value)} style={{ marginBottom: 16 }} />
-        <div className="operator-market-grid">{marketplaceOperators.map((op) => <Card key={op.operatorId} hoverable onClick={() => addNode(op)}><Tag>{op.category}</Tag><Typography.Title level={5}>{op.name}</Typography.Title><Typography.Text type="secondary">{op.description}</Typography.Text><div><Tag color="blue">调用 {op.usageCount}</Tag><Tag color="orange">Pipeline {op.pipelineCount}</Tag></div></Card>)}</div>
+        <div className="operator-market-grid">{marketplaceOperators.map((op) => <Card key={op.operatorId} hoverable onClick={() => addNode(op)}><Space direction="vertical"><Space wrap><Tag>{txt(op.category)}</Tag>{op.dataType ? <Tag color="geekblue">{txt(op.dataType)}</Tag> : null}{op.supportsPreview ? <Tag color="green">支持预览</Tag> : null}</Space><Typography.Title level={5}>{op.name}</Typography.Title><Typography.Text type="secondary">{op.description}</Typography.Text><Typography.Text type="secondary">{visualOperatorLabel(op)}{op.defaultOutputDatasetDataType ? ` · 输出 ${txt(op.defaultOutputDatasetDataType)}` : ''}</Typography.Text><div><Tag color="blue">调用 {op.usageCount}</Tag><Tag color="orange">Pipeline {op.pipelineCount}</Tag></div></Space></Card>)}</div>
       </Drawer>
       <Drawer title="沙箱运行详情" open={runOpen} onClose={() => setRunOpen(false)} width={720}>
-        <Alert type="success" showIcon title="SANDBOX_PIPELINE_RUN_SUCCEEDED" description="已生成输出数据集、PIPELINE_OUTPUT 文件占位和血缘记录。" />
+        <Alert type="success" showIcon title={latestRun?.run.diagnosticMessage ?? 'VISUAL_PREPROCESS_RUN_SUCCEEDED'} description="已生成待确认预处理数据集；请先预览样例和失败摘要，再执行确认与激活。" />
+        {latestRun ? (
+          <Space direction="vertical" className="full-width" style={{ marginTop: 16 }}>
+            <Card title="结果处置工作台" size="small">
+              <Steps
+                size="small"
+                current={activation?.status === 'ACTIVE' ? 2 : activation?.confirmed ? 1 : 0}
+                items={[
+                  { title: '运行完成', description: '已生成待确认结果集' },
+                  { title: '人工确认', description: activation?.confirmed ? `已确认 ${fmtDateTime(activation.confirmedAt)}` : '检查样例与失败摘要' },
+                  { title: '激活入链', description: activation?.status === 'ACTIVE' ? `已激活 ${fmtDateTime(activation.activatedAt)}` : '激活后进入标注来源列表' },
+                ]}
+              />
+            </Card>
+            <Descriptions bordered column={2} size="small">
+              <Descriptions.Item label="输出数据集">{latestRun.run.outputDatasetId ?? '-'}</Descriptions.Item>
+              <Descriptions.Item label="当前状态">{latestRun.activation ? <Tag color={color(latestRun.activation.status)}>{datasetStatusText(latestRun.activation.status)}</Tag> : '-'}</Descriptions.Item>
+              <Descriptions.Item label="成功/总数">{latestRun.preview ? `${latestRun.preview.successCount}/${latestRun.preview.totalCount}` : '-'}</Descriptions.Item>
+              <Descriptions.Item label="跳过/失败">{latestRun.preview ? `${latestRun.preview.skippedCount}/${latestRun.preview.failedCount}` : '-'}</Descriptions.Item>
+              <Descriptions.Item label="预览水印">{latestRun.preview?.previewWatermarkApplied ? '已应用' : '未应用'}</Descriptions.Item>
+              <Descriptions.Item label="产物水印">{latestRun.preview?.artifactWatermarkApplied ? '已写入' : '未写入'}</Descriptions.Item>
+              <Descriptions.Item label="标注可用">{latestRun.activation ? (latestRun.activation.annotationEligible ? '可进入标注链路' : `不可用：${latestRun.activation.blockReason ?? '已阻断'}`) : '-'}</Descriptions.Item>
+              <Descriptions.Item label="处理模式">{latestRun.preview?.enhancementMode ? txt(latestRun.preview.enhancementMode) : latestRun.preview?.frameExtractionMode ?? '-'}</Descriptions.Item>
+            </Descriptions>
+            {latestRun.preview ? (
+              <>
+                <div className="pipeline-run-summary-grid">
+                  <Card size="small">
+                    <Typography.Title level={4}>{latestRun.preview.successCount}</Typography.Title>
+                    <Typography.Text type="secondary">成功样本</Typography.Text>
+                  </Card>
+                  <Card size="small">
+                    <Typography.Title level={4}>{latestRun.preview.skippedCount}</Typography.Title>
+                    <Typography.Text type="secondary">跳过样本</Typography.Text>
+                  </Card>
+                  <Card size="small">
+                    <Typography.Title level={4}>{latestRun.preview.failedCount}</Typography.Title>
+                    <Typography.Text type="secondary">失败样本</Typography.Text>
+                  </Card>
+                  <Card size="small">
+                    <Typography.Title level={4}>{previewOperatorChain.length || latestRun.nodeRuns.length}</Typography.Title>
+                    <Typography.Text type="secondary">算子链节点</Typography.Text>
+                  </Card>
+                </div>
+                <Alert
+                  type={activation?.status === 'ACTIVE' ? 'success' : activation?.confirmed ? 'info' : 'warning'}
+                  showIcon
+                  title={activation?.status === 'ACTIVE' ? '该结果已完成激活，可进入标注链路' : activation?.confirmed ? '已确认，下一步请手动激活' : '下一步请先人工确认结果，再执行激活'}
+                  description={activation?.annotationEligible ? '结果集满足进入标注来源列表的条件。' : `当前限制：${activation?.blockReason ?? '若开启产物水印或未激活，将阻断标注链路。'}`}
+                />
+                <Card title="样例预览工作台">
+                  <div className="pipeline-run-sample-grid">
+                    {latestRun.preview.samplePairs.map((row) => (
+                      <Card key={`${row.label}-${row.beforeExample}`} size="small" title={row.label}>
+                        <Descriptions size="small" column={1}>
+                          <Descriptions.Item label="处理前">{row.beforeExample}</Descriptions.Item>
+                          <Descriptions.Item label="处理后">{row.afterExample}</Descriptions.Item>
+                        </Descriptions>
+                      </Card>
+                    ))}
+                  </div>
+                </Card>
+                <Card title="失败 / 跳过摘要">
+                  <Space direction="vertical" className="full-width">
+                    <Typography.Text>失败原因：{latestRun.preview.failedReasons.join('；') || '无'}</Typography.Text>
+                    <Typography.Text>跳过原因：{latestRun.preview.skippedReasons.join('；') || '无'}</Typography.Text>
+                    <Typography.Text>警告：{latestRun.preview.warnings.join('；') || '无'}</Typography.Text>
+                  </Space>
+                </Card>
+                <Card title="处理参数与算子链">
+                  <Space wrap style={{ marginBottom: 12 }}>
+                    {previewOperatorChain.map((item) => <Tag key={item} color="blue">{item}</Tag>)}
+                  </Space>
+                  <Tabs
+                    items={[
+                      {
+                        key: 'params',
+                        label: '处理参数',
+                        children: <pre className="schema-preview">{safeJson(previewProcessParams ? stringifyObjectConfig(previewProcessParams) : latestRun.preview.processParamsJson)}</pre>,
+                      },
+                      {
+                        key: 'chain',
+                        label: '原始算子链',
+                        children: <pre className="schema-preview">{safeJson(latestRun.preview.operatorChainJson)}</pre>,
+                      },
+                    ]}
+                  />
+                </Card>
+              </>
+            ) : null}
+            <Space wrap>
+              <Button
+                type="primary"
+                disabled={!previewDatasetId || Boolean(activation?.confirmed)}
+                loading={confirmPreprocessedDataset.isPending}
+                onClick={() => previewDatasetId && confirmPreprocessedDataset.mutate(previewDatasetId)}
+              >
+                确认预处理结果
+              </Button>
+              <Button
+                disabled={!previewDatasetId || !activation?.confirmed || activation.status === 'ACTIVE'}
+                loading={activatePreprocessedDataset.isPending}
+                onClick={() => previewDatasetId && activatePreprocessedDataset.mutate({ datasetId: previewDatasetId, targetVersionId: activation?.targetVersionId })}
+              >
+                激活为标注可用数据集
+              </Button>
+            </Space>
+          </Space>
+        ) : null}
       </Drawer>
     </div>
   );
@@ -2229,9 +2776,13 @@ export function OperatorMarketplacePage() {
   const [msg, holder] = message.useMessage();
   const [keyword, setKeyword] = useState('');
   const [category, setCategory] = useState<string>();
+  const [dataType, setDataType] = useState<string>();
   const [detailId, setDetailId] = useState<string>();
   const [customOpen, setCustomOpen] = useState(false);
-  const operators = useQuery({ queryKey: ['operators-market', keyword, category], queryFn: () => dataApi.operators({ keyword, category }) });
+  const operators = useQuery({
+    queryKey: ['operators-market', keyword, category, dataType],
+    queryFn: () => dataApi.operators({ keyword, category, categoryGroup: 'VISUAL_PREPROCESS', dataType, supportsPreview: true }),
+  });
   const detail = useQuery({ queryKey: ['operator-detail', detailId], queryFn: () => dataApi.operatorDetail(detailId!), enabled: Boolean(detailId) });
   const createCustom = useMutation({
     mutationFn: dataApi.createCustomOperator,
@@ -2255,26 +2806,27 @@ export function OperatorMarketplacePage() {
       <div className="page-hero">
         <div>
           <Typography.Title level={3}>算子广场</Typography.Title>
-          <Typography.Text type="secondary">分类浏览、效果预览、参数 Schema、使用统计与自定义算子审核</Typography.Text>
+          <Typography.Text type="secondary">视觉预处理算子目录 · 图片处理 / 视频处理 · 预览能力 / 输出类型 / 标注风险</Typography.Text>
         </div>
         <Button type="primary" onClick={() => setCustomOpen(true)}>+ 自定义算子</Button>
       </div>
-      <Alert type="warning" showIcon title="HTTP 算子安全说明" description="HTTP 算子调用时数据将发送至外部服务；F011 仅保存配置和审核状态，生产调用策略保留 TODO_CONFIRM_OPERATOR_HTTP_SECURITY_POLICY。" style={{ marginBottom: 16 }} />
+      <Alert type="warning" showIcon title="视觉预处理冻结能力说明" description="图片质量提高一期仅支持传统增强；预览水印与产物水印分离；视频抽帧默认输出 IMAGE 型 PREPROCESSED 数据集。" style={{ marginBottom: 16 }} />
       <div className="opmarket-layout">
         <Card className="opmarket-cats">
           <div className={!category ? 'opmarket-cat active' : 'opmarket-cat'} onClick={() => setCategory(undefined)}>全部算子</div>
-          {(operators.data?.categories ?? []).map((item) => <div key={item.category} className={category === item.category ? 'opmarket-cat active' : 'opmarket-cat'} onClick={() => setCategory(item.category)}>{item.category}<Tag>{item.count}</Tag></div>)}
-          <Alert type="info" showIcon message="TODO_CONFIRM_OPERATOR_CATALOG_SOURCE" description="正式 136+ 算子清单来源待确认，本期 seed 原型核心算子。" />
+          {(operators.data?.categories ?? []).map((item) => <div key={item.category} className={category === item.category ? 'opmarket-cat active' : 'opmarket-cat'} onClick={() => setCategory(item.category)}>{txt(item.category)}<Tag>{item.count}</Tag></div>)}
+          <Alert type="info" showIcon message="图片/视频处理目录" description="首批内置图片加水印、图片质量提高、去噪/锐化、视频抽帧、固定帧率抽帧等算子已冻结。" />
         </Card>
         <div>
           <Space style={{ marginBottom: 16 }} wrap>
             <Input.Search placeholder="搜索算子…" value={keyword} onChange={(event) => setKeyword(event.target.value)} style={{ width: 260 }} />
+            <Select allowClear placeholder="数据类型" value={dataType} onChange={setDataType} style={{ width: 140 }} options={[{ value: 'IMAGE', label: '图片' }, { value: 'AUDIO_VIDEO', label: '视频' }]} />
             <Tag color="blue">总调用次数 {operators.data?.stats.total ?? 0}</Tag>
             <Tag color="green">内置 {operators.data?.stats.builtin ?? 0}</Tag>
             <Tag color="purple">自定义 {operators.data?.stats.custom ?? 0}</Tag>
           </Space>
           <div className="operator-market-grid">
-            {rows.map((op) => <Card key={op.operatorId} hoverable onClick={() => setDetailId(op.operatorId)}><Space direction="vertical"><Space><Tag color={op.kind === 'BUILTIN' ? 'blue' : 'purple'}>{op.kind}</Tag><Tag>{op.category}</Tag></Space><Typography.Title level={5}>{op.name}</Typography.Title><Typography.Text type="secondary">{op.description}</Typography.Text><Space wrap><Tag>调用 {op.usageCount}</Tag><Tag>引用Pipeline数 {op.pipelineCount}</Tag><Tag>错误率 {(op.errorRate * 100).toFixed(1)}%</Tag></Space></Space></Card>)}
+            {rows.map((op) => <Card key={op.operatorId} hoverable onClick={() => setDetailId(op.operatorId)}><Space direction="vertical"><Space wrap><Tag color={op.kind === 'BUILTIN' ? 'blue' : 'purple'}>{op.kind}</Tag><Tag>{txt(op.category)}</Tag>{op.dataType ? <Tag color="geekblue">{txt(op.dataType)}</Tag> : null}{op.supportsPreview ? <Tag color="green">支持预览</Tag> : null}</Space><Typography.Title level={5}>{op.name}</Typography.Title><Typography.Text type="secondary">{op.description}</Typography.Text><Typography.Text type="secondary">{visualOperatorLabel(op)}{op.enhancementMode ? ` · ${txt(op.enhancementMode)}` : ''}{op.defaultOutputDatasetDataType ? ` · 输出 ${txt(op.defaultOutputDatasetDataType)}` : ''}</Typography.Text><Space wrap><Tag>调用 {op.usageCount}</Tag><Tag>引用Pipeline数 {op.pipelineCount}</Tag><Tag>错误率 {(op.errorRate * 100).toFixed(1)}%</Tag></Space></Space></Card>)}
           </div>
         </div>
       </div>
@@ -2303,14 +2855,26 @@ function OperatorDetailView({ detail, onApprove, loading }: { detail?: OperatorD
   return (
     <Space direction="vertical" className="full-width">
       <Descriptions bordered column={2}>
-        <Descriptions.Item label="分类">{detail.operator.category}</Descriptions.Item>
+        <Descriptions.Item label="分类">{visualOperatorLabel(detail.operator)}</Descriptions.Item>
         <Descriptions.Item label="状态"><Tag color={color(detail.operator.status)}>{detail.operator.status}</Tag></Descriptions.Item>
+        <Descriptions.Item label="数据类型">{detail.operator.dataType ? txt(detail.operator.dataType) : '-'}</Descriptions.Item>
+        <Descriptions.Item label="支持预览">{detail.operator.supportsPreview ? '是' : '否'}</Descriptions.Item>
         <Descriptions.Item label="总调用次数">{detail.operator.usageCount}</Descriptions.Item>
         <Descriptions.Item label="引用Pipeline数">{detail.operator.pipelineCount}</Descriptions.Item>
         <Descriptions.Item label="Endpoint">{detail.endpointMasked ?? '-'}</Descriptions.Item>
         <Descriptions.Item label="Credential">{detail.credentialRefMasked ?? '-'}</Descriptions.Item>
+        <Descriptions.Item label="增强模式">{detail.operator.enhancementMode ? txt(detail.operator.enhancementMode) : '-'}</Descriptions.Item>
+        <Descriptions.Item label="默认输出类型">{detail.operator.defaultOutputDatasetDataType ? txt(detail.operator.defaultOutputDatasetDataType) : '-'}</Descriptions.Item>
       </Descriptions>
       <Card title="Before / After 示例"><Space direction="vertical"><Typography.Text>Before: {detail.operator.beforeExample}</Typography.Text><Typography.Text>After: {detail.operator.afterExample}</Typography.Text></Space></Card>
+      {detail.annotationRiskNotice || detail.frozenDefaults ? (
+        <Card title="冻结默认项与标注风险">
+          <Space direction="vertical" className="full-width">
+            {detail.annotationRiskNotice ? <Alert type="warning" showIcon message={detail.annotationRiskNotice} /> : null}
+            {detail.frozenDefaults ? <pre className="schema-preview">{safeJson(JSON.stringify(detail.frozenDefaults))}</pre> : null}
+          </Space>
+        </Card>
+      ) : null}
       <Card title="参数 Schema"><pre className="schema-preview">{safeJson(detail.parameterSchemaJson)}</pre></Card>
       <Table rowKey="reviewId" dataSource={detail.reviews} pagination={false} columns={[{ title: '审核状态', dataIndex: 'status' }, { title: '原因', dataIndex: 'reason' }, { title: '提交时间', dataIndex: 'submittedAt' }]} />
       {detail.operator.status === 'SUBMITTED' ? <Button type="primary" loading={loading} onClick={() => onApprove(detail.operator.operatorId)}>审核通过并发布</Button> : null}

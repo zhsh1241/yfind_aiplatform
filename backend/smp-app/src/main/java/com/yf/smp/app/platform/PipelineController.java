@@ -85,15 +85,33 @@ public class PipelineController {
         return PlatformResponses.ok(service.runDetail(principal(authorization), runId));
     }
 
+    @GetMapping("/preprocessed-datasets/{datasetId}/preview")
+    ResponseEntity<ApiResponse<PreprocessedDatasetPreviewResponse>> preview(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String datasetId) {
+        return PlatformResponses.ok(service.previewPreprocessedDataset(principal(authorization), datasetId));
+    }
+
+    @PostMapping("/preprocessed-datasets/{datasetId}/confirm")
+    ResponseEntity<ApiResponse<PreprocessedDatasetActivationStateResponse>> confirm(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String datasetId, @RequestBody(required = false) PreprocessedDatasetConfirmRequest request) {
+        return PlatformResponses.ok(service.confirmPreprocessedDataset(principal(authorization), datasetId, request == null ? new PreprocessedDatasetConfirmRequest("CONFIRM", null) : request));
+    }
+
+    @PostMapping("/preprocessed-datasets/{datasetId}/activate")
+    ResponseEntity<ApiResponse<PreprocessedDatasetActivationStateResponse>> activate(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String datasetId, @RequestBody(required = false) PreprocessedDatasetActivateRequest request) {
+        return PlatformResponses.ok(service.activatePreprocessedDataset(principal(authorization), datasetId, request == null ? new PreprocessedDatasetActivateRequest(null, null) : request));
+    }
+
     @GetMapping("/operators")
     ResponseEntity<ApiResponse<OperatorListResponse>> operators(
         @RequestHeader(name = "Authorization", required = false) String authorization,
         @RequestParam(required = false) String keyword,
         @RequestParam(required = false) String category,
+        @RequestParam(required = false) String categoryGroup,
+        @RequestParam(required = false) String dataType,
         @RequestParam(required = false) String stage,
-        @RequestParam(required = false) String status
+        @RequestParam(required = false) String status,
+        @RequestParam(required = false) Boolean supportsPreview
     ) {
-        return PlatformResponses.ok(service.operators(principal(authorization), keyword, category, stage, status));
+        return PlatformResponses.ok(service.operators(principal(authorization), keyword, category, categoryGroup, dataType, stage, status, supportsPreview));
     }
 
     @GetMapping("/operators/{operatorId}")

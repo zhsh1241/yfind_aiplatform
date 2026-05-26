@@ -45,6 +45,18 @@ public class AnnotationController {
         return PlatformResponses.ok(service.createTask(principal(authorization), request));
     }
 
+    @GetMapping("/source-datasets")
+    ResponseEntity<ApiResponse<AnnotationSourceDatasetListResponse>> sourceDatasets(
+        @RequestHeader(name = "Authorization", required = false) String authorization,
+        @RequestParam(required = false) String keyword,
+        @RequestParam(required = false) String sourceType,
+        @RequestParam(required = false) String scene,
+        @RequestParam(defaultValue = "1") int page,
+        @RequestParam(defaultValue = "20") int pageSize
+    ) {
+        return PlatformResponses.ok(service.sourceDatasets(principal(authorization), keyword, sourceType, scene, page, pageSize));
+    }
+
     @GetMapping("/tasks/{taskId}")
     ResponseEntity<ApiResponse<AnnotationTaskDetailResponse>> task(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String taskId) {
         return PlatformResponses.ok(service.taskDetail(principal(authorization), taskId));

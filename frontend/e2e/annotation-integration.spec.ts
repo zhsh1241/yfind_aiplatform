@@ -8,6 +8,7 @@ test('TASK-annotation-integration TASK-label-studio-production-integration AC-01
   await expect(page.getByText('焊缝缺陷检测标注任务')).toBeVisible();
   await expect(page.getByRole('button', { name: '标签模板' })).toBeVisible();
   await expect(page.getByText(/外部标注工具 \/ Label Studio/)).toBeVisible();
+  await expect(page.getByText('焊缝视频抽帧预处理结果')).toBeVisible();
 
   await page.getByRole('button', { name: '＋ 新建标注任务' }).click();
   await page.getByLabel('标注场景').click();
@@ -22,6 +23,24 @@ test('TASK-annotation-integration TASK-label-studio-production-integration AC-01
   expect(syncProjectBody.data.configStatus).toBe('CONFIGURED');
   expect(syncProjectBody.data.externalProjectId).toBe('123');
   await expect(page.getByText(/PROJECT_SYNCED/)).toBeVisible();
+});
+
+test('TASK-visual-preprocess-operators-pipeline AC-04 AC-05 AC-08 AC-09 preprocessed dataset annotation source eligibility', async ({ page }) => {
+  await seedAuthenticatedSession(page);
+  await page.getByText('标注任务').click();
+  await expect(page.getByRole('heading', { name: '标注任务管理' })).toBeVisible();
+
+  await page.getByRole('button', { name: '＋ 新建标注任务' }).click();
+  await expect(page.getByLabel('源数据集（仅 ACTIVE 且可标注图片数据集）')).toBeVisible();
+  await page.getByLabel('源数据集（仅 ACTIVE 且可标注图片数据集）').click();
+  await expect(page.locator('.ant-select-dropdown:visible')).toContainText('焊缝视频抽帧预处理结果');
+  await expect(page.locator('.ant-select-dropdown:visible')).toContainText('预处理后/图片');
+  await page.keyboard.press('Escape');
+
+  await page.getByLabel('源数据集（仅 ACTIVE 且可标注图片数据集）').click();
+  await page.getByText('焊缝视频抽帧预处理结果').last().click();
+  await page.getByRole('button', { name: '创建任务' }).click();
+  await expect(page.getByText('标注任务已创建')).toBeVisible();
 });
 
 test('TASK-annotation-integration TASK-label-studio-production-integration AC-04 AC-05 workbench draft submit and Label Studio task sync', async ({ page }) => {
@@ -40,8 +59,8 @@ test('TASK-annotation-integration TASK-label-studio-production-integration AC-04
   await expect(page.getByText('当前框属性')).toBeVisible();
   await expect(page.getByText('快捷键').first()).toBeVisible();
   await expect(page.getByText(/拖拽绘制框/)).toBeVisible();
-  await expect(page.getByTestId('annotation-box-count')).toHaveText('7');
   await page.getByTestId('annotation-box-ai-suggestion-crack-001').click();
+  await expect(page.getByTestId('annotation-box-count')).toHaveText('7');
   await page.keyboard.press('D');
   await expect(page.getByTestId('annotation-box-count')).toHaveText('6');
   await page.getByTestId('annotation-box-ai-suggestion-fusion-001').click();
@@ -53,7 +72,7 @@ test('TASK-annotation-integration TASK-label-studio-production-integration AC-04
   await page.mouse.up();
   await expect(page.getByText('坐标：').locator('..')).not.toContainText('(170, 60)');
   await page.keyboard.press('2');
-  await expect(page.getByText('类别：').locator('..')).toContainText('裂纹');
+  await expect(page.getByRole('button', { name: /裂纹\s+2/ })).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('W');
   await expect(page.getByText(/已新增标注框：裂纹/).last()).toBeVisible();
   await expect(page.getByTestId('annotation-box-count')).toHaveText('7');

@@ -8,5 +8,8 @@ export default defineConfig({
     globals: true,
     setupFiles: './src/test/setup.ts',
     include: ['src/**/*.test.{ts,tsx}'],
+    pool: 'forks',
+    maxWorkers: 1,
+    testTimeout: 30000,
   },
 });

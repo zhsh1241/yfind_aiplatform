@@ -60,6 +60,20 @@ record AnnotationTaskCreateRequest(
     OffsetDateTime deadline,
     String note
 ) {}
+record AnnotationSourceDatasetResponse(
+    String datasetId,
+    String name,
+    String datasetType,
+    String dataType,
+    String currentVersionId,
+    String status,
+    boolean annotationEligible,
+    boolean confirmed,
+    String sourceDatasetId,
+    String sourceDatasetName,
+    String blockReason
+) {}
+record AnnotationSourceDatasetListResponse(List<AnnotationSourceDatasetResponse> items, long total, int page, int pageSize) {}
 record AnnotationTaskAssignRequest(List<String> assigneeIds, List<String> reviewerIds) {}
 record AnnotationWorkItemRequest(String annotationJson) {}
 record AnnotationReviewRequest(String reason) {}

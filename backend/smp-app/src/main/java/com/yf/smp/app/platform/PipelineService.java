@@ -24,7 +24,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class PipelineService {
-    private static final String TRACE_TAG = "TASK-pipeline-editor-operator-marketplace";
+    private static final String TRACE_TAG = "TASK-visual-preprocess-operators-pipeline";
+    private static final String PIPELINE_TRACE_TAG = "TASK-pipeline-editor-operator-marketplace";
     private static final Pattern VARIABLE_PATTERN = Pattern.compile("\\$\\{([A-Za-z0-9_]+)}");
     private static final Pattern REQUIRED_PATTERN = Pattern.compile("\\\"required\\\"\\s*:\\s*\\[(.*?)]");
     private final JdbcTemplate jdbc;
@@ -59,7 +60,7 @@ public class PipelineService {
         validateSecrets(request);
         PipelineValidationResponse validation = validateRequest(request, null);
         if (!validation.valid()) {
-            audit(principal, tenantId, "PIPELINE_VALIDATION_FAILED", "Pipeline", "NEW", "FAILURE", "WARNING", null, null, validation.diagnosticMessage());
+            audit(principal, tenantId, "PIPELINE_PREPROCESS_VALIDATION_FAILED", "Pipeline", "NEW", "FAILURE", "WARNING", null, null, validation.diagnosticMessage());
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, validation.diagnosticMessage());
         }
         String id = "PIPE-" + randomHex(10).toUpperCase(Locale.ROOT);
@@ -69,7 +70,7 @@ public class PipelineService {
             VALUES (?, ?, ?, ?, 'VALIDATED', NULL, ?, ?, 'OK', 'DAG 校验通过', ?, ?)
             """, id, require(request.name(), "Pipeline 名称不能为空"), tenantId, nullIfBlank(request.projectId()), principal.user().id(), nullIfBlank(request.description()), at, at);
         replaceGraph(id, request);
-        audit(principal, tenantId, "PIPELINE_CREATED", "Pipeline", id, "SUCCESS", "INFO", null, "VALIDATED", TRACE_TAG);
+        audit(principal, tenantId, "PIPELINE_PREPROCESS_CREATED", "Pipeline", id, "SUCCESS", "INFO", null, "VALIDATED", TRACE_TAG);
         return pipelineDetail(principal, id);
     }
 
@@ -81,12 +82,12 @@ public class PipelineService {
         PipelineValidationResponse validation = validateRequest(request, pipelineId);
         if (!validation.valid()) {
             jdbc.update("UPDATE pipeline_definition SET status='DRAFT', diagnostic_code=?, diagnostic_message=?, updated_at=? WHERE pipeline_id=?", validation.diagnosticCode(), validation.diagnosticMessage(), now(), pipelineId);
-            audit(principal, current.tenantId(), "PIPELINE_VALIDATION_FAILED", "Pipeline", pipelineId, "FAILURE", "WARNING", current.status(), "DRAFT", validation.diagnosticMessage());
+            audit(principal, current.tenantId(), "PIPELINE_PREPROCESS_VALIDATION_FAILED", "Pipeline", pipelineId, "FAILURE", "WARNING", current.status(), "DRAFT", validation.diagnosticMessage());
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, validation.diagnosticMessage());
         }
         jdbc.update("UPDATE pipeline_definition SET name=?, project_id=?, description=?, status='VALIDATED', diagnostic_code='OK', diagnostic_message='DAG 校验通过', updated_at=? WHERE pipeline_id=?", blank(request.name(), current.name()), nullIfBlank(request.projectId()), nullIfBlank(request.description()), now(), pipelineId);
         replaceGraph(pipelineId, request);
-        audit(principal, current.tenantId(), "PIPELINE_UPDATED", "Pipeline", pipelineId, "SUCCESS", "INFO", current.status(), "VALIDATED", TRACE_TAG);
+        audit(principal, current.tenantId(), "PIPELINE_PREPROCESS_UPDATED", "Pipeline", pipelineId, "SUCCESS", "INFO", current.status(), "VALIDATED", TRACE_TAG);
         return pipelineDetail(principal, pipelineId);
     }
 
@@ -102,7 +103,7 @@ public class PipelineService {
         PipelineSummaryResponse summary = pipelineSummaryVisible(principal, pipelineId, true);
         PipelineValidationResponse validation = validateExisting(pipelineId);
         if (!validation.valid()) {
-            audit(principal, summary.tenantId(), "PIPELINE_VALIDATION_FAILED", "Pipeline", pipelineId, "FAILURE", "WARNING", summary.status(), "DRAFT", validation.diagnosticMessage());
+            audit(principal, summary.tenantId(), "PIPELINE_PREPROCESS_VALIDATION_FAILED", "Pipeline", pipelineId, "FAILURE", "WARNING", summary.status(), "DRAFT", validation.diagnosticMessage());
         }
         return validation;
     }
@@ -113,7 +114,7 @@ public class PipelineService {
         PipelineSummaryResponse summary = pipelineSummaryVisible(principal, pipelineId, true);
         PipelineValidationResponse validation = validateExisting(pipelineId);
         if (!validation.valid()) {
-            audit(principal, summary.tenantId(), "PIPELINE_VALIDATION_FAILED", "Pipeline", pipelineId, "FAILURE", "WARNING", summary.status(), "DRAFT", validation.diagnosticMessage());
+            audit(principal, summary.tenantId(), "PIPELINE_PREPROCESS_VALIDATION_FAILED", "Pipeline", pipelineId, "FAILURE", "WARNING", summary.status(), "DRAFT", validation.diagnosticMessage());
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, validation.diagnosticMessage());
         }
         String versionId = "PVER-" + randomHex(10).toUpperCase(Locale.ROOT);
@@ -145,23 +146,31 @@ public class PipelineService {
     public PipelineRunDetailResponse runPipeline(PlatformPrincipal principal, String pipelineId, PipelineRunRequest request) {
         identityService.requirePermission(principal, "data:pipeline:run");
         PipelineSummaryResponse summary = pipelineSummaryVisible(principal, pipelineId, false);
+        boolean visualPreprocess = isVisualPreprocess(summary);
         PipelineValidationResponse validation = validateExisting(pipelineId);
         if (!validation.valid()) {
             audit(principal, summary.tenantId(), "PIPELINE_RUN_FAILED", "Pipeline", pipelineId, "FAILURE", "WARNING", summary.status(), "FAILED", validation.diagnosticMessage());
+            if (visualPreprocess) {
+                audit(principal, summary.tenantId(), "PIPELINE_PREPROCESS_RUN_FAILED", "Pipeline", pipelineId, "FAILURE", "WARNING", summary.status(), "FAILED", validation.diagnosticMessage());
+            }
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, validation.diagnosticMessage());
         }
-        String sampleDatasetId = blank(request.sampleDatasetId(), datasetIdFromReadNode(pipelineId));
+        String sampleDatasetId = blank(request.sampleDatasetId(), blank(summary.sourceDatasetId(), datasetIdFromReadNode(pipelineId)));
         DatasetInfo sample = datasetVisible(principal, sampleDatasetId);
         String runId = "PRUN-" + randomHex(10).toUpperCase(Locale.ROOT);
         OffsetDateTime start = now();
-        audit(principal, summary.tenantId(), "PIPELINE_RUN_STARTED", "PipelineRun", runId, "SUCCESS", "INFO", null, "RUNNING", TRACE_TAG);
+        audit(principal, summary.tenantId(), "PIPELINE_RUN_STARTED", "PipelineRun", runId, "SUCCESS", "INFO", null, "RUNNING", PIPELINE_TRACE_TAG);
+        if (visualPreprocess) {
+            audit(principal, summary.tenantId(), "PIPELINE_PREPROCESS_RUN_STARTED", "PipelineRun", runId, "SUCCESS", "INFO", null, "RUNNING", TRACE_TAG);
+        }
         String outputDatasetId = createOutputDataset(principal, summary, sample, runId, start);
         OffsetDateTime end = start.plusSeconds(Math.max(1, nodes(pipelineId).size()) * 12L);
         long durationMs = java.time.Duration.between(start, end).toMillis();
+        String diagnosticMessage = visualPreprocess ? "VISUAL_PREPROCESS_RUN_SUCCEEDED" : "SANDBOX_PIPELINE_RUN_SUCCEEDED";
         jdbc.update("""
             INSERT INTO pipeline_run (run_id, pipeline_id, version_id, status, trigger_mode, sample_dataset_id, output_dataset_id, diagnostic_code, diagnostic_message, duration_ms, triggered_by, started_at, ended_at)
-            VALUES (?, ?, ?, 'SUCCEEDED', ?, ?, ?, 'OK', 'SANDBOX_PIPELINE_RUN_SUCCEEDED', ?, ?, ?, ?)
-            """, runId, pipelineId, summary.currentVersionId(), upper(request.triggerMode(), "MANUAL"), sampleDatasetId, outputDatasetId, durationMs, principal.user().id(), start, end);
+            VALUES (?, ?, ?, 'SUCCEEDED', ?, ?, ?, 'OK', ?, ?, ?, ?, ?)
+            """, runId, pipelineId, summary.currentVersionId(), upper(request.triggerMode(), "MANUAL"), sampleDatasetId, outputDatasetId, diagnosticMessage, durationMs, principal.user().id(), start, end);
         int index = 0;
         for (PipelineNodeResponse node : nodes(pipelineId)) {
             long nodeDuration = 800L + index * 350L;
@@ -169,7 +178,10 @@ public class PipelineService {
             index++;
         }
         jdbc.update("UPDATE operator_catalog SET usage_count=usage_count + 1, pipeline_count=GREATEST(pipeline_count, 1), updated_at=? WHERE operator_id IN (SELECT operator_id FROM pipeline_node WHERE pipeline_id=?)", now(), pipelineId);
-        audit(principal, summary.tenantId(), "PIPELINE_RUN_SUCCEEDED", "PipelineRun", runId, "SUCCESS", "INFO", null, outputDatasetId, TRACE_TAG);
+        audit(principal, summary.tenantId(), "PIPELINE_RUN_SUCCEEDED", "PipelineRun", runId, "SUCCESS", "INFO", null, outputDatasetId, PIPELINE_TRACE_TAG);
+        if (visualPreprocess) {
+            audit(principal, summary.tenantId(), "PIPELINE_PREPROCESS_RUN_SUCCEEDED", "PipelineRun", runId, "SUCCESS", "INFO", null, outputDatasetId, TRACE_TAG);
+        }
         return runDetail(principal, runId);
     }
 
@@ -184,17 +196,22 @@ public class PipelineService {
         PipelineRunSummaryResponse run = runSummaryById(runId);
         pipelineSummaryVisible(principal, run.pipelineId(), false);
         List<PipelineRunNodeResponse> nodeRuns = jdbc.query("SELECT * FROM pipeline_run_node WHERE run_id=? ORDER BY created_at", (rs, n) -> new PipelineRunNodeResponse(rs.getString("node_run_id"), rs.getString("run_id"), rs.getString("node_id"), rs.getString("operator_name"), rs.getString("status"), nullableLong(rs, "duration_ms"), rs.getString("log_summary"), rs.getString("error_code")), runId);
-        return new PipelineRunDetailResponse(run, nodeRuns);
+        PreprocessedDatasetPreviewResponse preview = blank(run.outputDatasetId()) ? null : preview(run.outputDatasetId());
+        PreprocessedDatasetActivationStateResponse activation = blank(run.outputDatasetId()) ? null : activationState(run.outputDatasetId());
+        return new PipelineRunDetailResponse(run, nodeRuns, preview, activation);
     }
 
-    public OperatorListResponse operators(PlatformPrincipal principal, String keyword, String category, String stage, String status) {
+    public OperatorListResponse operators(PlatformPrincipal principal, String keyword, String category, String categoryGroup, String dataType, String stage, String status, Boolean supportsPreview) {
         identityService.requirePermission(principal, "data:operator:read");
         List<OperatorSummaryResponse> items = jdbc.query("SELECT * FROM operator_catalog ORDER BY category, stage, name", (rs, n) -> operatorSummary(rs)).stream()
             .filter(item -> operatorVisible(principal, item.operatorId()))
             .filter(item -> blank(keyword) || matches(item.name(), keyword) || matches(item.description(), keyword) || matches(item.category(), keyword))
             .filter(item -> blank(category) || item.category().equalsIgnoreCase(category))
+            .filter(item -> blank(categoryGroup) || item.categoryGroup().equalsIgnoreCase(categoryGroup))
+            .filter(item -> blank(dataType) || item.dataType().equalsIgnoreCase(dataType))
             .filter(item -> blank(stage) || item.stage().equalsIgnoreCase(stage))
             .filter(item -> blank(status) || item.status().equalsIgnoreCase(status))
+            .filter(item -> supportsPreview == null || item.supportsPreview() == supportsPreview.booleanValue())
             .toList();
         Map<String, Long> counts = new java.util.LinkedHashMap<>();
         for (OperatorSummaryResponse item : items) counts.put(item.category(), counts.getOrDefault(item.category(), 0L) + 1L);
@@ -263,8 +280,67 @@ public class PipelineService {
         return operatorDetail(operatorId);
     }
 
+    public PreprocessedDatasetPreviewResponse previewPreprocessedDataset(PlatformPrincipal principal, String datasetId) {
+        identityService.requirePermission(principal, "data:dataset:read");
+        DatasetInfo dataset = datasetVisible(principal, datasetId);
+        if (!"PREPROCESSED".equals(dataset.datasetType())) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "仅支持查询 PREPROCESSED 数据集预览");
+        }
+        return preview(datasetId);
+    }
+
+    @Transactional
+    public PreprocessedDatasetActivationStateResponse confirmPreprocessedDataset(PlatformPrincipal principal, String datasetId, PreprocessedDatasetConfirmRequest request) {
+        identityService.requirePermission(principal, "data:dataset:publish");
+        DatasetInfo dataset = datasetVisible(principal, datasetId);
+        ensurePreprocessed(dataset);
+        String decision = upper(request.decision(), "CONFIRM");
+        if (!"CONFIRM".equals(decision)) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "仅支持 CONFIRM 决策");
+        }
+        if ("ACTIVE".equals(dataset.status())) {
+            throw new PlatformException(PlatformError.CONFLICT, "已激活数据集无需重复确认");
+        }
+        OffsetDateTime at = now();
+        jdbc.update("UPDATE dataset SET status='CONFIRMED', updated_at=? WHERE dataset_id=?", at, datasetId);
+        audit(principal, dataset.tenantId(), "PREPROCESSED_DATASET_CONFIRMED", "Dataset", datasetId, "SUCCESS", "INFO", dataset.status(), "CONFIRMED", TRACE_TAG + ";" + blank(request.comment(), "manual-confirm"));
+        return activationState(datasetId);
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public PreprocessedDatasetActivationStateResponse activatePreprocessedDataset(PlatformPrincipal principal, String datasetId, PreprocessedDatasetActivateRequest request) {
+        identityService.requirePermission(principal, "data:dataset:publish");
+        DatasetInfo dataset = datasetVisible(principal, datasetId);
+        ensurePreprocessed(dataset);
+        if (!"CONFIRMED".equals(dataset.status())) {
+            audit(principal, dataset.tenantId(), "PREPROCESSED_DATASET_ACTIVATION_REJECTED", "Dataset", datasetId, "FAILURE", "WARNING", dataset.status(), "ACTIVE", TRACE_TAG + ";CONFIRM_REQUIRED");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "必须人工确认后才允许激活");
+        }
+        PreprocessedDatasetPreviewResponse preview = preview(datasetId);
+        if (blank(preview.sourceDatasetId()) || blank(preview.sourceVersionId()) || blank(preview.operatorChainJson()) || blank(preview.processParamsJson())) {
+            audit(principal, dataset.tenantId(), "PREPROCESSED_DATASET_ACTIVATION_REJECTED", "Dataset", datasetId, "FAILURE", "WARNING", "LINEAGE_INCOMPLETE", "ACTIVE", TRACE_TAG + ";DAT-007");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DAT-007 要求激活前血缘与处理参数快照完整");
+        }
+        String versionId = blank(request.targetVersionId(), dataset.versionId());
+        if (blank(versionId)) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "激活目标版本不能为空");
+        }
+        OffsetDateTime at = now();
+        jdbc.update("UPDATE dataset SET status='ACTIVE', updated_at=? WHERE dataset_id=?", at, datasetId);
+        jdbc.update("UPDATE dataset_version SET status='PUBLISHED', published_at=COALESCE(published_at, ?), diagnostic_code='OK', diagnostic_message='VISUAL_PREPROCESS_ACTIVATED' WHERE version_id=?", at, versionId);
+        audit(principal, dataset.tenantId(), "PREPROCESSED_DATASET_ACTIVATED", "Dataset", datasetId, "SUCCESS", "INFO", "CONFIRMED", "ACTIVE", TRACE_TAG + ";" + blank(request.activationNote(), "manual-activate"));
+        return activationState(datasetId);
+    }
+
     private void replaceGraph(String pipelineId, PipelineSaveRequest request) {
         OffsetDateTime at = now();
+        jdbc.update("UPDATE pipeline_definition SET template_code=?, source_dataset_id=?, source_version_id=?, source_dataset_data_type=? WHERE pipeline_id=?",
+            nullIfBlank(request.templateCode()),
+            nullIfBlank(request.sourceDatasetId()),
+            nullIfBlank(request.sourceVersionId()),
+            sourceDatasetDataTypeForRequest(request),
+            pipelineId
+        );
         jdbc.update("DELETE FROM pipeline_edge WHERE pipeline_id=?", pipelineId);
         jdbc.update("DELETE FROM pipeline_variable WHERE pipeline_id=?", pipelineId);
         jdbc.update("DELETE FROM pipeline_node WHERE pipeline_id=?", pipelineId);
@@ -282,7 +358,13 @@ public class PipelineService {
     }
 
     private PipelineValidationResponse validateExisting(String pipelineId) {
+        PipelineSummaryResponse summary = allPipelineSummaries().stream().filter(item -> item.pipelineId().equals(pipelineId)).findFirst().orElse(null);
+        String inferredResultDataType = nodes(pipelineId).stream().anyMatch(node -> isFrameExtractionOperator(node.operatorId())) ? "IMAGE" : (summary == null ? null : summary.sourceDatasetDataType());
         PipelineSaveRequest request = new PipelineSaveRequest("existing", null, null, null,
+            summary == null ? null : summary.templateCode(),
+            summary == null ? null : summary.sourceDatasetId(),
+            summary == null ? null : summary.sourceVersionId(),
+            new ResultDatasetConfigRequest(summary == null ? null : summary.name() + " 输出", "PREPROCESSED", inferredResultDataType, false),
             nodes(pipelineId).stream().map(n -> new PipelineNodeRequest(n.nodeId(), n.operatorId(), n.label(), n.positionX(), n.positionY(), n.configJson())).toList(),
             edges(pipelineId).stream().map(e -> new PipelineEdgeRequest(e.edgeId(), e.sourceNodeId(), e.targetNodeId(), e.edgeType())).toList(),
             jdbc.query("SELECT * FROM pipeline_variable WHERE pipeline_id=?", (rs, n) -> new PipelineVariableRequest(rs.getString("name"), rs.getString("value_type"), rs.getString("value_kind"), rs.getString("value_json"), rs.getBoolean("required")), pipelineId)
@@ -295,6 +377,11 @@ public class PipelineService {
         List<PipelineNodeRequest> nodes = safe(request.nodes());
         List<PipelineEdgeRequest> edges = safe(request.edges());
         List<PipelineVariableRequest> variables = safe(request.variables());
+        String sourceDatasetId = blank(request.sourceDatasetId(), datasetIdFromReadNodeRequest(request));
+        DatasetInfo sourceDataset = null;
+        if (!blank(sourceDatasetId)) {
+            sourceDataset = datasetInfoOrNull(sourceDatasetId);
+        }
         if (nodes.size() < 2) errors.add(new PipelineValidationIssue("PIPELINE_NODE_TOO_FEW", "Pipeline 至少需要输入节点和一个处理/输出节点", null, null));
         Set<String> nodeIds = new HashSet<>();
         Set<String> variableNames = new HashSet<>();
@@ -343,10 +430,15 @@ public class PipelineService {
         if (indegree.values().stream().noneMatch(v -> v == 0)) errors.add(new PipelineValidationIssue("PIPELINE_INPUT_REQUIRED", "Pipeline 缺少输入节点", null, null));
         if (outdegree.values().stream().noneMatch(v -> v == 0)) errors.add(new PipelineValidationIssue("PIPELINE_OUTPUT_REQUIRED", "Pipeline 缺少输出节点", null, null));
         if (hasCycle(graph)) errors.add(new PipelineValidationIssue("PIPELINE_CYCLE_DETECTED", "Pipeline DAG 不允许出现环路", null, null));
+        validateVisualPreprocessRules(request, sourceDataset, nodes, errors);
         String code = errors.isEmpty() ? "OK" : errors.getFirst().code();
         String message = errors.isEmpty() ? "DAG 校验通过" : errors.getFirst().message();
         List<String> warnings = new ArrayList<>();
         warnings.add("TODO_CONFIRM_PIPELINE_SCHEDULER_TARGET");
+        if (isVisualPreprocess(request, nodes)) {
+            warnings.add("视频抽帧默认输出图片型 PREPROCESSED 数据集");
+            warnings.add("图片质量提高一期仅支持传统增强");
+        }
         if (existingPipelineId == null) warnings.add("创建后请保存版本快照");
         return new PipelineValidationResponse(errors.isEmpty(), code, message, errors, warnings);
     }
@@ -372,21 +464,29 @@ public class PipelineService {
         String versionId = "DVER-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
         String fileId = "FILE-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
         String datasetFileId = "DF-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
-        long outputRecords = Math.max(1, sample.recordCount());
+        boolean videoFrameMode = "AUDIO_VIDEO".equalsIgnoreCase(blank(pipeline.sourceDatasetDataType(), sample.dataType()));
+        long outputRecords = videoFrameMode ? Math.max(6, sample.recordCount() * 4L) : Math.max(1, sample.recordCount());
         long outputSize = Math.max(1024, sample.sizeBytes());
         String outputBucket = objectStorageService.datasetBucket(pipeline.tenantId());
-        String outputObjectKey = pipeline.tenantId() + "/pipeline/" + runId + "/output.parquet";
+        String outputObjectKey = pipeline.tenantId() + "/pipeline/" + runId + "/output." + (videoFrameMode ? "zip" : "parquet");
         String outputPayload = "pipeline=" + pipeline.pipelineId() + "\nrun=" + runId + "\nsampleDataset=" + sample.datasetId();
-        objectStorageService.uploadObjectIfConfigured(outputBucket, outputObjectKey, outputPayload.getBytes(StandardCharsets.UTF_8), "application/x-parquet");
-        jdbc.update("INSERT INTO dataset (dataset_id, name, dataset_type, data_type, tenant_id, project_id, current_version_id, status, access_level, tags, record_count, size_bytes, owner_id, description, created_at, updated_at) VALUES (?, ?, 'PREPROCESSED', ?, ?, ?, NULL, 'ACTIVE', 'TEAM', ?, ?, ?, ?, ?, ?, ?)", datasetId, pipeline.name() + " 输出", sample.dataType(), pipeline.tenantId(), pipeline.projectId(), "pipeline,F011,PREPROCESSED", outputRecords, outputSize, principal.user().id(), "由 Pipeline 沙箱运行 " + runId + " 生成的输出数据集", at, at);
-        jdbc.update("INSERT INTO dataset_version (version_id, dataset_id, version_name, status, record_count, size_bytes, content_safety_status, diagnostic_code, diagnostic_message, created_by, created_at, published_at) VALUES (?, ?, 'v1.0.0', 'PUBLISHED', ?, ?, 'PASSED', 'OK', 'SANDBOX_PIPELINE_OUTPUT_PASSED', ?, ?, ?)", versionId, datasetId, outputRecords, outputSize, principal.user().id(), at, at);
+        objectStorageService.uploadObjectIfConfigured(outputBucket, outputObjectKey, outputPayload.getBytes(StandardCharsets.UTF_8), videoFrameMode ? "application/zip" : "application/x-parquet");
+        String datasetDataType = videoFrameMode ? "IMAGE" : sample.dataType();
+        String processParams = preprocessParamsJson(pipeline, sample, runId);
+        String previewManifest = previewManifestJson(pipeline, sample, runId, outputRecords, videoFrameMode);
+        String annotationEligible = artifactWatermarkEnabled(pipeline.pipelineId()) ? "ANNOTATION_BLOCKED:ARTIFACT_WATERMARK" : "ANNOTATION_ELIGIBLE";
+        String operatorChain = operatorChainJsonForPipeline(pipeline.pipelineId());
+        String description = "由 Pipeline 视觉预处理运行 " + runId + " 生成；pipeline=" + pipeline.pipelineId() + ";runId=" + runId + ";sourceDatasetId=" + sample.datasetId() + ";sourceVersionId=" + blank(sample.versionId(), "UNKNOWN") + ";processParams=" + processParams + ";previewManifest=" + previewManifest + ";operatorChain=" + operatorChain + ";annotationEligibility=" + annotationEligible;
+        jdbc.update("INSERT INTO dataset (dataset_id, name, dataset_type, data_type, tenant_id, project_id, current_version_id, status, access_level, tags, record_count, size_bytes, owner_id, description, created_at, updated_at) VALUES (?, ?, 'PREPROCESSED', ?, ?, ?, NULL, 'PENDING_CONFIRMATION', 'TEAM', ?, ?, ?, ?, ?, ?, ?)", datasetId, pipeline.name() + " 输出", datasetDataType, pipeline.tenantId(), pipeline.projectId(), "pipeline,F017,PREPROCESSED,VISUAL_PREPROCESS", outputRecords, outputSize, principal.user().id(), description, at, at);
+        jdbc.update("INSERT INTO dataset_version (version_id, dataset_id, version_name, status, record_count, size_bytes, content_safety_status, diagnostic_code, diagnostic_message, created_by, created_at, published_at) VALUES (?, ?, 'v1.0.0', 'READY', ?, ?, 'PASSED', 'OK', 'VISUAL_PREPROCESS_READY_FOR_CONFIRM', ?, ?, NULL)", versionId, datasetId, outputRecords, outputSize, principal.user().id(), at);
         jdbc.update("UPDATE dataset SET current_version_id=?, updated_at=? WHERE dataset_id=?", versionId, at, datasetId);
-        jdbc.update("INSERT INTO platform_file_object (file_id, asset_type, tenant_id, project_id, bucket, object_key, expected_sha256, sha256, expected_size_bytes, size_bytes, content_type, storage_tier, status, owner_id, created_at, updated_at) VALUES (?, 'DATASET', ?, ?, ?, ?, ?, ?, ?, ?, 'application/x-parquet', 'STANDARD', 'AVAILABLE', ?, ?, ?)", fileId, pipeline.tenantId(), pipeline.projectId(), outputBucket, outputObjectKey, "sha256-" + fileId.toLowerCase(Locale.ROOT), "sha256-" + fileId.toLowerCase(Locale.ROOT), outputSize, outputSize, principal.user().id(), at, at);
+        jdbc.update("INSERT INTO platform_file_object (file_id, asset_type, tenant_id, project_id, bucket, object_key, expected_sha256, sha256, expected_size_bytes, size_bytes, content_type, storage_tier, status, owner_id, created_at, updated_at) VALUES (?, 'DATASET', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'STANDARD', 'AVAILABLE', ?, ?, ?)", fileId, pipeline.tenantId(), pipeline.projectId(), outputBucket, outputObjectKey, "sha256-" + fileId.toLowerCase(Locale.ROOT), "sha256-" + fileId.toLowerCase(Locale.ROOT), outputSize, outputSize, videoFrameMode ? "application/zip" : "application/x-parquet", principal.user().id(), at, at);
         jdbc.update("INSERT INTO dataset_file (id, dataset_id, version_id, file_id, file_role, status, created_at) VALUES (?, ?, ?, ?, 'PIPELINE_OUTPUT', 'BOUND', ?)", datasetFileId, datasetId, versionId, fileId, at);
         jdbc.update("INSERT INTO data_lineage (lineage_id, source_type, source_id, target_type, target_id, transform_type, created_at) VALUES (?, 'PIPELINE', ?, 'DATASET_VERSION', ?, 'PIPELINE', ?)", "LIN-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT), pipeline.pipelineId(), versionId, at);
         if (!blank(sample.versionId())) {
             jdbc.update("INSERT INTO data_lineage (lineage_id, source_type, source_id, target_type, target_id, transform_type, created_at) VALUES (?, 'DATASET_VERSION', ?, 'DATASET_VERSION', ?, 'PIPELINE', ?)", "LIN-PIN-" + randomHex(8).toUpperCase(Locale.ROOT), sample.versionId(), versionId, at);
         }
+        audit(principal, pipeline.tenantId(), "PREPROCESSED_DATASET_CREATED", "Dataset", datasetId, "SUCCESS", "INFO", null, "PENDING_CONFIRMATION", TRACE_TAG + ";DAT-007");
         return datasetId;
     }
 
@@ -397,12 +497,33 @@ public class PipelineService {
         return matcher.find() ? matcher.group(1) : "DATASET-WELD-DEFECT";
     }
 
+    private String datasetIdFromReadNodeRequest(PipelineSaveRequest request) {
+        return safe(request.nodes()).stream()
+            .map(PipelineNodeRequest::configJson)
+            .filter(config -> !blank(config))
+            .map(config -> {
+                Matcher matcher = Pattern.compile("\\\"datasetId\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"").matcher(config);
+                return matcher.find() ? matcher.group(1) : null;
+            })
+            .filter(value -> !blank(value))
+            .findFirst()
+            .orElse("DATASET-WELD-DEFECT");
+    }
+
     private DatasetInfo datasetVisible(PlatformPrincipal principal, String datasetId) {
-        List<DatasetInfo> rows = jdbc.query("SELECT d.*, v.version_name AS current_version_name FROM dataset d LEFT JOIN dataset_version v ON v.version_id=d.current_version_id WHERE d.dataset_id=?", (rs, n) -> new DatasetInfo(rs.getString("dataset_id"), rs.getString("name"), rs.getString("dataset_type"), rs.getString("data_type"), rs.getString("tenant_id"), rs.getString("project_id"), rs.getString("current_version_id"), rs.getLong("record_count"), rs.getLong("size_bytes")), datasetId);
+        List<DatasetInfo> rows = jdbc.query("SELECT d.*, v.version_name AS current_version_name FROM dataset d LEFT JOIN dataset_version v ON v.version_id=d.current_version_id WHERE d.dataset_id=?", (rs, n) -> new DatasetInfo(rs.getString("dataset_id"), rs.getString("name"), rs.getString("dataset_type"), rs.getString("data_type"), rs.getString("tenant_id"), rs.getString("project_id"), rs.getString("current_version_id"), rs.getString("status"), rs.getLong("record_count"), rs.getLong("size_bytes"), rs.getString("description")), datasetId);
         if (rows.isEmpty()) throw new PlatformException(PlatformError.NOT_FOUND, "数据集不存在");
         DatasetInfo dataset = rows.getFirst();
         if (!canSeeTenant(principal, dataset.tenantId())) throw new PlatformException(PlatformError.NOT_FOUND, "数据集不存在");
         return dataset;
+    }
+
+    private DatasetInfo datasetInfoOrNull(String datasetId) {
+        if (blank(datasetId)) {
+            return null;
+        }
+        List<DatasetInfo> rows = jdbc.query("SELECT d.*, v.version_name AS current_version_name FROM dataset d LEFT JOIN dataset_version v ON v.version_id=d.current_version_id WHERE d.dataset_id=?", (rs, n) -> new DatasetInfo(rs.getString("dataset_id"), rs.getString("name"), rs.getString("dataset_type"), rs.getString("data_type"), rs.getString("tenant_id"), rs.getString("project_id"), rs.getString("current_version_id"), rs.getString("status"), rs.getLong("record_count"), rs.getLong("size_bytes"), rs.getString("description")), datasetId);
+        return rows.isEmpty() ? null : rows.getFirst();
     }
 
     private List<PipelineSummaryResponse> allPipelineSummaries() {
@@ -412,7 +533,7 @@ public class PipelineService {
                    (SELECT COUNT(*) FROM pipeline_run r WHERE r.pipeline_id=p.pipeline_id) AS run_count
             FROM pipeline_definition p JOIN platform_user u ON u.id=p.owner_id
             ORDER BY p.updated_at DESC
-            """, (rs, n) -> new PipelineSummaryResponse(rs.getString("pipeline_id"), rs.getString("name"), rs.getString("tenant_id"), rs.getString("project_id"), rs.getString("status"), rs.getString("current_version_id"), rs.getString("owner_id"), rs.getString("owner_name"), rs.getInt("node_count"), rs.getInt("run_count"), rs.getString("description"), rs.getObject("updated_at", OffsetDateTime.class)));
+            """, (rs, n) -> new PipelineSummaryResponse(rs.getString("pipeline_id"), rs.getString("name"), rs.getString("tenant_id"), rs.getString("project_id"), rs.getString("status"), rs.getString("current_version_id"), rs.getString("owner_id"), rs.getString("owner_name"), rs.getInt("node_count"), rs.getInt("run_count"), rs.getString("description"), rs.getString("template_code"), rs.getString("source_dataset_id"), rs.getString("source_version_id"), rs.getString("source_dataset_data_type"), rs.getObject("updated_at", OffsetDateTime.class)));
     }
 
     private PipelineSummaryResponse pipelineSummaryVisible(PlatformPrincipal principal, String pipelineId, boolean write) {
@@ -450,11 +571,13 @@ public class PipelineService {
     }
 
     private PipelineRunSummaryResponse runSummary(java.sql.ResultSet rs) throws java.sql.SQLException {
-        return new PipelineRunSummaryResponse(rs.getString("run_id"), rs.getString("pipeline_id"), rs.getString("version_id"), rs.getString("status"), rs.getString("trigger_mode"), rs.getString("diagnostic_code"), rs.getString("diagnostic_message"), rs.getString("output_dataset_id"), nullableLong(rs, "duration_ms"), rs.getObject("started_at", OffsetDateTime.class), rs.getObject("ended_at", OffsetDateTime.class));
+        String outputDatasetId = rs.getString("output_dataset_id");
+        PreprocessedDatasetPreviewResponse preview = blank(outputDatasetId) ? null : preview(outputDatasetId);
+        return new PipelineRunSummaryResponse(rs.getString("run_id"), rs.getString("pipeline_id"), rs.getString("version_id"), rs.getString("status"), rs.getString("trigger_mode"), rs.getString("diagnostic_code"), rs.getString("diagnostic_message"), outputDatasetId, preview == null ? null : preview.status(), nullableLong(rs, "duration_ms"), preview == null ? null : preview.totalCount(), preview == null ? null : preview.successCount(), preview == null ? null : preview.skippedCount(), preview == null ? null : preview.failedCount(), rs.getObject("started_at", OffsetDateTime.class), rs.getObject("ended_at", OffsetDateTime.class));
     }
 
     private OperatorDetailResponse operatorDetail(String operatorId) {
-        List<OperatorDetailResponse> rows = jdbc.query("SELECT * FROM operator_catalog WHERE operator_id=?", (rs, n) -> new OperatorDetailResponse(operatorSummary(rs), rs.getString("parameter_schema_json"), rs.getString("input_schema_json"), rs.getString("output_schema_json"), maskValue("ENDPOINT", rs.getString("endpoint")), maskValue("SECRET_REF", rs.getString("credential_ref")), nullableInt(rs, "timeout_seconds"), nullableInt(rs, "concurrency_limit"), reviews(operatorId)), operatorId);
+        List<OperatorDetailResponse> rows = jdbc.query("SELECT * FROM operator_catalog WHERE operator_id=?", (rs, n) -> new OperatorDetailResponse(operatorSummary(rs), rs.getString("parameter_schema_json"), rs.getString("input_schema_json"), rs.getString("output_schema_json"), maskValue("ENDPOINT", rs.getString("endpoint")), maskValue("SECRET_REF", rs.getString("credential_ref")), nullableInt(rs, "timeout_seconds"), nullableInt(rs, "concurrency_limit"), frozenDefaults(rs.getString("operator_id")), annotationRiskNotice(rs.getString("operator_id")), reviews(operatorId)), operatorId);
         if (rows.isEmpty()) throw new PlatformException(PlatformError.NOT_FOUND, "算子不存在");
         return rows.getFirst();
     }
@@ -464,7 +587,29 @@ public class PipelineService {
     }
 
     private OperatorSummaryResponse operatorSummary(java.sql.ResultSet rs) throws java.sql.SQLException {
-        return new OperatorSummaryResponse(rs.getString("operator_id"), rs.getString("name"), rs.getString("category"), rs.getString("stage"), rs.getString("kind"), rs.getString("status"), rs.getString("description"), rs.getString("before_example"), rs.getString("after_example"), rs.getLong("usage_count"), rs.getLong("pipeline_count"), rs.getDouble("error_rate"));
+        String operatorId = rs.getString("operator_id");
+        boolean visual = isVisualOperator(operatorId);
+        return new OperatorSummaryResponse(
+            operatorId,
+            rs.getString("name"),
+            visual ? "VISUAL_PREPROCESS" : "GENERAL",
+            rs.getString("category"),
+            subCategory(operatorId),
+            operatorDataType(operatorId),
+            rs.getString("stage"),
+            rs.getString("kind"),
+            rs.getString("status"),
+            visual,
+            enhancementMode(operatorId),
+            defaultOutputDatasetDataType(operatorId),
+            annotationRiskLevel(operatorId),
+            rs.getString("description"),
+            rs.getString("before_example"),
+            rs.getString("after_example"),
+            rs.getLong("usage_count"),
+            rs.getLong("pipeline_count"),
+            rs.getDouble("error_rate")
+        );
     }
 
     private OperatorRecord operatorRecord(String operatorId) {
@@ -496,6 +641,228 @@ public class PipelineService {
             rejectPlainSecret(variable.valueJson());
             if ("SECRET_REF".equalsIgnoreCase(blank(variable.valueKind(), "")) && !secretRefAllowed(variable.valueJson())) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "PIPELINE_SECRET_NOT_ALLOWED: 密钥变量只允许 secretRef 或 TODO_CONFIRM_* 占位");
         }
+    }
+
+    private void validateVisualPreprocessRules(PipelineSaveRequest request, DatasetInfo sourceDataset, List<PipelineNodeRequest> nodes, List<PipelineValidationIssue> errors) {
+        if (!isVisualPreprocess(request, nodes)) {
+            return;
+        }
+        if (sourceDataset == null) {
+            errors.add(new PipelineValidationIssue("PIPELINE_SOURCE_DATASET_REQUIRED", "视觉预处理 Pipeline 必须指定源数据集", null, null));
+            return;
+        }
+        if (!"ACTIVE".equalsIgnoreCase(sourceDataset.status())) {
+            errors.add(new PipelineValidationIssue("PIPELINE_SOURCE_DATASET_NOT_ACTIVE", "仅允许基于 ACTIVE 数据集执行视觉预处理", null, null));
+        }
+        boolean hasAiEnhance = nodes.stream()
+            .map(PipelineNodeRequest::configJson)
+            .filter(config -> !blank(config))
+            .anyMatch(config -> upper(config, "").contains("AI_SUPER_RESOLUTION") || upper(config, "").contains("GENERATIVE"));
+        if (hasAiEnhance) {
+            errors.add(new PipelineValidationIssue("PIPELINE_TRADITIONAL_ENHANCEMENT_ONLY", "图片质量提高一期仅支持传统增强", null, null));
+        }
+        boolean frameExtract = nodes.stream().anyMatch(node -> isFrameExtractionOperator(node.operatorId()));
+        if (frameExtract) {
+            String resultDataType = request.resultDatasetConfig() == null ? null : request.resultDatasetConfig().datasetDataType();
+            if (!"IMAGE".equalsIgnoreCase(blank(resultDataType, "IMAGE"))) {
+                errors.add(new PipelineValidationIssue("PIPELINE_VIDEO_FRAME_OUTPUT_IMAGE_REQUIRED", "视频抽帧默认输出图片型 PREPROCESSED 数据集", null, null));
+            }
+        }
+    }
+
+    private boolean isVisualPreprocess(PipelineSaveRequest request, List<PipelineNodeRequest> nodes) {
+        return "VISUAL_PREPROCESS".equalsIgnoreCase(blank(request.templateCode(), ""))
+            || safe(nodes).stream().anyMatch(node -> isVisualOperator(node.operatorId()));
+    }
+
+    private boolean isVisualPreprocess(PipelineSummaryResponse summary) {
+        if (summary == null) {
+            return false;
+        }
+        if ("VISUAL_PREPROCESS".equalsIgnoreCase(blank(summary.templateCode(), ""))
+            || "VIDEO_FRAME_TO_IMAGE_PREPROCESS".equalsIgnoreCase(blank(summary.templateCode(), ""))) {
+            return true;
+        }
+        return nodes(summary.pipelineId()).stream().anyMatch(node -> isVisualOperator(node.operatorId()));
+    }
+
+    private boolean isVisualOperator(String operatorId) {
+        return operatorId != null && (
+            operatorId.startsWith("OP-IMG-")
+                || operatorId.startsWith("OP-VIDEO-")
+                || "OP-IMAGE-RESIZE".equals(operatorId)
+                || "OP-FORMAT-CONVERT".equals(operatorId)
+        );
+    }
+
+    private boolean isFrameExtractionOperator(String operatorId) {
+        return List.of("OP-VIDEO-FRAME-EXTRACT", "OP-VIDEO-FPS-EXTRACT", "OP-VIDEO-KEYFRAME").contains(operatorId);
+    }
+
+    private String subCategory(String operatorId) {
+        return switch (blank(operatorId, "")) {
+            case "OP-IMG-WATERMARK" -> "WATERMARK";
+            case "OP-IMG-ENHANCE" -> "QUALITY_ENHANCEMENT";
+            case "OP-IMAGE-RESIZE", "OP-IMG-RESIZE" -> "RESIZE";
+            case "OP-IMG-DENOISE" -> "DENOISE";
+            case "OP-IMG-SHARPEN" -> "SHARPEN";
+            case "OP-FORMAT-CONVERT", "OP-IMG-FORMAT-CONVERT" -> "FORMAT_CONVERT";
+            case "OP-VIDEO-FRAME-EXTRACT", "OP-VIDEO-FPS-EXTRACT", "OP-VIDEO-KEYFRAME" -> "FRAME_EXTRACTION";
+            case "OP-VIDEO-SEGMENT" -> "SEGMENT";
+            case "OP-VIDEO-RESOLUTION-UNIFY" -> "RESOLUTION_UNIFY";
+            case "OP-VIDEO-FPS-UNIFY" -> "FPS_UNIFY";
+            default -> "GENERAL";
+        };
+    }
+
+    private String operatorDataType(String operatorId) {
+        return operatorId != null && operatorId.startsWith("OP-VIDEO-") ? "AUDIO_VIDEO" : "IMAGE";
+    }
+
+    private String enhancementMode(String operatorId) {
+        return "OP-IMG-ENHANCE".equals(operatorId) ? "TRADITIONAL_ONLY" : null;
+    }
+
+    private String defaultOutputDatasetDataType(String operatorId) {
+        return isFrameExtractionOperator(operatorId) ? "IMAGE" : operatorDataType(operatorId);
+    }
+
+    private String annotationRiskLevel(String operatorId) {
+        return "OP-IMG-WATERMARK".equals(operatorId) ? "MEDIUM" : "LOW";
+    }
+
+    private VisualOperatorFrozenDefaultsResponse frozenDefaults(String operatorId) {
+        if ("OP-IMG-WATERMARK".equals(operatorId)) {
+            return new VisualOperatorFrozenDefaultsResponse(true, false, false);
+        }
+        return new VisualOperatorFrozenDefaultsResponse(null, null, null);
+    }
+
+    private String annotationRiskNotice(String operatorId) {
+        return "OP-IMG-WATERMARK".equals(operatorId) ? "带不可逆产物水印的结果默认不可进入标注链路" : null;
+    }
+
+    private String sourceDatasetDataTypeForRequest(PipelineSaveRequest request) {
+        DatasetInfo dataset = datasetInfoOrNull(blank(request.sourceDatasetId(), datasetIdFromReadNodeRequest(request)));
+        return dataset == null ? null : dataset.dataType();
+    }
+
+    private void ensurePreprocessed(DatasetInfo dataset) {
+        if (!"PREPROCESSED".equals(dataset.datasetType())) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "仅支持 PREPROCESSED 数据集");
+        }
+    }
+
+    private PreprocessedDatasetPreviewResponse preview(String datasetId) {
+        DatasetInfo dataset = datasetInfoOrNull(datasetId);
+        if (dataset == null) {
+            throw new PlatformException(PlatformError.NOT_FOUND, "数据集不存在");
+        }
+        String runId = parseDescription(dataset.description(), "runId");
+        String pipelineId = parseDescription(dataset.description(), "pipeline");
+        String sourceDatasetId = parseDescription(dataset.description(), "sourceDatasetId");
+        String sourceVersionId = parseDescription(dataset.description(), "sourceVersionId");
+        boolean artifactWatermark = dataset.description() != null && dataset.description().contains("ANNOTATION_BLOCKED:ARTIFACT_WATERMARK");
+        boolean previewWatermark = true;
+        long totalCount = Math.max(1L, dataset.recordCount());
+        long failed = artifactWatermark ? 1L : 0L;
+        long skipped = dataset.dataType().equalsIgnoreCase("IMAGE") ? 1L : 0L;
+        long success = Math.max(0L, totalCount - failed - skipped);
+        String processParams = extractStructured(dataset.description(), "processParams=");
+        String previewManifest = extractStructured(dataset.description(), "previewManifest=");
+        String operatorChain = extractStructured(dataset.description(), "operatorChain=");
+        if ("{}".equals(operatorChain)) {
+            operatorChain = operatorChainJsonForPipeline(pipelineId);
+        }
+        return new PreprocessedDatasetPreviewResponse(
+            datasetId,
+            runId,
+            pipelineId,
+            sourceDatasetId,
+            sourceVersionId,
+            dataset.status(),
+            dataset.dataType(),
+            previewWatermark,
+            artifactWatermark,
+            artifactWatermark,
+            pipelineId != null && pipelineId.contains("IMG") ? "TRADITIONAL_ONLY" : null,
+            pipelineId != null && pipelineId.contains("VIDEO") ? "FIXED_INTERVAL" : null,
+            totalCount,
+            success,
+            skipped,
+            failed,
+            samplePairsFromManifest(previewManifest),
+            List.of("预览水印仅用于界面展示", dataset.dataType().equalsIgnoreCase("IMAGE") ? "结果可流向图片标注" : "视频抽帧结果已转换为图片型数据集"),
+            failed == 0 ? List.of() : List.of("ARTIFACT_WATERMARK_BLOCKED"),
+            skipped == 0 ? List.of() : List.of("LOW_QUALITY_FRAME_SKIPPED"),
+            processParams,
+            operatorChain
+        );
+    }
+
+    private PreprocessedDatasetActivationStateResponse activationState(String datasetId) {
+        DatasetInfo dataset = datasetInfoOrNull(datasetId);
+        if (dataset == null) {
+            throw new PlatformException(PlatformError.NOT_FOUND, "数据集不存在");
+        }
+        boolean confirmed = "CONFIRMED".equals(dataset.status()) || "ACTIVE".equals(dataset.status());
+        boolean annotationEligible = dataset.description() == null || !dataset.description().contains("ANNOTATION_BLOCKED:ARTIFACT_WATERMARK");
+        String blockReason = annotationEligible ? null : "ARTIFACT_WATERMARK";
+        OffsetDateTime confirmedAt = confirmed ? now() : null;
+        OffsetDateTime activatedAt = "ACTIVE".equals(dataset.status()) ? now() : null;
+        return new PreprocessedDatasetActivationStateResponse(datasetId, dataset.status(), confirmed, annotationEligible, blockReason, dataset.versionId(), confirmedAt, activatedAt);
+    }
+
+    private String preprocessParamsJson(PipelineSummaryResponse pipeline, DatasetInfo sample, String runId) {
+        return "{\"runId\":\"" + runId + "\",\"sourceDatasetId\":\"" + sample.datasetId() + "\",\"sourceVersionId\":\"" + blank(sample.versionId(), "UNKNOWN") + "\",\"templateCode\":\"" + blank(pipeline.templateCode(), "VISUAL_PREPROCESS") + "\",\"enhancementMode\":\"" + (pipeline.pipelineId().contains("IMG") ? "TRADITIONAL_ONLY" : "N/A") + "\"}";
+    }
+
+    private String previewManifestJson(PipelineSummaryResponse pipeline, DatasetInfo sample, String runId, long outputRecords, boolean videoFrameMode) {
+        return "{\"runId\":\"" + runId + "\",\"samplePairs\":[{\"before\":\"原始样本1\",\"after\":\"处理后样本1\",\"label\":\"" + (videoFrameMode ? "抽帧样本" : "增强样本") + "\"}],\"totalCount\":" + outputRecords + "}";
+    }
+
+    private String operatorChainJsonForPipeline(String pipelineId) {
+        if (blank(pipelineId)) {
+            return "[]";
+        }
+        List<String> operatorIds = jdbc.queryForList("SELECT operator_id FROM pipeline_node WHERE pipeline_id=? ORDER BY position_x, position_y", String.class, pipelineId);
+        return "[" + operatorIds.stream().map(id -> "\"" + id + "\"").reduce((left, right) -> left + "," + right).orElse("") + "]";
+    }
+
+    private List<PreviewSamplePairResponse> samplePairsFromManifest(String previewManifest) {
+        if (blank(previewManifest)) {
+            return List.of(new PreviewSamplePairResponse("原始样例", "处理样例", "默认样例"));
+        }
+        return List.of(new PreviewSamplePairResponse("原始样例", "处理样例", "对比样例"));
+    }
+
+    private boolean artifactWatermarkEnabled(String pipelineId) {
+        return nodes(pipelineId).stream()
+            .anyMatch(node -> "OP-IMG-WATERMARK".equals(node.operatorId()) && upper(node.configJson(), "").contains("\"ARTIFACTWATERMARKENABLED\":TRUE"));
+    }
+
+    private String parseDescription(String description, String key) {
+        if (blank(description)) {
+            return null;
+        }
+        Matcher matcher = Pattern.compile(key + "=([^;\\n]+)").matcher(description);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private String extractStructured(String description, String prefix) {
+        if (blank(description)) {
+            return "{}";
+        }
+        int start = description.indexOf(prefix);
+        if (start < 0) {
+            return "{}";
+        }
+        int from = start + prefix.length();
+        int end = description.indexOf(";previewManifest=", from);
+        if (end < 0) {
+            end = description.length();
+        }
+        return description.substring(from, end);
     }
 
     private void validateOperatorSecrets(OperatorCustomRequest request) {
@@ -608,5 +975,5 @@ public class PipelineService {
     private String randomHex(int len) { return UUID.randomUUID().toString().replace("-", "").substring(0, len); }
 
     private record OperatorRecord(String operatorId, String name, String tenantId, String status, String parameterSchemaJson) {}
-    private record DatasetInfo(String datasetId, String name, String datasetType, String dataType, String tenantId, String projectId, String versionId, long recordCount, long sizeBytes) {}
+    private record DatasetInfo(String datasetId, String name, String datasetType, String dataType, String tenantId, String projectId, String versionId, String status, long recordCount, long sizeBytes, String description) {}
 }

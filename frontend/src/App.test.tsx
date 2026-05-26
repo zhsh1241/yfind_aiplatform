@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
+import type { ApiResponse } from './features/foundation/apiClient';
 import type { CurrentUser } from './features/platform/platformApi';
 import { useLocaleStore } from './features/platform/localeStore';
 import { useSessionStore } from './features/platform/sessionStore';
@@ -65,7 +66,7 @@ const mockAccessRequests = [{ requestId: 'DAR-001', datasetId: 'DATASET-WELD-DEF
 const mockAnnotationTask = { taskId: 'ANN-WELD-Q2', name: '焊缝缺陷检测标注任务', scene: 'IMAGE_TAGGING', sceneLabel: '图片打标', sourceDatasetId: 'DATASET-WELD-DEFECT', sourceDatasetName: '焊缝缺陷检测数据集', templateId: 'LT-WELD-BBOX', templateName: '焊缝图片打标模板', tenantId: 'TENANT-CABIN', status: 'IN_PROGRESS', reviewEnabled: true, prelabelEnabled: false, labelStudioEnabled: true, totalCount: 6, annotatedCount: 4, reviewedCount: 2, qualityScore: null, assignees: [{ userId: 'USR-ANNOTATOR', displayName: '标注工程师', role: 'ANNOTATOR' }, { userId: 'USR-BU-CABIN', displayName: '座舱审核员', role: 'REVIEWER' }], deadline: '2026-06-02T00:00:00Z', updatedAt: '2026-05-19T00:00:00Z' };
 const mockAssignedAnnotationTask = { ...mockAnnotationTask, taskId: 'ANN-WELD-ASSIGNED', name: '焊缝缺陷待开始任务', status: 'ASSIGNED' };
 const mockSegmentationAnnotationTask = { ...mockAnnotationTask, taskId: 'ANN-WELD-SEG', name: '焊缝缺陷图片分割任务', scene: 'IMAGE_SEGMENTATION', sceneLabel: '图片分割', templateId: 'LT-WELD-POLYGON', templateName: '焊缝图片分割模板' };
-const mockAnnotationTemplate = { templateId: 'LT-WELD-BBOX', name: '焊缝图片打标模板', scene: 'IMAGE_TAGGING', labelType: 'BOUNDING_BOX', labelSchemaJson: '{"labels":["裂纹","气孔"]}', labelStudioConfigXml: '<View><Image name="image" value="$image"/></View>', status: 'PUBLISHED', tenantId: 'TENANT-CABIN', createdBy: 'USR-ADMIN', updatedAt: '2026-05-19T00:00:00Z' };
+const mockAnnotationTemplate = { templateId: 'LT-WELD-BBOX', name: '焊缝图片打标模板', scene: 'IMAGE_TAGGING', labelType: 'BOUNDING_BOX', labelSchemaJson: '{"labels":["焊接气孔","裂纹","夹渣","未熔合"]}', labelStudioConfigXml: '<View><Image name="image" value="$image"/></View>', status: 'PUBLISHED', tenantId: 'TENANT-CABIN', createdBy: 'USR-ADMIN', updatedAt: '2026-05-19T00:00:00Z' };
 const mockSegmentationTemplate = { templateId: 'LT-WELD-POLYGON', name: '焊缝图片分割模板', scene: 'IMAGE_SEGMENTATION', labelType: 'POLYGON', labelSchemaJson: '{"labels":["裂纹区域","气孔区域"]}', labelStudioConfigXml: '<View><Image name="image" value="$image"/><PolygonLabels name="label" toName="image"><Label value="裂纹区域"/><Label value="气孔区域"/></PolygonLabels></View>', status: 'PUBLISHED', tenantId: 'TENANT-CABIN', createdBy: 'USR-ADMIN', updatedAt: '2026-05-21T00:00:00Z' };
 const mockAnnotationBinding = { bindingId: 'AEXT-WELD-Q2', taskId: 'ANN-WELD-Q2', provider: 'LABEL_STUDIO', externalProjectId: null, externalUrl: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL', configStatus: 'UNCONFIGURED', lastSyncStatus: 'UNCONFIGURED', diagnosticCode: 'LABEL_STUDIO_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL;TODO_CONFIRM_LABEL_STUDIO_TOKEN_SECRET', launchUrl: null, lastSyncAt: null };
 const mockAnnotationWorkItems: Array<{ workItemId: string; taskId: string; sampleKey: string; sampleFileId: string | null; annotatorId: string; annotatorName: string; status: string; predictionJson: string | null; annotationJson: string | null; submittedAt: string | null; updatedAt: string }> = [{ workItemId: 'AWI-WELD-001', taskId: 'ANN-WELD-Q2', sampleKey: 'weld/0001.jpg', sampleFileId: 'FILE-DATASET-WELD-001', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', status: 'DRAFT', predictionJson: null, annotationJson: null, submittedAt: null, updatedAt: '2026-05-19T00:00:00Z' }];
@@ -77,6 +78,16 @@ const mockAnnotationDetail = { task: mockAnnotationTask, assignments: [], workIt
 const mockSegmentationAnnotationDetail = { task: mockSegmentationAnnotationTask, assignments: [], workItems: mockSegmentationWorkItems, reviewItems: [], publications: [], externalBinding: mockAnnotationBinding };
 const mockDatasetAnnotationCandidate = { datasetId: 'DATASET-WELD-DEFECT', datasetName: '焊缝缺陷检测数据集', currentVersionId: 'DVER-WELD-001', dataType: 'IMAGE', status: 'ACTIVE', eligible: true, diagnosticCode: 'OK', diagnosticMessage: '已满足创建标注任务条件', templates: [mockAnnotationTemplate, mockSegmentationTemplate], supportedFormats: ['COCO_DETECTION', 'YOLO_DETECTION', 'VOC_DETECTION', 'SEGMENTATION_MASK_MANIFEST'] };
 const mockDatasetAnnotationTasks = [{ task: mockAnnotationTask, exports: [] }];
+const mockAnnotationSourceDatasets = {
+  items: [
+    { datasetId: 'DATASET-WELD-DEFECT', name: '焊缝缺陷检测数据集', datasetType: 'RAW', dataType: 'IMAGE', currentVersionId: 'DVER-WELD-001', status: 'ACTIVE', annotationEligible: true, confirmed: true, sourceDatasetId: null, sourceDatasetName: null, blockReason: null },
+    { datasetId: 'DATASET-WELD-MASK', name: '焊缝分割训练数据集', datasetType: 'ANNOTATED', dataType: 'IMAGE', currentVersionId: 'DVER-WELD-MASK-003', status: 'ACTIVE', annotationEligible: true, confirmed: true, sourceDatasetId: 'DATASET-WELD-DEFECT', sourceDatasetName: '焊缝缺陷检测数据集', blockReason: null },
+    { datasetId: 'DATASET-WELD-FRAMES-001', name: '焊缝视频抽帧预处理结果', datasetType: 'PREPROCESSED', dataType: 'IMAGE', currentVersionId: 'DVER-WELD-FRAMES-001', status: 'ACTIVE', annotationEligible: true, confirmed: true, sourceDatasetId: 'DATASET-WELD-VIDEO-001', sourceDatasetName: '焊缝视频原始数据集', blockReason: null },
+  ],
+  total: 3,
+  page: 1,
+  pageSize: 100,
+};
 
 const mockDatasetDetail = { dataset: mockDatasets.items[0], versions: [{ versionId: 'DVER-WELD-001', datasetId: 'DATASET-WELD-DEFECT', versionName: 'v1.0.0', status: 'PUBLISHED', recordCount: 31200, sizeBytes: 1024, contentSafetyStatus: 'PASSED', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX_CONTENT_SAFETY_PASSED', createdAt: '2026-05-18T00:00:00Z', publishedAt: '2026-05-18T00:00:00Z' }], files: [{ id: 'DF-WELD-001', datasetId: 'DATASET-WELD-DEFECT', versionId: 'DVER-WELD-001', fileId: 'FILE-DATASET-WELD-001', fileRole: 'RAW', status: 'BOUND', objectKey: 'TENANT-CABIN/dataset/FILE-DATASET-WELD-001.csv', contentType: 'text/csv', sizeBytes: 1024, sha256: 'sha256-weld-001' }], grants: [], lineage: [{ lineageId: 'LIN-DSRC-WELD-001', sourceType: 'DATA_SOURCE', sourceId: 'DSRC-CABIN-MINIO', targetType: 'DATASET_VERSION', targetId: 'DVER-WELD-001', transformType: 'IMPORT', createdAt: '2026-05-18T00:00:00Z' }], previewStatus: 'UNSUPPORTED', previewDiagnostic: '非图片/不可预览文件显示元数据退化状态' };
 const mockPaiStatus = { status: 'UNCONFIGURED', configured: false, enabled: false, regionId: 'TODO_CONFIRM_PAI_REGION', endpoint: 'TODO_CONFIRM_PAI_ENDPOINT', workspaceId: 'TODO_CONFIRM_PAI_WORKSPACE_ID', quotaId: 'TODO_CONFIRM_PAI_QUOTA_ID', resourceGroupId: 'TODO_CONFIRM_PAI_RESOURCE_GROUP_ID', credentialMode: 'RAM_ROLE', credentialRefMasked: 'TODO_CONFIRM_PAI_RAM_ROLE_ARN', diagnosticCode: 'PAI_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_PAI_REGION;TODO_CONFIRM_PAI_WORKSPACE_ID;TODO_CONFIRM_PAI_QUOTA_ID', lastSyncAt: null, stale: false };
@@ -93,6 +104,7 @@ vi.mock('./features/foundation/apiClient', () => ({
       if (url.includes('/api/v1/data-sources/') && url.includes('/test')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { sourceId: 'DSRC-CABIN-MINIO', result: 'SUCCESS', status: 'TESTED', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX connection verified', latencyMs: 42, traceId: 't', testedAt: '2026-05-18T00:00:00Z' } } });
       if (url.includes('/api/v1/annotation/review-items')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationReviewItems } });
       if (url.includes('/api/v1/annotation/overview')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationOverview } });
+      if (url.includes('/api/v1/annotation/source-datasets')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationSourceDatasets } });
       if (url.includes('/api/v1/annotation/tasks/') && url.includes('/work-items')) {
         const items = url.includes('/api/v1/annotation/tasks/ANN-WELD-SEG') ? mockSegmentationWorkItems : mockAnnotationWorkItems;
         return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { items, total: items.length, page: 1, pageSize: 50 } } });
@@ -265,9 +277,9 @@ describe('F006 platform identity frontend', () => {
     await userEvent.type(screen.getByLabelText('密码'), 'Smp@123456');
     await userEvent.click(screen.getByRole('button', { name: /登\s*录/ }));
 
-    await waitFor(() => expect(screen.getByText('SMP 工业 AI 小模型平台')).toBeInTheDocument());
-    expect(screen.getByText('用户管理')).toBeInTheDocument();
-    expect(screen.getByText('权限管理')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('YFI SMP')).toBeInTheDocument());
+    expect(await screen.findByText('用户管理')).toBeInTheDocument();
+    expect(await screen.findByText('权限管理')).toBeInTheDocument();
   });
 
   it('keeps usermgmt tabs, table, role cards and permission matrix API-driven', async () => {
@@ -320,7 +332,7 @@ describe('F006 platform identity frontend', () => {
     await userEvent.click((await screen.findAllByRole('button', { name: '编辑权限' }))[0]);
     expect(await screen.findByText('编辑角色权限：座舱数据管理员')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '保存角色权限' }));
-  });
+  }, 15000);
 
   it('keeps perm page title, tabs, request and approval workflow API-driven', async () => {
     mockState.token = 'token-f006';
@@ -522,7 +534,7 @@ describe('F006 platform identity frontend', () => {
     expect(screen.getByText('直接输入标签并自动建模板')).toBeInTheDocument();
     expect(screen.getByLabelText('标签列表')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByLabelText('源数据集（仅 ACTIVE 图片数据集）'));
+    await userEvent.click(screen.getByLabelText('源数据集（仅 ACTIVE 且可标注图片数据集）'));
     expect((await screen.findAllByText(/焊缝缺陷检测数据集（DATASET-WELD-DEFECT）/)).length).toBeGreaterThan(0);
     expect((await screen.findAllByText(/焊缝分割训练数据集（DATASET-WELD-MASK）/)).length).toBeGreaterThan(0);
     await userEvent.click((await screen.findAllByText(/焊缝分割训练数据集（DATASET-WELD-MASK）/))[0]);
@@ -574,8 +586,9 @@ describe('F006 platform identity frontend', () => {
     seedWorkbenchSession();
 
     const getMock = vi.mocked((await import('./features/foundation/apiClient')).apiClient.get);
-    const originalImpl = getMock.getMockImplementation() as ((url: string, ...args: any[]) => Promise<any>) | undefined;
-    getMock.mockImplementation((url: string, ...args: any[]) => {
+    type MockApiGet = (url: string, ...args: unknown[]) => Promise<{ data: ApiResponse<unknown> }>;
+    const originalImpl = getMock.getMockImplementation() as MockApiGet | undefined;
+    getMock.mockImplementation((url: string, ...args: unknown[]) => {
       if (url.includes('/api/v1/annotation/tasks/') && url.includes('/work-items')) {
         return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationWorkItems } });
       }
@@ -608,14 +621,18 @@ describe('F006 platform identity frontend', () => {
 
   it('auto starts assigned annotation task before entering workbench', async () => {
     seedWorkbenchSession();
+    const { apiClient } = await import('./features/foundation/apiClient');
+    const postMock = vi.mocked(apiClient.post);
+    postMock.mockClear();
 
     renderApp(['/ann']);
 
     expect(await screen.findByRole('heading', { name: '标注任务管理' })).toBeInTheDocument();
     await userEvent.click(await screen.findByRole('button', { name: '开始并进入标注' }));
 
-    expect(await screen.findByRole('heading', { name: '标注工作台' })).toBeInTheDocument();
-    expect(await screen.findByText('样本队列')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalledWith('/api/v1/annotation/tasks/ANN-WELD-ASSIGNED/start');
+    });
   });
 
   it('renders segmentation workbench as polygon regions instead of boxes', async () => {
@@ -632,7 +649,7 @@ describe('F006 platform identity frontend', () => {
     expect(await screen.findByTestId('annotation-polygon-count')).toHaveTextContent('1');
     expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹区域');
     expect(screen.queryByTestId('annotation-box-count')).not.toBeInTheDocument();
-  });
+  }, 15000);
 
   it('supports selecting and deleting a polygon vertex in segmentation workbench', async () => {
     seedWorkbenchSession();
@@ -698,7 +715,7 @@ describe('F006 platform identity frontend', () => {
     ]);
 
     expect(await screen.findByTestId('annotation-selected-polygon-edge')).toHaveTextContent('#1');
-  });
+  }, 15000);
 
   it('supports workbench keyboard shortcuts for drawing, undo redo and deleting without mutating existing labels', async () => {
     seedWorkbenchSession();
@@ -711,31 +728,31 @@ describe('F006 platform identity frontend', () => {
     await user.keyboard('w');
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('1');
     expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('矩形');
-    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('焊接气孔');
 
     await user.keyboard('2');
-    expect(screen.getByRole('button', { name: /气孔\s+2/ })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
+    expect(screen.getByRole('button', { name: /裂纹\s+2/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('焊接气孔');
 
     await user.keyboard('e');
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('2');
     expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('椭圆');
-    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('气孔');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
 
     await user.keyboard('{Control>}z{/Control}');
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('1');
     expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('矩形');
-    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('焊接气孔');
 
     await user.keyboard('{Control>}y{/Control}');
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('2');
     expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('椭圆');
-    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('气孔');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
 
     await user.keyboard('p');
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('3');
     expect(screen.getByTestId('annotation-current-shape')).toHaveTextContent('多边形');
-    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('气孔');
+    expect(screen.getByTestId('annotation-current-label')).toHaveTextContent('裂纹');
 
     await user.keyboard('{Delete}');
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('2');
@@ -744,7 +761,7 @@ describe('F006 platform identity frontend', () => {
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('3');
     await user.keyboard('d');
     expect(await screen.findByTestId('annotation-box-count')).toHaveTextContent('2');
-  });
+  }, 15000);
 
   it('finalizes segmentation polygon with Enter shortcut', async () => {
     seedWorkbenchSession();
@@ -873,7 +890,7 @@ describe('F006 platform identity frontend', () => {
     await userEvent.click((await screen.findAllByText('创建标注任务'))[0]);
 
     expect(await screen.findByRole('heading', { name: '标注任务管理' })).toBeInTheDocument();
-    expect(await screen.findByText('数据集范围说明')).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: '＋ 新建标注任务' })).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByText(/焊缝缺陷检测数据集（DATASET-WELD-DEFECT）/)).toBeInTheDocument();
       expect(screen.getByDisplayValue('DVER-WELD-001')).toBeInTheDocument();

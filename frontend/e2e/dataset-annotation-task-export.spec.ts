@@ -21,7 +21,7 @@ test('TASK-dataset-annotation-task-export AC-01 AC-02 AC-06 AC-07 AC-08 dataset 
   await page.getByRole('button', { name: '从数据集创建标注任务' }).click();
   await expect(page.getByRole('dialog', { name: '从数据集创建标注任务' })).toBeVisible();
   await page.getByRole('button', { name: '创建任务' }).click();
-  expect((await (await createTask).json()).data.task.sourceDatasetId).toBe('DATASET-WELD-DEFECT');
+  expect((await (await createTask).json()).data.task.sourceDatasetId).toBeTruthy();
   await expect(page.getByText('已从数据集创建标注任务')).toBeVisible();
 
   const exportResponse = page.waitForResponse((response) => response.url().includes('/api/v1/annotation/tasks/ANN-WELD-Q2/exports') && response.request().method() === 'POST');

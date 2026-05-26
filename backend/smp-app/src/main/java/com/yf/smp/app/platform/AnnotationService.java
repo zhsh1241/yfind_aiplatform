@@ -61,6 +61,7 @@ class UnconfiguredLabelStudioAnnotationAdapter implements LabelStudioAnnotationA
 @Service
 public class AnnotationService {
     private static final String TRACE_TAG = "TASK-annotation-integration";
+    private static final String VISUAL_PREPROCESS_TRACE_TAG = "TASK-visual-preprocess-operators-pipeline";
     private static final double MIN_COVERAGE = 0.90d;
     private final JdbcTemplate jdbc;
     private final PlatformIdentityService identityService;
@@ -103,6 +104,25 @@ public class AnnotationService {
         return new AnnotationTaskListResponse(filtered.subList(from, to), filtered.size(), normalizedPage, normalizedPageSize);
     }
 
+    public AnnotationSourceDatasetListResponse sourceDatasets(PlatformPrincipal principal, String keyword, String sourceType, String scene, int page, int pageSize) {
+        identityService.requirePermission(principal, "data:annotation:write");
+        List<AnnotationSourceDatasetResponse> items = jdbc.query("SELECT * FROM dataset ORDER BY updated_at DESC", (rs, n) -> datasetInfo(rs))
+            .stream()
+            .filter(item -> canSeeTenant(principal, item.tenantId()))
+            .filter(item -> "IMAGE".equals(upper(item.dataType(), "")))
+            .filter(item -> "ACTIVE".equals(item.status()))
+            .filter(item -> blank(keyword) || matches(item.name(), keyword) || matches(item.datasetId(), keyword))
+            .filter(item -> blank(sourceType) || item.datasetType().equalsIgnoreCase(sourceType))
+            .map(item -> annotationSourceDataset(item))
+            .filter(item -> item.annotationEligible())
+            .toList();
+        int normalizedPage = Math.max(1, page);
+        int normalizedPageSize = Math.max(1, Math.min(100, pageSize));
+        int from = Math.min((normalizedPage - 1) * normalizedPageSize, items.size());
+        int to = Math.min(from + normalizedPageSize, items.size());
+        return new AnnotationSourceDatasetListResponse(items.subList(from, to), items.size(), normalizedPage, normalizedPageSize);
+    }
+
     public AnnotationTaskDetailResponse taskDetail(PlatformPrincipal principal, String taskId) {
         identityService.requirePermission(principal, "data:annotation:read");
         return detail(taskVisible(principal, taskId, false));
@@ -130,11 +150,14 @@ public class AnnotationService {
             audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "Dataset", source.datasetId(), "FAILURE", "WARNING", source.status(), "ACTIVE_REQUIRED", TRACE_TAG + ";DAT-009");
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "所选数据集状态不可用：DAT-009 要求源数据集必须为 ACTIVE");
         }
+        AnnotationLabelTemplateRecord template = resolveTaskTemplate(principal, source, request);
         if (!"IMAGE".equals(upper(source.dataType(), ""))) {
             audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "Dataset", source.datasetId(), "FAILURE", "WARNING", source.dataType(), "IMAGE_REQUIRED", TRACE_TAG + ";DAT-013");
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DAT-013 仅支持图片数据集创建图片打标或图片分割任务");
         }
-        AnnotationLabelTemplateRecord template = resolveTaskTemplate(principal, source, request);
+        if ("PREPROCESSED".equals(source.datasetType())) {
+            ensurePreprocessedDatasetEligible(principal, source);
+        }
         String scene = normalizeScene(request.scene(), template.scene());
         String templateScene = normalizeScene(template.scene(), "IMAGE_TAGGING");
         ensureImageScene(scene, "DAT-013 仅支持图片打标或图片分割标注场景");
@@ -152,7 +175,8 @@ public class AnnotationService {
         String id = "ANN-" + randomHex(10).toUpperCase(Locale.ROOT);
         OffsetDateTime at = now();
         String sourceVersionId = blank(request.sourceVersionId(), source.currentVersionId());
-        long total = countDatasetFiles(sourceVersionId);
+        List<String> sampleFileIds = sampleFiles(sourceVersionId, scene);
+        long total = sampleFileIds.isEmpty() ? countDatasetFiles(sourceVersionId) : sampleFileIds.size();
         if (total <= 0) {
             total = Math.max(1L, source.recordCount());
         }
@@ -162,7 +186,7 @@ public class AnnotationService {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, ?, ?, ?, ?, ?)
             """, id, source.tenantId(), source.projectId(), source.datasetId(), sourceVersionId, template.templateId(), require(request.name(), "标注任务名称不能为空"), scene, status, bool(request.reviewEnabled(), true), bool(request.prelabelEnabled(), false), bool(request.labelStudioEnabled(), true), blank(request.prelabelModelSource(), "TODO_CONFIRM_PRELABEL_MODEL_SOURCE"), request.prelabelConfidence(), total, request.deadline(), nullIfBlank(request.note()), principal.user().id(), at, at);
         replaceAssignments(principal, id, assignees, reviewers);
-        createInitialWorkItems(id, source, sourceVersionId, assignees, bool(request.prelabelEnabled(), false), total, at);
+        createInitialWorkItems(id, source, sampleFileIds, assignees, bool(request.prelabelEnabled(), false), total, at);
         ensureBinding(id);
         audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATED", "AnnotationTask", id, "SUCCESS", "INFO", null, status, TRACE_TAG);
         if (!assignees.isEmpty() || !reviewers.isEmpty()) {
@@ -184,6 +208,25 @@ public class AnnotationService {
         String scene = normalizeScene(request.scene(), "IMAGE_TAGGING");
         ensureImageScene(scene, "DAT-013 仅支持图片打标或图片分割标注场景");
         return createInlineTemplateForTask(principal, source, scene, inlineLabels, request.inlineTemplateName());
+    }
+
+    private void ensurePreprocessedDatasetEligible(PlatformPrincipal principal, DatasetInfo source) {
+        String description = nullToEmpty(source.description());
+        boolean confirmed = description.contains("confirmed=true") || "ACTIVE".equals(source.status());
+        boolean artifactBlocked = description.contains("ANNOTATION_BLOCKED:ARTIFACT_WATERMARK");
+        boolean lineageComplete = description.contains("sourceDatasetId=") && description.contains("sourceVersionId=") && description.contains("processParams=");
+        if (!confirmed || !"ACTIVE".equals(source.status())) {
+            audit(principal, source.tenantId(), "PREPROCESSED_DATASET_ANNOTATION_BLOCKED", "Dataset", source.datasetId(), "FAILURE", "WARNING", source.status(), "ACTIVE_REQUIRED", VISUAL_PREPROCESS_TRACE_TAG + ";DAT-009");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DAT-009 仅允许 ACTIVE 且已确认的预处理数据集用于标注");
+        }
+        if (!lineageComplete) {
+            audit(principal, source.tenantId(), "PREPROCESSED_DATASET_ANNOTATION_BLOCKED", "Dataset", source.datasetId(), "FAILURE", "WARNING", "LINEAGE_INCOMPLETE", "ACTIVE", VISUAL_PREPROCESS_TRACE_TAG + ";DAT-007");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DAT-007 要求预处理数据集保留完整血缘和处理参数");
+        }
+        if (artifactBlocked) {
+            audit(principal, source.tenantId(), "PREPROCESSED_DATASET_ANNOTATION_BLOCKED", "Dataset", source.datasetId(), "FAILURE", "WARNING", "ARTIFACT_WATERMARK", "ANNOTATION_BLOCKED", VISUAL_PREPROCESS_TRACE_TAG + ";AC-08");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "带不可逆产物水印的预处理数据集默认不可用于标注");
+        }
     }
 
     private void ensureTemplateUsableForTask(PlatformPrincipal principal, DatasetInfo source, AnnotationLabelTemplateRecord template) {
@@ -640,8 +683,7 @@ public class AnnotationService {
         jdbc.update("INSERT INTO annotation_assignment (assignment_id,task_id,assignee_id,role,status,assigned_by,assigned_at) VALUES (?,?,?,?,?,?,?)", "ANN-ASG-" + randomHex(10).toUpperCase(Locale.ROOT), taskId, assigneeId, role, "ACTIVE", principal.user().id(), at);
     }
 
-    private void createInitialWorkItems(String taskId, DatasetInfo source, String sourceVersionId, List<String> assignees, boolean prelabel, long total, OffsetDateTime at) {
-        List<String> sampleFileIds = sampleFiles(sourceVersionId);
+    private void createInitialWorkItems(String taskId, DatasetInfo source, List<String> sampleFileIds, List<String> assignees, boolean prelabel, long total, OffsetDateTime at) {
         int count = sampleFileIds.isEmpty() ? (int) Math.max(1L, total) : sampleFileIds.size();
         String annotator = assignees.isEmpty() ? null : assignees.getFirst();
         for (int i = 1; i <= count; i++) {
@@ -791,6 +833,26 @@ public class AnnotationService {
         return dataset;
     }
 
+    private AnnotationSourceDatasetResponse annotationSourceDataset(DatasetInfo item) {
+        String description = nullToEmpty(item.description());
+        boolean artifactBlocked = description.contains("ANNOTATION_BLOCKED:ARTIFACT_WATERMARK");
+        boolean confirmed = "RAW".equals(item.datasetType()) || description.contains("confirmed=true") || "ACTIVE".equals(item.status());
+        boolean eligible = "ACTIVE".equals(item.status()) && "IMAGE".equals(upper(item.dataType(), "")) && (!"PREPROCESSED".equals(item.datasetType()) || (!artifactBlocked && confirmed));
+        return new AnnotationSourceDatasetResponse(
+            item.datasetId(),
+            item.name(),
+            item.datasetType(),
+            item.dataType(),
+            item.currentVersionId(),
+            item.status(),
+            eligible,
+            confirmed,
+            parseDescription(description, "sourceDatasetId"),
+            null,
+            artifactBlocked ? "ARTIFACT_WATERMARK" : null
+        );
+    }
+
     private void ensureWorkOwnerOrAdmin(PlatformPrincipal principal, AnnotationWorkItemRecord item) {
         if (principal.hasPermission("data:annotation:admin") || blank(item.annotatorId()) || principal.user().id().equals(item.annotatorId())) return;
         throw new PlatformException(PlatformError.FORBIDDEN, "只能提交分配给自己的标注工作项");
@@ -862,6 +924,18 @@ public class AnnotationService {
         return taskRecord(taskId).tenantId();
     }
 
+    private String parseDescription(String description, String key) {
+        if (description == null || description.isBlank()) {
+            return null;
+        }
+        Matcher matcher = Pattern.compile(key + "=([^;\\n]+)").matcher(description);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private boolean matches(String value, String keyword) {
+        return blank(keyword) || (!blank(value) && value.toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT)));
+    }
+
     private AnnotationTaskRecord taskRecord(String id) {
         List<AnnotationTaskRecord> rows = jdbc.query("SELECT * FROM annotation_task WHERE task_id=?", (rs, n) -> new AnnotationTaskRecord(rs.getString("task_id"), rs.getString("tenant_id"), rs.getString("project_id"), rs.getString("source_dataset_id"), rs.getString("source_version_id"), rs.getString("template_id"), rs.getString("name"), rs.getString("scene"), rs.getString("status"), rs.getBoolean("review_enabled"), rs.getBoolean("prelabel_enabled"), rs.getBoolean("label_studio_enabled"), rs.getString("prelabel_model_source"), nullableDouble(rs, "prelabel_confidence"), rs.getLong("total_count"), rs.getLong("annotated_count"), rs.getLong("reviewed_count"), nullableInt(rs, "quality_score"), rs.getObject("deadline", OffsetDateTime.class), rs.getString("note"), rs.getString("created_by"), rs.getObject("updated_at", OffsetDateTime.class)), id);
         if (rows.isEmpty()) throw new PlatformException(PlatformError.NOT_FOUND, "标注任务不存在");
@@ -887,26 +961,54 @@ public class AnnotationService {
     }
 
     private DatasetInfo datasetInfo(String id) {
-        List<DatasetInfo> rows = jdbc.query("SELECT * FROM dataset WHERE dataset_id=?", (rs, n) -> new DatasetInfo(rs.getString("dataset_id"), rs.getString("name"), rs.getString("dataset_type"), rs.getString("data_type"), rs.getString("tenant_id"), rs.getString("project_id"), rs.getString("current_version_id"), rs.getString("status"), rs.getLong("record_count"), rs.getLong("size_bytes"), rs.getString("owner_id")), id);
+        List<DatasetInfo> rows = jdbc.query("SELECT * FROM dataset WHERE dataset_id=?", (rs, n) -> datasetInfo(rs), id);
         if (rows.isEmpty()) throw new PlatformException(PlatformError.NOT_FOUND, "数据集不存在");
         return rows.getFirst();
     }
 
-    private List<String> sampleFiles(String versionId) {
-        List<String> imageFiles = jdbc.queryForList("""
-            SELECT df.file_id
-            FROM dataset_file df
-            JOIN platform_file_object pfo ON pfo.file_id = df.file_id
-            WHERE df.version_id=?
-              AND df.status='BOUND'
-              AND pfo.status='AVAILABLE'
-              AND pfo.content_type LIKE 'image/%'
-            ORDER BY df.created_at, df.file_id
-            """, String.class, versionId);
-        if (!imageFiles.isEmpty()) {
+    private DatasetInfo datasetInfo(ResultSet rs) throws SQLException {
+        return new DatasetInfo(
+            rs.getString("dataset_id"),
+            rs.getString("name"),
+            rs.getString("dataset_type"),
+            rs.getString("data_type"),
+            rs.getString("tenant_id"),
+            rs.getString("project_id"),
+            rs.getString("current_version_id"),
+            rs.getString("status"),
+            rs.getLong("record_count"),
+            rs.getLong("size_bytes"),
+            rs.getString("owner_id"),
+            rs.getString("description")
+        );
+    }
+
+    private List<String> sampleFiles(String versionId, String scene) {
+        List<String> imageFiles = sampleFiles(versionId, true);
+        if (imageFiles.size() > 1 && "IMAGE_TAGGING".equals(scene)) {
             return imageFiles;
         }
-        return jdbc.queryForList("SELECT file_id FROM dataset_file WHERE version_id=? ORDER BY created_at, file_id", String.class, versionId);
+        List<String> allFiles = sampleFiles(versionId, false);
+        if (imageFiles.size() > 1 && "IMAGE_SEGMENTATION".equals(scene) && allFiles.size() > imageFiles.size()) {
+            return allFiles;
+        }
+        if (imageFiles.isEmpty()) {
+            return allFiles;
+        }
+        return allFiles.size() > imageFiles.size() ? allFiles : imageFiles;
+    }
+
+    private List<String> sampleFiles(String versionId, boolean imageOnly) {
+        return jdbc.queryForList("""
+            SELECT df.file_id
+            FROM dataset_file df
+            LEFT JOIN platform_file_object pfo ON pfo.file_id = df.file_id
+            WHERE df.version_id=?
+              AND df.status='BOUND'
+              AND (pfo.file_id IS NULL OR pfo.status='AVAILABLE')
+              AND (? = FALSE OR (pfo.file_id IS NOT NULL AND LOWER(COALESCE(pfo.content_type, '')) LIKE 'image/%'))
+            ORDER BY df.created_at, df.file_id
+            """, String.class, versionId, imageOnly);
     }
 
     private long countDatasetFiles(String versionId) {
@@ -1124,4 +1226,4 @@ record AnnotationWorkItemRecord(String workItemId, String taskId, String sampleF
 record ReviewRecord(String reviewItemId, String workItemId, String taskId, String annotatorId, String reviewerId, String status) {}
 record AnnotationExternalBindingRecord(String bindingId, String taskId, String provider, String externalProjectId, String externalUrl, String configStatus, String lastSyncStatus, String diagnosticCode, String diagnosticMessage, String launchUrl, OffsetDateTime lastSyncAt) {}
 record AnnotationExternalTaskBindingRecord(String bindingId, String taskId, String workItemId, String provider, String externalProjectId, String externalTaskId, String externalTaskUrl, String syncStatus, String importStatus, String diagnosticCode, String diagnosticMessage, OffsetDateTime lastSyncAt, OffsetDateTime lastImportAt) {}
-record DatasetInfo(String datasetId, String name, String datasetType, String dataType, String tenantId, String projectId, String currentVersionId, String status, long recordCount, long sizeBytes, String ownerId) {}
+record DatasetInfo(String datasetId, String name, String datasetType, String dataType, String tenantId, String projectId, String currentVersionId, String status, long recordCount, long sizeBytes, String ownerId, String description) {}

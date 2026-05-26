@@ -27,21 +27,23 @@ test('TASK-local-dataset-upload AC-05 本地上传提交后可在详情页继续
   await page.getByRole('button', { name: '下一步：创建上传会话' }).click();
   await expect(page.getByText(/上传会话 DUS-E2E-001/)).toBeVisible();
 
-  await page.locator('input[type="file"]').setInputFiles({
+  await page.locator('input[type="file"]').first().setInputFiles({
     name: 'weld-1.jpg',
     mimeType: 'image/jpeg',
     buffer: Buffer.from('fake-jpg-binary'),
   });
-  await page.getByRole('button', { name: '上传并登记到平台' }).click();
+  await page.getByRole('button', { name: '上传并登记到平台', exact: true }).click();
   await expect(page.getByText(/已接收 1 个文件/)).toBeVisible();
 
   await page.getByRole('button', { name: '提交并创建数据集' }).click();
   await expect(page.getByText(/阶段进度：SECURITY_SCAN · 70%/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'F015 本地上传数据集' })).toBeVisible();
   await expect(page.getByText('所选版本', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '创建标注任务' })).toBeEnabled();
-  await page.getByRole('button', { name: '创建标注任务' }).click();
-  await expect(page.getByRole('heading', { name: '标注任务管理' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '创建标注任务', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '创建标注任务', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '从数据集创建标注任务' })).toBeVisible();
+  await page.getByRole('button', { name: '创建任务' }).click();
+  await expect(page.getByText('已从数据集创建标注任务')).toBeVisible();
 });
 
 test('TASK-local-dataset-upload AC-01 AC-03 AC-05 数据源导入旧路径仍可继续使用', async ({ page }) => {
@@ -142,12 +144,12 @@ test('TASK-local-dataset-upload AC-04 高风险内容提交后展示安全待处
   await page.getByRole('button', { name: '＋ 新建数据集' }).click();
   await page.locator('input.ant-input').first().fill('F015 高风险内容');
   await page.getByRole('button', { name: '下一步：创建上传会话' }).click();
-  await page.locator('input[type="file"]').setInputFiles({
+  await page.locator('input[type="file"]').first().setInputFiles({
     name: 'risk-photo.jpg',
     mimeType: 'image/jpeg',
     buffer: Buffer.from('fake-risk-jpg'),
   });
-  await page.getByRole('button', { name: '上传并登记到平台' }).click();
+  await page.getByRole('button', { name: '上传并登记到平台', exact: true }).click();
   await expect(page.getByText(/已接收 1 个文件/)).toBeVisible();
 
   await page.getByRole('button', { name: '提交并创建数据集' }).click();
@@ -155,5 +157,5 @@ test('TASK-local-dataset-upload AC-04 高风险内容提交后展示安全待处
   await expect(page.getByRole('heading', { name: 'F015 高风险内容' })).toBeVisible();
   await expect(page.getByText(/当前数据集尚未达到可发起标注任务的状态/)).toBeVisible();
   await expect(page.getByText('DATASET_UPLOAD_SECURITY_BLOCKED / SECURITY_BLOCKED')).toBeVisible();
-  await expect(page.getByRole('button', { name: '创建标注任务' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '创建标注任务', exact: true })).toBeDisabled();
 });
