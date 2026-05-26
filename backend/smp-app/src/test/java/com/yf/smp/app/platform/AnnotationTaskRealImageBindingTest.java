@@ -225,6 +225,42 @@ class AnnotationTaskRealImageBindingTest {
             .isZero();
     }
 
+    @Test
+    void submitCanFallbackToSameTenantReviewerWithoutOrganizationMembership() throws Exception {
+        seedAdditionalDatasetFiles();
+        seedTenantYfReviewerWithoutOrganizationMembership();
+        String adminToken = login("admin", "YF");
+
+        JsonNode create = postJson("/api/v1/annotation/tasks", "trace-ann-submit-yf-reviewer-fallback-create", """
+            {
+              "sourceDatasetId":"DATASET-WELD-DEFECT",
+              "sourceVersionId":"DVER-WELD-001",
+              "templateId":"LT-WELD-POLYGON",
+              "name":"YF 租户审核员回退验证",
+              "scene":"IMAGE_SEGMENTATION",
+              "reviewEnabled":true,
+              "prelabelEnabled":false,
+              "labelStudioEnabled":false
+            }
+            """, adminToken);
+
+        assertThat(create.at("/code").asInt()).isZero();
+        String taskId = create.at("/data/task/taskId").asText();
+        jdbc.update("UPDATE annotation_task SET tenant_id='TENANT-YF', updated_at=CURRENT_TIMESTAMP WHERE task_id=?", taskId);
+
+        JsonNode workItems = getJson("/api/v1/annotation/tasks/" + taskId + "/work-items?page=1&pageSize=20", "trace-ann-submit-yf-reviewer-fallback-items", adminToken).at("/data/items");
+        String firstWorkItemId = workItems.get(0).at("/workItemId").asText();
+
+        JsonNode submitted = postJson("/api/v1/annotation/work-items/" + firstWorkItemId + "/submit", "trace-ann-submit-yf-reviewer-fallback-submit", """
+            {"annotationJson":"{\\"polygons\\":[{\\"label\\":\\"螺丝\\",\\"cls\\":0,\\"points\\":[{\\"x\\":120,\\"y\\":90},{\\"x\\":160,\\"y\\":92},{\\"x\\":158,\\"y\\":140}]}]}"}
+            """, adminToken);
+
+        assertThat(submitted.at("/code").asInt()).isZero();
+        assertThat(submitted.at("/data/status").asText()).isEqualTo("REVIEW_PENDING");
+        assertThat(jdbc.queryForObject("SELECT reviewer_id FROM annotation_review_item WHERE work_item_id=?", String.class, firstWorkItemId))
+            .isEqualTo("USR-YF-REVIEWER");
+    }
+
     private void seedAdditionalDatasetFiles() {
         for (int index = 2; index <= 6; index++) {
             String fileId = "FILE-DATASET-WELD-00" + index;
@@ -296,6 +332,32 @@ class AnnotationTaskRealImageBindingTest {
             fileId,
             timestamp,
             datasetFileId
+        );
+    }
+
+    private void seedTenantYfReviewerWithoutOrganizationMembership() {
+        OffsetDateTime timestamp = OffsetDateTime.parse("2026-05-25T08:00:00+08:00");
+        jdbc.update("""
+            INSERT INTO platform_user (
+                id, username, password_hash, display_name, email, tenant_id, bu_code, status, auth_type,
+                failed_login_count, locked_until, session_version, last_login_at, created_at, updated_at
+            )
+            SELECT 'USR-YF-REVIEWER', 'yf_reviewer', '$2a$10$iQHMpURId5.xHemjCnsDtuJm91Utedo7YpWjvcxdtlyYcwblCVSs.',
+                   'YF 审核员', 'yf-reviewer@test.local', 'TENANT-YF', 'YF', 'ACTIVE', 'LOCAL',
+                   0, NULL, 1, NULL, ?, ?
+            WHERE NOT EXISTS (SELECT 1 FROM platform_user WHERE id='USR-YF-REVIEWER')
+            """,
+            timestamp, timestamp
+        );
+        jdbc.update("""
+            INSERT INTO platform_user_role (id, user_id, role_code, tenant_id, active, expires_at, created_at)
+            SELECT 'USR-YF-REVIEWER::DATA_REVIEWER::TENANT-YF', 'USR-YF-REVIEWER', 'DATA_REVIEWER', 'TENANT-YF', TRUE, NULL, ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM platform_user_role
+                WHERE user_id='USR-YF-REVIEWER' AND role_code='DATA_REVIEWER' AND tenant_id='TENANT-YF'
+            )
+            """,
+            timestamp
         );
     }
 

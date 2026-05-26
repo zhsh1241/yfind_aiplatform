@@ -820,7 +820,7 @@ public class AnnotationService {
         if (!assigned.isEmpty()) {
             return assigned;
         }
-        return jdbc.queryForList("""
+        List<String> organizationMembers = jdbc.queryForList("""
             SELECT DISTINCT om.user_id
             FROM platform_organization_member om
             JOIN platform_user u ON u.id = om.user_id
@@ -828,14 +828,34 @@ public class AnnotationService {
               AND om.status='ACTIVE'
               AND u.status='ACTIVE'
               AND om.user_id IN (
-                SELECT ur.user_id
-                FROM platform_user_role ur
-                WHERE ur.active=TRUE
-                  AND (ur.expires_at IS NULL OR ur.expires_at > ?)
-                  AND ur.role_code IN ('DATA_REVIEWER', 'BU_ADMIN', 'SUPER_ADMIN')
+                  SELECT ur.user_id
+                  FROM platform_user_role ur
+                  WHERE ur.active=TRUE
+                    AND (ur.expires_at IS NULL OR ur.expires_at > ?)
+                    AND ur.tenant_id=?
+                    AND ur.role_code IN ('DATA_REVIEWER', 'BU_ADMIN', 'SUPER_ADMIN')
               )
             ORDER BY om.user_id
-            """, String.class, task.tenantId(), now());
+            """, String.class, task.tenantId(), now(), task.tenantId());
+        List<String> sameTenantActiveUsers = jdbc.queryForList("""
+            SELECT DISTINCT u.id
+            FROM platform_user u
+            WHERE u.tenant_id=?
+              AND u.status='ACTIVE'
+              AND u.id IN (
+                  SELECT ur.user_id
+                  FROM platform_user_role ur
+                  WHERE ur.active=TRUE
+                    AND (ur.expires_at IS NULL OR ur.expires_at > ?)
+                    AND ur.tenant_id=?
+                    AND ur.role_code IN ('DATA_REVIEWER', 'BU_ADMIN', 'SUPER_ADMIN')
+              )
+            ORDER BY u.id
+            """, String.class, task.tenantId(), now(), task.tenantId());
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        merged.addAll(organizationMembers);
+        merged.addAll(sameTenantActiveUsers);
+        return List.copyOf(merged);
     }
 
     private String reviewTenant(String taskId) {
