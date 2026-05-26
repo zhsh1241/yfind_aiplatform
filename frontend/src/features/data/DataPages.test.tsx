@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
+import { dataApi } from '../platform/platformApi';
 import { DataPipelineStandardPage } from './DataPages';
 import { useSessionStore } from '../platform/sessionStore';
 
@@ -176,5 +177,41 @@ describe('DataPipelineStandardPage operator config panel', () => {
     expect(screen.getByText('下一步请先人工确认结果，再执行激活')).toBeInTheDocument();
     expect(screen.getByText('失败 / 跳过摘要')).toBeInTheDocument();
     expect(screen.getByText('OP-VIDEO-FRAME-EXTRACT')).toBeInTheDocument();
+  });
+
+  it('supports pointer dragging on pipeline canvas nodes', async () => {
+    renderPage();
+    const nodeButton = await screen.findByRole('button', { name: /固定间隔抽帧 固定间隔抽帧/i });
+    expect((nodeButton as HTMLButtonElement).style.left).toBe('100px');
+    expect((nodeButton as HTMLButtonElement).style.top).toBe('100px');
+
+    fireEvent.pointerDown(nodeButton, { pointerId: 1, clientX: 100, clientY: 100, buttons: 1 });
+    fireEvent.pointerMove(nodeButton, { pointerId: 1, clientX: 160, clientY: 150, buttons: 1 });
+    fireEvent.pointerUp(nodeButton, { pointerId: 1, clientX: 160, clientY: 150 });
+
+    expect((nodeButton as HTMLButtonElement).style.left).toBe('160px');
+    expect((nodeButton as HTMLButtonElement).style.top).toBe('150px');
+  });
+
+  it('deletes selected node and prunes related edges before save', async () => {
+    renderPage();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /图片加水印 图片加水印/i }));
+    await user.click(screen.getByRole('button', { name: '删除节点' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /图片加水印 图片加水印/i })).not.toBeInTheDocument();
+    });
+    expect(screen.getByText(/当前节点 2 个/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /💾 保存/i }));
+
+    await waitFor(() => {
+      expect(dataApi.updatePipeline).toHaveBeenCalled();
+    });
+    const saveInput = vi.mocked(dataApi.updatePipeline).mock.calls.at(-1)?.[1];
+    expect(saveInput?.nodes).toHaveLength(2);
+    expect(saveInput?.nodes.map((item) => item.nodeId)).toEqual(['extract', 'enhance']);
+    expect(saveInput?.edges).toEqual([]);
   });
 });

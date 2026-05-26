@@ -104,7 +104,7 @@ const stringifyObjectConfig = (value: Record<string, unknown>) => JSON.stringify
 const stableJson = (value: unknown) => JSON.stringify(value);
 const fmtDateTime = (value?: string | null) => value ? value.replace('T', ' ').replace('Z', '') : '-';
 
-const toSaveInput = (detail: PipelineDetail, nodes: PipelineNode[], variables: PipelineVariable[]): PipelineSaveInput => ({
+const toSaveInput = (detail: PipelineDetail, nodes: PipelineNode[], edges: PipelineEdge[], variables: PipelineVariable[]): PipelineSaveInput => ({
   name: detail.pipeline.name,
   tenantId: detail.pipeline.tenantId,
   projectId: detail.pipeline.projectId,
@@ -119,7 +119,7 @@ const toSaveInput = (detail: PipelineDetail, nodes: PipelineNode[], variables: P
     autoActivate: false,
   },
   nodes,
-  edges: detail.edges,
+  edges,
   variables,
 });
 
@@ -1988,6 +1988,7 @@ export function DataPipelineStandardPage() {
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>();
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
   const [draftNodes, setDraftNodes] = useState<PipelineNode[]>();
+  const [draftEdges, setDraftEdges] = useState<PipelineEdge[]>();
   const [addOpen, setAddOpen] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const [operatorKeyword, setOperatorKeyword] = useState('');
@@ -2000,6 +2001,7 @@ export function DataPipelineStandardPage() {
   const overview = useQuery({ queryKey: ['data-standard-overview'], queryFn: dataApi.dataStandardOverview });
   const profile = useQuery({ queryKey: ['data-standard-profile', selectedDatasetId], queryFn: () => dataApi.dataStandardProfile(selectedDatasetId!), enabled: Boolean(selectedDatasetId) });
   const nodes = draftNodes ?? pipeline.data?.nodes ?? [];
+  const edges = draftEdges ?? pipeline.data?.edges ?? [];
   const variables = useMemo(
     () => pipeline.data?.variables.map((item) => ({ ...item, valueJson: item.valueMasked })) ?? [],
     [pipeline.data?.variables],
@@ -2010,11 +2012,11 @@ export function DataPipelineStandardPage() {
   const validationWarnings = pipeline.data?.validation.warnings ?? [];
   const selectedNodeIndex = selectedNode ? nodes.findIndex((item) => item.nodeId === selectedNode.nodeId) : -1;
   const hasDraftChanges = useMemo(
-    () => stableJson(nodes) !== stableJson(pipeline.data?.nodes ?? []),
-    [nodes, pipeline.data?.nodes],
+    () => stableJson(nodes) !== stableJson(pipeline.data?.nodes ?? []) || stableJson(edges) !== stableJson(pipeline.data?.edges ?? []),
+    [edges, nodes, pipeline.data?.edges, pipeline.data?.nodes],
   );
   const savePipeline = useMutation({
-    mutationFn: () => dataApi.updatePipeline(pipelineId!, toSaveInput(pipeline.data!, nodes, variables)),
+    mutationFn: () => dataApi.updatePipeline(pipelineId!, toSaveInput(pipeline.data!, nodes, edges, variables)),
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] }); msg.success('Pipeline DAG 已保存并通过校验'); },
     onError: (e: Error) => msg.error(e.message),
   });
@@ -2029,7 +2031,7 @@ export function DataPipelineStandardPage() {
     onError: (e: Error) => msg.error(e.message),
   });
   const runPipeline = useMutation({
-    mutationFn: () => dataApi.runPipeline(pipelineId!, { triggerMode: 'MANUAL', sampleDatasetId: 'DATASET-WELD-DEFECT' }),
+    mutationFn: () => dataApi.runPipeline(pipelineId!, { triggerMode: 'MANUAL', sampleDatasetId: pipeline.data?.pipeline.sourceDatasetId ?? undefined }),
     onSuccess: async (result) => {
       await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
       await qc.invalidateQueries({ queryKey: ['datasets'] });
@@ -2121,6 +2123,17 @@ export function DataPipelineStandardPage() {
   const updateSelectedNodeConfig = (configJson: string) => {
     setNodes((items) => items.map((item) => item.nodeId === selectedNode?.nodeId ? { ...item, configJson } : item));
   };
+  const deleteSelectedNode = () => {
+    if (!selectedNode) return;
+    const targetId = selectedNode.nodeId;
+    const remainingNodes = nodes.filter((item) => item.nodeId !== targetId);
+    const remainingEdges = edges.filter((item) => item.sourceNodeId !== targetId && item.targetNodeId !== targetId);
+    setDraftNodes(remainingNodes);
+    setDraftEdges(remainingEdges);
+    const nextNode = remainingNodes[Math.min(selectedNodeIndex, Math.max(remainingNodes.length - 1, 0))];
+    setSelectedNodeId(nextNode?.nodeId);
+    msg.success(`已删除节点：${selectedNode.label}`);
+  };
   const formatSelectedNodeConfig = () => {
     const config = parseObjectConfig(selectedNode?.configJson);
     if (!config) {
@@ -2173,6 +2186,7 @@ export function DataPipelineStandardPage() {
               setSelectedPipelineId(value);
               setSelectedNodeId(undefined);
               setDraftNodes(undefined);
+              setDraftEdges(undefined);
             }}
             options={(pipelines.data?.items ?? []).map((item) => ({ value: item.pipelineId, label: item.name }))}
           />
@@ -2201,27 +2215,8 @@ export function DataPipelineStandardPage() {
         </Card>
       </div>
       <div className="pipeline-grid">
-        <Card title="算子库" className="operator-library">
-          <Input.Search placeholder="搜索算子名称、类型或功能描述…" value={operatorKeyword} onChange={(event) => setOperatorKeyword(event.target.value)} style={{ marginBottom: 12 }} />
-          <Space direction="vertical" className="full-width">
-            {marketplaceOperators.slice(0, 8).map((op) => (
-              <Card key={op.operatorId} size="small" className="operator-chip" onClick={() => addNode(op)}>
-                <Space direction="vertical" size={2}>
-                  <Space>
-                    <Tag color={op.kind === 'BUILTIN' ? 'blue' : 'purple'}>{txt(op.category)}</Tag>
-                    {op.dataType ? <Tag color="geekblue">{txt(op.dataType)}</Tag> : null}
-                    {op.supportsPreview ? <Tag color="green">支持预览</Tag> : null}
-                    <b>{op.name}</b>
-                  </Space>
-                  <Typography.Text type="secondary">{op.description}</Typography.Text>
-                  <Typography.Text type="secondary">{visualOperatorLabel(op)}{op.enhancementMode ? ` · ${txt(op.enhancementMode)}` : ''}</Typography.Text>
-                </Space>
-              </Card>
-            ))}
-          </Space>
-        </Card>
         <Card title={<Space><span>DAG 画布</span><Tag color={pipeline.data.validation.valid ? 'green' : 'red'}>{pipeline.data.validation.diagnosticCode}</Tag></Space>} className="pipeline-canvas-card">
-          <PipelineCanvas nodes={nodes} edges={pipeline.data.edges} selectedNodeId={selectedNode?.nodeId} onSelect={setSelectedNodeId} onMove={moveNode} />
+          <PipelineCanvas nodes={nodes} edges={edges} selectedNodeId={selectedNode?.nodeId} onSelect={setSelectedNodeId} onMove={moveNode} />
           <Typography.Text type="secondary">拖拽节点可重新排序 · 从左侧算子库拖入可添加新节点 · 当前节点 {nodes.length} 个</Typography.Text>
           <div className="pipeline-validation-panel">
             {validationIssues.length > 0 ? (
@@ -2241,28 +2236,50 @@ export function DataPipelineStandardPage() {
             {!pipeline.data.validation.valid ? <Typography.Text type="secondary">当前 DAG 未通过校验，已禁用“沙箱运行”。请先修复校验问题并保存。</Typography.Text> : null}
           </div>
         </Card>
-        <Card title={`⚙ ${selectedNode?.label ?? '算子配置'}`} className="node-config-card">
-          <Space direction="vertical" className="full-width">
-            <Descriptions size="small" column={1} bordered>
-              <Descriptions.Item label="算子">{selectedOperator?.name ?? selectedNode?.operatorName}</Descriptions.Item>
-              <Descriptions.Item label="阶段">{selectedOperator?.stage ?? '-'}</Descriptions.Item>
-              <Descriptions.Item label="处理类目">{selectedOperator ? visualOperatorLabel(selectedOperator) : '-'}</Descriptions.Item>
-              <Descriptions.Item label="状态"><Tag color={color(selectedNode?.status)}>{selectedNode?.status ?? 'READY'}</Tag></Descriptions.Item>
-            </Descriptions>
-            <Space wrap className="pipeline-node-toolbar">
-              <Button size="small" onClick={() => selectAdjacentNode(-1)} disabled={selectedNodeIndex <= 0}>上一节点</Button>
-              <Button size="small" onClick={() => selectAdjacentNode(1)} disabled={selectedNodeIndex < 0 || selectedNodeIndex >= nodes.length - 1}>下一节点</Button>
-              <Button size="small" onClick={resetSelectedNodeConfig} disabled={!selectedNode || !selectedOperator}>恢复默认参数</Button>
-              <Button size="small" onClick={formatSelectedNodeConfig} disabled={!selectedNode}>格式化 JSON</Button>
+        <div className="pipeline-sidebar">
+          <Card title="算子库" className="operator-library">
+            <Input.Search placeholder="搜索算子名称、类型或功能描述…" value={operatorKeyword} onChange={(event) => setOperatorKeyword(event.target.value)} style={{ marginBottom: 12 }} />
+            <Space direction="vertical" className="full-width">
+              {marketplaceOperators.slice(0, 8).map((op) => (
+                <Card key={op.operatorId} size="small" className="operator-chip" onClick={() => addNode(op)}>
+                  <Space direction="vertical" size={2}>
+                    <Space>
+                      <Tag color={op.kind === 'BUILTIN' ? 'blue' : 'purple'}>{txt(op.category)}</Tag>
+                      {op.dataType ? <Tag color="geekblue">{txt(op.dataType)}</Tag> : null}
+                      {op.supportsPreview ? <Tag color="green">支持预览</Tag> : null}
+                      <b>{op.name}</b>
+                    </Space>
+                    <Typography.Text type="secondary">{op.description}</Typography.Text>
+                    <Typography.Text type="secondary">{visualOperatorLabel(op)}{op.enhancementMode ? ` · ${txt(op.enhancementMode)}` : ''}</Typography.Text>
+                  </Space>
+                </Card>
+              ))}
             </Space>
-            <Card size="small" title="结构化参数面板">
-              <PipelineNodeConfigForm node={selectedNode} operator={selectedOperator} onChange={updateSelectedNodeConfig} />
-            </Card>
-            <Typography.Text strong>原始配置 JSON</Typography.Text>
-            <Input.TextArea rows={8} value={safeJson(selectedNode?.configJson)} onChange={(event) => updateSelectedNodeConfig(event.target.value)} />
-            <Alert type="success" showIcon title="算子验证通过" description={`输入: 42,850 条；预计输出: 42,850 条；${selectedOperator?.defaultOutputDatasetDataType ? `默认输出 ${txt(selectedOperator.defaultOutputDatasetDataType)} 型结果；` : ''}${selectedOperator?.annotationRiskLevel ? ` 标注风险 ${selectedOperator.annotationRiskLevel}` : ''}`} />
-          </Space>
-        </Card>
+          </Card>
+          <Card title={`⚙ ${selectedNode?.label ?? '算子配置'}`} className="node-config-card">
+            <Space direction="vertical" className="full-width">
+              <Descriptions size="small" column={1} bordered>
+                <Descriptions.Item label="算子">{selectedOperator?.name ?? selectedNode?.operatorName}</Descriptions.Item>
+                <Descriptions.Item label="阶段">{selectedOperator?.stage ?? '-'}</Descriptions.Item>
+                <Descriptions.Item label="处理类目">{selectedOperator ? visualOperatorLabel(selectedOperator) : '-'}</Descriptions.Item>
+                <Descriptions.Item label="状态"><Tag color={color(selectedNode?.status)}>{selectedNode?.status ?? 'READY'}</Tag></Descriptions.Item>
+              </Descriptions>
+              <Space wrap className="pipeline-node-toolbar">
+                <Button size="small" onClick={() => selectAdjacentNode(-1)} disabled={selectedNodeIndex <= 0}>上一节点</Button>
+                <Button size="small" onClick={() => selectAdjacentNode(1)} disabled={selectedNodeIndex < 0 || selectedNodeIndex >= nodes.length - 1}>下一节点</Button>
+                <Button size="small" onClick={resetSelectedNodeConfig} disabled={!selectedNode || !selectedOperator}>恢复默认参数</Button>
+                <Button size="small" onClick={formatSelectedNodeConfig} disabled={!selectedNode}>格式化 JSON</Button>
+                <Button size="small" danger onClick={deleteSelectedNode} disabled={!selectedNode}>删除节点</Button>
+              </Space>
+              <Card size="small" title="结构化参数面板">
+                <PipelineNodeConfigForm node={selectedNode} operator={selectedOperator} onChange={updateSelectedNodeConfig} />
+              </Card>
+              <Typography.Text strong>原始配置 JSON</Typography.Text>
+              <Input.TextArea rows={8} value={safeJson(selectedNode?.configJson)} onChange={(event) => updateSelectedNodeConfig(event.target.value)} />
+              <Alert type="success" showIcon title="算子验证通过" description={`输入: 42,850 条；预计输出: 42,850 条；${selectedOperator?.defaultOutputDatasetDataType ? `默认输出 ${txt(selectedOperator.defaultOutputDatasetDataType)} 型结果；` : ''}${selectedOperator?.annotationRiskLevel ? ` 标注风险 ${selectedOperator.annotationRiskLevel}` : ''}`} />
+            </Space>
+          </Card>
+        </div>
       </div>
       <div className="pipeline-panels">
         <Card title="运行历史">
@@ -2742,6 +2759,7 @@ function DatasetVersionList({ datasetId }: { datasetId?: string }) {
 
 function PipelineCanvas({ nodes, edges, selectedNodeId, onSelect, onMove }: { nodes: PipelineNode[]; edges: PipelineEdge[]; selectedNodeId?: string; onSelect: (nodeId: string) => void; onMove: (nodeId: string, dx: number, dy: number) => void }) {
   const nodeMap = useMemo(() => new Map(nodes.map((node) => [node.nodeId, node])), [nodes]);
+  const dragRef = useRef<{ nodeId: string; startX: number; startY: number } | null>(null);
   return (
     <div className="pipeline-canvas">
       <svg className="pipeline-canvas-lines">
@@ -2759,8 +2777,33 @@ function PipelineCanvas({ nodes, edges, selectedNodeId, onSelect, onMove }: { no
           className={`pipeline-node ${selectedNodeId === node.nodeId ? 'selected' : ''}`}
           style={{ left: node.positionX, top: node.positionY }}
           onClick={() => onSelect(node.nodeId)}
-          draggable
-          onDragEnd={(event) => onMove(node.nodeId, event.movementX || 24, event.movementY || 0)}
+          onPointerDown={(event) => {
+            dragRef.current = { nodeId: node.nodeId, startX: event.clientX, startY: event.clientY };
+            const target = event.currentTarget as HTMLButtonElement & {
+              setPointerCapture?: (pointerId: number) => void;
+            };
+            target.setPointerCapture?.(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (!dragRef.current || dragRef.current.nodeId !== node.nodeId || event.buttons !== 1) return;
+            const dx = event.clientX - dragRef.current.startX;
+            const dy = event.clientY - dragRef.current.startY;
+            if (dx !== 0 || dy !== 0) {
+              onMove(node.nodeId, dx, dy);
+              dragRef.current = { nodeId: node.nodeId, startX: event.clientX, startY: event.clientY };
+            }
+          }}
+          onPointerUp={(event) => {
+            const target = event.currentTarget as HTMLButtonElement & {
+              hasPointerCapture?: (pointerId: number) => boolean;
+              releasePointerCapture?: (pointerId: number) => void;
+            };
+            if (target.hasPointerCapture?.(event.pointerId)) target.releasePointerCapture?.(event.pointerId);
+            dragRef.current = null;
+          }}
+          onPointerCancel={() => {
+            dragRef.current = null;
+          }}
           type="button"
         >
           <span>{node.label}</span>

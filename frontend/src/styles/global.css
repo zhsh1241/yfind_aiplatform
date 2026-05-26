@@ -239,9 +239,9 @@ body {
 
 .pipeline-grid {
   display: grid;
-  grid-template-columns: 260px minmax(520px, 1fr) 320px;
+  grid-template-columns: minmax(520px, 1fr) 360px;
   gap: 16px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .pipeline-summary-grid {
@@ -255,10 +255,17 @@ body {
   min-height: 420px;
 }
 
+.pipeline-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
 .pipeline-canvas {
   position: relative;
   min-height: 380px;
-  overflow: hidden;
+  overflow: auto;
   border: 1px dashed #c4b5fd;
   border-radius: 12px;
   background:
@@ -289,6 +296,8 @@ body {
   text-align: left;
   box-shadow: 0 8px 20px rgb(88 28 135 / 10%);
   cursor: grab;
+  user-select: none;
+  touch-action: none;
 }
 
 .pipeline-node.selected {
