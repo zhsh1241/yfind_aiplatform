@@ -37,6 +37,13 @@ import { useSessionStore } from '../platform/sessionStore';
 const color = (status?: string) => ['ACTIVE', 'PUBLISHED', 'TESTED', 'OK', 'AVAILABLE', 'BOUND'].includes(status ?? '')
   ? 'green'
   : ['UNCONFIGURED', 'DRAFT', 'PAUSED'].includes(status ?? '') ? 'orange' : ['FAILED', 'DISABLED', 'ARCHIVED'].includes(status ?? '') ? 'red' : 'blue';
+const processingRunStatusText = (status?: string | null) => ({
+  RUNNING: '运行中',
+  SUCCEEDED: '运行成功',
+  FAILED: '运行失败',
+  CANCELLED: '已取消',
+  PENDING: '待运行',
+} as Record<string, string>)[status ?? ''] ?? status ?? '-';
 const fmtSize = (n?: number | null) => !n ? '0 B' : n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : n > 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${n} B`;
 const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', VIDEO: '视频', AUDIO_VIDEO: '视频', TEXT: '文本', TABULAR: '表格', EVENT: '事件', TIME_SERIES: '时序库', TELEMETRY: '遥测', FILE: '文件', OBJECT: '对象', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', RTSP_STREAM: 'RTSP视频流', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '外部接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件', VISUAL_PREPROCESS: '视觉预处理', IMAGE_PROCESSING: '图片处理', VIDEO_PROCESSING: '视频处理', QUALITY_ENHANCEMENT: '质量增强', WATERMARK: '水印', FRAME_EXTRACTION: '抽帧', TRADITIONAL_ONLY: '传统增强', CONFIRMED: '已确认', PENDING_CONFIRMATION: '待确认', READY: '就绪' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
 const localFileRowKey = (file: File) => `${(file as File & { webkitRelativePath?: string }).webkitRelativePath ?? file.name}-${file.size}-${file.lastModified}`;
@@ -2007,6 +2014,7 @@ export function DataPipelineStandardPage() {
   const qc = useQueryClient();
   const [msg, holder] = message.useMessage();
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>();
+  const [selectedPipelineDatasetId, setSelectedPipelineDatasetId] = useState<string>();
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
   const [draftNodes, setDraftNodes] = useState<PipelineNode[]>();
   const [draftEdges, setDraftEdges] = useState<PipelineEdge[]>();
@@ -2019,6 +2027,7 @@ export function DataPipelineStandardPage() {
   const pipelineId = selectedPipelineId ?? pipelines.data?.items[0]?.pipelineId;
   const pipeline = useQuery({ queryKey: ['pipeline-detail', pipelineId], queryFn: () => dataApi.pipelineDetail(pipelineId!), enabled: Boolean(pipelineId) });
   const operators = useQuery({ queryKey: ['operators', operatorKeyword], queryFn: () => dataApi.operators({ keyword: operatorKeyword, categoryGroup: 'VISUAL_PREPROCESS', supportsPreview: true }) });
+  const pipelineDatasets = useQuery({ queryKey: ['pipeline-source-datasets'], queryFn: () => dataApi.datasets({ status: 'ACTIVE', pageSize: 100 }) });
   const overview = useQuery({ queryKey: ['data-standard-overview'], queryFn: dataApi.dataStandardOverview });
   const profile = useQuery({ queryKey: ['data-standard-profile', selectedDatasetId], queryFn: () => dataApi.dataStandardProfile(selectedDatasetId!), enabled: Boolean(selectedDatasetId) });
   const nodes = draftNodes ?? pipeline.data?.nodes ?? [];
@@ -2036,9 +2045,22 @@ export function DataPipelineStandardPage() {
     () => stableJson(nodes) !== stableJson(pipeline.data?.nodes ?? []) || stableJson(edges) !== stableJson(pipeline.data?.edges ?? []),
     [edges, nodes, pipeline.data?.edges, pipeline.data?.nodes],
   );
+  const selectablePipelineDatasets = useMemo(
+    () => (pipelineDatasets.data?.items ?? [])
+      .filter((item) => item.status === 'ACTIVE' && item.currentVersionId && ['IMAGE', 'AUDIO_VIDEO', 'VIDEO'].includes(item.dataType))
+      .map((item) => ({
+        value: item.datasetId,
+        label: `${item.name} · ${txt(item.dataType)} · ${item.datasetId}`,
+        dataset: item,
+      })),
+    [pipelineDatasets.data?.items],
+  );
+  const effectivePipelineDatasetId = selectedPipelineDatasetId ?? pipeline.data?.pipeline.sourceDatasetId ?? selectablePipelineDatasets[0]?.value;
+  const selectedPipelineDataset = selectablePipelineDatasets.find((item) => item.value === effectivePipelineDatasetId)?.dataset;
+  const runRecords = pipeline.data?.runs ?? [];
   const savePipeline = useMutation({
     mutationFn: () => dataApi.updatePipeline(pipelineId!, toSaveInput(pipeline.data!, nodes, edges, variables)),
-    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] }); msg.success('Pipeline DAG 已保存并通过校验'); },
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] }); msg.success('Pipeline 算子组合模板已保存并通过校验'); },
     onError: (e: Error) => msg.error(e.message),
   });
   const saveVersion = useMutation({
@@ -2052,14 +2074,14 @@ export function DataPipelineStandardPage() {
     onError: (e: Error) => msg.error(e.message),
   });
   const runPipeline = useMutation({
-    mutationFn: () => dataApi.runPipeline(pipelineId!, { triggerMode: 'MANUAL', sampleDatasetId: pipeline.data?.pipeline.sourceDatasetId ?? undefined }),
+    mutationFn: () => dataApi.runPipeline(pipelineId!, { triggerMode: 'MANUAL', sampleDatasetId: effectivePipelineDatasetId ?? undefined }),
     onSuccess: async (result) => {
       await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
       await qc.invalidateQueries({ queryKey: ['datasets'] });
       await qc.invalidateQueries({ queryKey: ['annotation-source-datasets'] });
       setLatestRun(result);
       setRunOpen(true);
-      msg.success('视觉预处理运行完成，已生成待确认预处理数据集。');
+      msg.success('加工任务运行完成，已生成一条加工记录和待确认预处理数据集。');
     },
     onError: (e: Error) => msg.error(e.message),
   });
@@ -2219,10 +2241,42 @@ export function DataPipelineStandardPage() {
           />
           <Button onClick={() => setAddOpen(true)}>＋ 添加算子</Button>
           <Button onClick={() => saveVersion.mutate()} loading={saveVersion.isPending}>保存快照</Button>
-          <Button type={hasDraftChanges ? 'primary' : 'default'} onClick={() => savePipeline.mutate()} loading={savePipeline.isPending}>💾 保存</Button>
+          <Button type={hasDraftChanges ? 'primary' : 'default'} onClick={() => savePipeline.mutate()} loading={savePipeline.isPending}>💾 保存模板</Button>
           <Button type="primary" onClick={() => runPipeline.mutate()} loading={runPipeline.isPending} disabled={!pipeline.data.validation.valid || nodes.length === 0}>▶ 沙箱运行</Button>
         </Space>
       </div>
+      <Card
+        title="① 选择本次要加工的数据集"
+        style={{ marginBottom: 16 }}
+        extra={<Button onClick={() => pipelineDatasets.refetch()}>刷新数据集</Button>}
+      >
+        <Space direction="vertical" className="full-width">
+          <Alert
+            type="info"
+            showIcon
+            title="Pipeline 是可复用的算子组合；每次点击运行都会生成一条独立加工记录"
+            description="先在这里选择本次输入的数据集，再复用下方 DAG 算子组合运行。保存按钮只保存算子组合模板；运行按钮会基于所选数据集生成新的加工记录、输出数据集、结果状态和处理统计。"
+          />
+          <Select
+            aria-label="本次要加工的数据集"
+            showSearch
+            loading={pipelineDatasets.isLoading}
+            value={effectivePipelineDatasetId}
+            placeholder="请选择 ACTIVE 数据集作为本次 Pipeline 输入"
+            optionFilterProp="label"
+            onChange={(value) => setSelectedPipelineDatasetId(value)}
+            options={selectablePipelineDatasets.map(({ value, label }) => ({ value, label }))}
+          />
+          <Descriptions size="small" bordered column={3}>
+            <Descriptions.Item label="本次输入">{selectedPipelineDataset?.name ?? '未选择'}</Descriptions.Item>
+            <Descriptions.Item label="数据类型">{txt(selectedPipelineDataset?.dataType)}</Descriptions.Item>
+            <Descriptions.Item label="当前版本">{selectedPipelineDataset?.currentVersionName ?? selectedPipelineDataset?.currentVersionId ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label="复用模板">{pipeline.data.pipeline.name}</Descriptions.Item>
+            <Descriptions.Item label="模板快照">{pipeline.data.pipeline.currentVersionId ?? '尚未保存快照'}</Descriptions.Item>
+            <Descriptions.Item label="历史加工记录">{runRecords.length} 条</Descriptions.Item>
+          </Descriptions>
+        </Space>
+      </Card>
       <Alert type="info" showIcon title="F017 视觉预处理闭环" description="固定图片传统增强、视频抽帧输出图片型 PREPROCESSED 数据集；运行成功后不会自动激活，必须先预览确认再人工激活。" style={{ marginBottom: 16 }} />
       <div className="pipeline-summary-grid">
         <Card size="small" title="编辑状态">
@@ -2235,8 +2289,9 @@ export function DataPipelineStandardPage() {
         </Card>
         <Card size="small" title="输入与结果策略">
           <Space wrap>
-            <Typography.Text>源数据集：{pipeline.data.pipeline.sourceDatasetId ?? '未绑定'}</Typography.Text>
-            <Typography.Text>源类型：{txt(pipeline.data.pipeline.sourceDatasetDataType)}</Typography.Text>
+            <Typography.Text>模板默认源：{pipeline.data.pipeline.sourceDatasetId ?? '未绑定'}</Typography.Text>
+            <Typography.Text>本次运行源：{effectivePipelineDatasetId ?? '未选择'}</Typography.Text>
+            <Typography.Text>源类型：{txt(selectedPipelineDataset?.dataType ?? pipeline.data.pipeline.sourceDatasetDataType)}</Typography.Text>
             <Typography.Text>默认结果：PREPROCESSED / IMAGE</Typography.Text>
           </Space>
         </Card>
@@ -2310,17 +2365,31 @@ export function DataPipelineStandardPage() {
       </div>
       <div className="pipeline-panels">
         <Card title="运行历史">
-          <Table rowKey="runId" dataSource={pipeline.data.runs} pagination={false} columns={[
-            { title: 'Run ID', dataIndex: 'runId' },
-            { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> },
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="这里是每次加工任务的运行记录，不是 Pipeline 模板本身"
+            description="上方 DAG/算子链是可复用模板；每次运行会按所选数据集生成新的 Run ID、输出数据集和结果处置状态。"
+          />
+          <Table rowKey="runId" dataSource={runRecords} pagination={{ pageSize: 5 }} columns={[
+            { title: '加工记录', dataIndex: 'runId', render: (v, r) => <Space direction="vertical" size={0}><Typography.Text copyable>{v}</Typography.Text><Typography.Text type="secondary">{fmtDateTime(r.startedAt)}</Typography.Text></Space> },
+            { title: '运行状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{processingRunStatusText(v)}</Tag> },
+            { title: '处置状态', dataIndex: 'resultDatasetStatus', render: (v) => v ? <Tag color={color(v)}>{datasetStatusText(v)}</Tag> : '-' },
             { title: '耗时', dataIndex: 'durationMs', render: (v) => v ? `${Math.round(v / 1000)}s` : '-' },
             { title: '输出数据集', dataIndex: 'outputDatasetId', render: (v) => v ?? '-' },
-            { title: '结果状态', dataIndex: 'resultDatasetStatus', render: (v) => v ? <Tag color={color(v)}>{datasetStatusText(v)}</Tag> : '-' },
             { title: '结果计数', render: (_, r) => r.totalCount != null ? `${r.successCount ?? 0}/${r.totalCount} 成功 · 跳过 ${r.skippedCount ?? 0} · 失败 ${r.failedCount ?? 0}` : '-' },
             { title: '诊断', dataIndex: 'diagnosticMessage' },
           ]} />
         </Card>
         <Card title="版本快照">
+          <Alert
+            type="success"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="算子组合可保存为版本快照并反复复用"
+            description="调整节点、参数或边之后先保存 Pipeline，再保存快照；以后选择任意新数据集运行时会复用这条算子链。"
+          />
           <Table rowKey="versionId" dataSource={pipeline.data.versions} pagination={false} columns={[
             { title: '版本', dataIndex: 'versionName' },
             { title: '说明', dataIndex: 'note' },
@@ -2345,8 +2414,9 @@ export function DataPipelineStandardPage() {
           />
           <Descriptions size="small" bordered column={1} style={{ marginTop: 12 }}>
             <Descriptions.Item label="模板代码">{pipeline.data.pipeline.templateCode ?? 'VISUAL_PREPROCESS'}</Descriptions.Item>
-            <Descriptions.Item label="源数据集">{pipeline.data.pipeline.sourceDatasetId ?? '未绑定'}</Descriptions.Item>
-            <Descriptions.Item label="源类型">{txt(pipeline.data.pipeline.sourceDatasetDataType)}</Descriptions.Item>
+            <Descriptions.Item label="模板默认源数据集">{pipeline.data.pipeline.sourceDatasetId ?? '未绑定'}</Descriptions.Item>
+            <Descriptions.Item label="本次运行源数据集">{effectivePipelineDatasetId ?? '未选择'}</Descriptions.Item>
+            <Descriptions.Item label="源类型">{txt(selectedPipelineDataset?.dataType ?? pipeline.data.pipeline.sourceDatasetDataType)}</Descriptions.Item>
             <Descriptions.Item label="默认结果策略">输出 PREPROCESSED / IMAGE；运行成功后需预览确认并人工激活</Descriptions.Item>
           </Descriptions>
         </Card>

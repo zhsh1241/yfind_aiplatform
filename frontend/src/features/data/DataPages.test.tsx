@@ -86,7 +86,26 @@ vi.mock('../platform/platformApi', async () => {
     ],
     variables: [],
     versions: [],
-    runs: [],
+    runs: [
+      {
+        runId: 'RUN-HISTORY-001',
+        pipelineId: 'PIPE-VIDEO-PREP',
+        versionId: 'PV-1',
+        status: 'SUCCEEDED',
+        triggerMode: 'MANUAL',
+        diagnosticCode: 'OK',
+        diagnosticMessage: 'VISUAL_PREPROCESS_RUN_SUCCEEDED',
+        outputDatasetId: 'DATASET-OUT',
+        resultDatasetStatus: 'PENDING_CONFIRMATION',
+        durationMs: 3200,
+        totalCount: 12,
+        successCount: 10,
+        skippedCount: 1,
+        failedCount: 1,
+        startedAt: '2026-05-26T10:00:00Z',
+        endedAt: '2026-05-26T10:00:03Z',
+      },
+    ],
     validation: { valid: true, diagnosticCode: 'OK', diagnosticMessage: 'ok', errors: [], warnings: [] },
   };
 
@@ -96,6 +115,60 @@ vi.mock('../platform/platformApi', async () => {
     dataApi: {
       pipelines: vi.fn().mockResolvedValue({ items: [{ pipelineId: 'PIPE-VIDEO-PREP', name: '焊缝视频抽帧预处理' }], total: 1, page: 1, pageSize: 20 }),
       pipelineDetail: vi.fn().mockResolvedValue(pipelineDetail),
+      datasets: vi.fn().mockResolvedValue({
+        items: [
+          {
+            datasetId: 'DATASET-WELD-VIDEO-001',
+            name: '焊缝视频巡检数据集',
+            datasetType: 'RAW',
+            dataType: 'AUDIO_VIDEO',
+            tenantId: 'TENANT-CABIN',
+            projectId: null,
+            currentVersionId: 'DVER-WELD-VIDEO-001',
+            currentVersionName: 'v1',
+            status: 'ACTIVE',
+            accessLevel: 'TEAM',
+            tags: [],
+            versionCount: 1,
+            recordCount: 1,
+            sizeBytes: 1024,
+            ownerId: 'USR-001',
+            ownerName: '平台管理员',
+            description: null,
+            archivedAt: null,
+            updatedAt: '2026-05-26T00:00:00Z',
+            mutable: true,
+            hardDeletable: false,
+          },
+          {
+            datasetId: 'DATASET-NEW-VIDEO-002',
+            name: '新一批车间视频数据集',
+            datasetType: 'RAW',
+            dataType: 'AUDIO_VIDEO',
+            tenantId: 'TENANT-CABIN',
+            projectId: null,
+            currentVersionId: 'DVER-NEW-VIDEO-002',
+            currentVersionName: 'v1',
+            status: 'ACTIVE',
+            accessLevel: 'TEAM',
+            tags: [],
+            versionCount: 1,
+            recordCount: 1,
+            sizeBytes: 2048,
+            ownerId: 'USR-001',
+            ownerName: '平台管理员',
+            description: null,
+            archivedAt: null,
+            updatedAt: '2026-05-26T00:00:00Z',
+            mutable: true,
+            hardDeletable: false,
+          },
+        ],
+        total: 2,
+        page: 1,
+        pageSize: 100,
+        stats: { total: 2, raw: 2, preprocessed: 0, annotated: 0, restricted: 0, totalSizeBytes: 3072 },
+      }),
       operators: vi.fn().mockResolvedValue({ items: operatorItems, total: operatorItems.length, categories: [], stats: { total: operatorItems.length, builtin: operatorItems.length, custom: 0, published: operatorItems.length, submitted: 0 } }),
       dataStandardOverview: vi.fn().mockResolvedValue({ stats: { datasetCount: 0, profiledCount: 0, compliantCount: 0, issueCount: 0, taskCount: 0 }, profiles: [], tasks: [] }),
       dataStandardProfile: vi.fn().mockResolvedValue({ datasetId: 'DATASET-1', datasetName: '数据集', datasetType: 'RAW', dataType: 'IMAGE', sourceType: 'IMPORT', profileStatus: 'READY', qualityScore: 90, fieldCount: 0, matchedFieldCount: 0, issueCount: 0, fields: [] }),
@@ -172,11 +245,41 @@ describe('DataPipelineStandardPage operator config panel', () => {
     renderPage();
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: /沙箱运行/ }));
+    await waitFor(() => {
+      expect(dataApi.runPipeline).toHaveBeenCalledWith('PIPE-VIDEO-PREP', {
+        triggerMode: 'MANUAL',
+        sampleDatasetId: 'DATASET-WELD-VIDEO-001',
+      });
+    });
     expect(await screen.findByText('结果处置工作台')).toBeInTheDocument();
     expect(screen.getByText('样例预览工作台')).toBeInTheDocument();
     expect(screen.getByText('下一步请先人工确认结果，再执行激活')).toBeInTheDocument();
     expect(screen.getByText('失败 / 跳过摘要')).toBeInTheDocument();
     expect(screen.getByText('OP-VIDEO-FRAME-EXTRACT')).toBeInTheDocument();
+  });
+
+  it('places dataset selection first and separates template from processing records', async () => {
+    renderPage();
+    const user = userEvent.setup();
+
+    expect(await screen.findByText('① 选择本次要加工的数据集')).toBeInTheDocument();
+    expect(screen.getByText('Pipeline 是可复用的算子组合；每次点击运行都会生成一条独立加工记录')).toBeInTheDocument();
+    expect(screen.getByText('这里是每次加工任务的运行记录，不是 Pipeline 模板本身')).toBeInTheDocument();
+    expect(screen.getByText('运行状态')).toBeInTheDocument();
+    expect(screen.getByText('处置状态')).toBeInTheDocument();
+    expect(screen.getByText('运行成功')).toBeInTheDocument();
+    expect(screen.getByText('算子组合可保存为版本快照并反复复用')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('combobox', { name: '本次要加工的数据集' }));
+    await user.click(await screen.findByText(/新一批车间视频数据集/));
+    await user.click(screen.getByRole('button', { name: /沙箱运行/ }));
+
+    await waitFor(() => {
+      expect(dataApi.runPipeline).toHaveBeenCalledWith('PIPE-VIDEO-PREP', {
+        triggerMode: 'MANUAL',
+        sampleDatasetId: 'DATASET-NEW-VIDEO-002',
+      });
+    });
   });
 
   it('supports pointer dragging on pipeline canvas nodes', async () => {
@@ -203,7 +306,7 @@ describe('DataPipelineStandardPage operator config panel', () => {
     });
     expect(screen.getByText(/当前节点 2 个/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /💾 保存/i }));
+    await user.click(screen.getByRole('button', { name: /💾 保存模板/i }));
 
     await waitFor(() => {
       expect(dataApi.updatePipeline).toHaveBeenCalled();
@@ -212,5 +315,6 @@ describe('DataPipelineStandardPage operator config panel', () => {
     expect(saveInput?.nodes).toHaveLength(2);
     expect(saveInput?.nodes.map((item) => item.nodeId)).toEqual(['extract', 'enhance']);
     expect(saveInput?.edges).toEqual([]);
+    expect(saveInput?.sourceDatasetId).toBe('DATASET-WELD-VIDEO-001');
   });
 });
