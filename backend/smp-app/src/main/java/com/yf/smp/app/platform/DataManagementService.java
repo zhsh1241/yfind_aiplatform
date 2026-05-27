@@ -1134,7 +1134,18 @@ public class DataManagementService {
     private void ensureDatasetReadable(PlatformPrincipal p, DatasetRecord d, boolean download) { if(!canSeeTenant(p,d.tenantId())){ audit(p,p.user().tenantId(),"DATASET_CROSS_BU_ACCESS_DENIED","Dataset",d.datasetId(),"FAILURE","CRITICAL",p.user().tenantId(),d.tenantId(),TRACE_TAG+";DAT-012"); throw new PlatformException(PlatformError.NOT_FOUND,"数据集不存在"); } if((download || "RESTRICTED".equals(d.accessLevel())) && !hasDatasetGrant(p,d)){ audit(p,d.tenantId(),"DATASET_ACCESS_REQUIRED","Dataset",d.datasetId(),"FAILURE","WARNING",null,p.user().id(),TRACE_TAG+";DAT-006"); throw new PlatformException(PlatformError.FORBIDDEN,"DATASET_ACCESS_REQUIRED: 受限数据集需要有效授权"); } }
     private boolean hasDatasetGrant(PlatformPrincipal p, DatasetRecord d) { if(p.isSuperAdmin() || d.ownerId().equals(p.user().id()) || "PUBLIC".equals(d.accessLevel())) return true; Integer c=jdbc.queryForObject("SELECT COUNT(*) FROM dataset_access_grant WHERE dataset_id=? AND user_id=? AND status='ACTIVE' AND expires_at > ?",Integer.class,d.datasetId(),p.user().id(),now()); return c!=null && c>0; }
     private List<DatasetSummaryResponse> allDatasetSummaries(PlatformPrincipal p) { return jdbc.query("SELECT d.*,u.display_name AS owner_name,v.version_name AS current_version_name FROM dataset d JOIN platform_user u ON u.id=d.owner_id LEFT JOIN dataset_version v ON v.version_id=d.current_version_id WHERE d.status <> 'DELETED' ORDER BY d.updated_at DESC", (rs,n)->datasetRecord(rs)).stream().filter(d -> canSeeTenant(p,d.tenantId())).map(d -> datasetSummary(p, d)).toList(); }
-    private DatasetSummaryResponse datasetSummary(PlatformPrincipal principal, DatasetRecord d) { return new DatasetSummaryResponse(d.datasetId(),readableDatasetName(d),d.datasetType(),d.dataType(),d.tenantId(),d.projectId(),d.currentVersionId(),d.currentVersionName(),d.status(),d.accessLevel(),split(d.tags()),versionCount(d.datasetId()),d.recordCount(),d.sizeBytes(),d.ownerId(),d.ownerName(),d.description(),d.archivedAt(),d.updatedAt(),!"ARCHIVED".equals(d.status()),principal.isSuperAdmin() && "ARCHIVED".equals(d.status()) && !hasDatasetReference(d.datasetId())); }
+    private DatasetSummaryResponse datasetSummary(PlatformPrincipal principal, DatasetRecord d) { return new DatasetSummaryResponse(d.datasetId(),readableDatasetName(d),d.datasetType(),d.dataType(),d.tenantId(),d.projectId(),d.currentVersionId(),d.currentVersionName(),d.status(),d.accessLevel(),readableDatasetTags(d),versionCount(d.datasetId()),d.recordCount(),d.sizeBytes(),d.ownerId(),d.ownerName(),readableDatasetDescription(d),d.archivedAt(),d.updatedAt(),!"ARCHIVED".equals(d.status()),principal.isSuperAdmin() && "ARCHIVED".equals(d.status()) && !hasDatasetReference(d.datasetId())); }
+
+    private List<String> readableDatasetTags(DatasetRecord d) {
+        if (blank(d.tags())) return List.of();
+        List<String> tags = split(d.tags()).stream().filter(tag -> !isUnreadableText(tag)).toList();
+        return tags.isEmpty() && isUnreadableText(d.tags()) ? List.of(datasetNameHint(d.datasetId(), d.datasetType(), d.dataType()).label()) : tags;
+    }
+    private String readableDatasetDescription(DatasetRecord d) {
+        if (blank(d.description())) return d.description();
+        if (!isUnreadableText(d.description())) return d.description();
+        return datasetNameHint(d.datasetId(), d.datasetType(), d.dataType()).label() + "数据集元数据说明不可读，已使用系统兜底展示";
+    }
 
     private String readableDatasetName(DatasetRecord d) { return readableDatasetName(d.datasetId(), d.name(), d.datasetType(), d.dataType()); }
     private String readableDatasetName(String datasetId, String name, String datasetType, String dataType) {
@@ -1157,6 +1168,8 @@ public class DataManagementService {
         if (value == null || value.isBlank()) return true;
         String normalized = value.trim();
         if (normalized.startsWith("乱码") || normalized.indexOf('�') >= 0 || normalized.indexOf('Ã') >= 0 || normalized.indexOf('Â') >= 0) return true;
+        long questionMarks = normalized.chars().filter(ch -> ch == '?').count();
+        if (questionMarks >= 2 && (questionMarks * 2 >= normalized.length() || questionMarks >= 5)) return true;
         long latin1Like = normalized.chars().filter(ch -> (ch >= 0x00C0 && ch <= 0x00FF) || "çæåéè¤¥¼œ".indexOf(ch) >= 0).count();
         return latin1Like >= 2;
     }

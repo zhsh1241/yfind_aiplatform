@@ -419,7 +419,7 @@ class DataManagementControllerTest {
         jdbc.update("""
             INSERT INTO dataset (dataset_id,name,dataset_type,data_type,tenant_id,project_id,current_version_id,status,access_level,tags,record_count,size_bytes,owner_id,description,created_at,updated_at)
             VALUES (?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?)
-            """, datasetId, "乱码数据集A", "RAW", "IMAGE", "TENANT-CABIN", null, "ACTIVE", "TEAM", "乱码,图片", 3L, 1024L, "USR-ADMIN", "BUG-20260527 unreadable dataset name", OffsetDateTime.now(), OffsetDateTime.now());
+            """, datasetId, "???????????", "RAW", "IMAGE", "TENANT-CABIN", null, "ACTIVE", "TEAM", "????,图片", 3L, 1024L, "USR-ADMIN", "????????????? MP4,?? PIPE-VIDEO-PREP ????", OffsetDateTime.now(), OffsetDateTime.now());
         jdbc.update("""
             INSERT INTO dataset_version (version_id,dataset_id,version_name,status,record_count,size_bytes,content_safety_status,diagnostic_code,diagnostic_message,created_by,created_at,published_at)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
@@ -439,11 +439,13 @@ class DataManagementControllerTest {
             """, datasetId, versionId);
 
         JsonNode list = getJson("/api/v1/datasets", "trace-bug-mojibake-list", admin);
-        assertThat(list.toString()).contains(fallbackName).doesNotContain("乱码数据集A");
+        assertThat(list.toString()).contains(fallbackName).doesNotContain("???????????");
 
         JsonNode detail = getJson("/api/v1/datasets/" + datasetId, "trace-bug-mojibake-detail", admin);
         assertThat(detail.at("/data/dataset/name").asText()).isEqualTo(fallbackName);
         assertThat(detail.at("/data/dataset/datasetId").asText()).isEqualTo(datasetId);
+        assertThat(detail.at("/data/dataset/tags").toString()).doesNotContain("????");
+        assertThat(detail.at("/data/dataset/description").asText()).doesNotContain("????");
 
         JsonNode candidate = getJson("/api/v1/datasets/" + datasetId + "/annotation-candidates", "trace-bug-mojibake-candidate", admin);
         assertThat(candidate.at("/data/datasetName").asText()).isEqualTo(fallbackName);
@@ -452,16 +454,16 @@ class DataManagementControllerTest {
         assertThat(profile.at("/data/datasetName").asText()).isEqualTo(fallbackName);
 
         JsonNode tasks = getJson("/api/v1/data-standard-tasks", "trace-bug-mojibake-standard-tasks", admin);
-        assertThat(tasks.toString()).contains(fallbackName).doesNotContain("乱码数据集A");
+        assertThat(tasks.toString()).contains(fallbackName).doesNotContain("???????????");
 
         JsonNode access = getJson("/api/v1/dataset-access-requests?datasetId=" + datasetId, "trace-bug-mojibake-access", admin);
-        assertThat(access.toString()).contains(fallbackName).doesNotContain("乱码数据集A");
+        assertThat(access.toString()).contains(fallbackName).doesNotContain("???????????");
 
         JsonNode annotationSources = getJson("/api/v1/annotation/source-datasets?keyword=" + datasetId, "trace-bug-mojibake-ann-sources", admin);
-        assertThat(annotationSources.toString()).contains(fallbackName).doesNotContain("乱码数据集A");
+        assertThat(annotationSources.toString()).contains(fallbackName).doesNotContain("???????????");
 
         JsonNode annotationTasks = getJson("/api/v1/annotation/tasks", "trace-bug-mojibake-ann-tasks", admin);
-        assertThat(annotationTasks.toString()).contains(fallbackName).doesNotContain("乱码数据集A");
+        assertThat(annotationTasks.toString()).contains(fallbackName).doesNotContain("???????????");
     }
 
     @Test

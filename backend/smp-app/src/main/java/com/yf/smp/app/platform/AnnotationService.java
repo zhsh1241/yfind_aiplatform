@@ -875,6 +875,8 @@ public class AnnotationService {
         if (value == null || value.isBlank()) return true;
         String normalized = value.trim();
         if (normalized.startsWith("乱码") || normalized.indexOf('�') >= 0 || normalized.indexOf('Ã') >= 0 || normalized.indexOf('Â') >= 0) return true;
+        long questionMarks = normalized.chars().filter(ch -> ch == '?').count();
+        if (questionMarks >= 2 && (questionMarks * 2 >= normalized.length() || questionMarks >= 5)) return true;
         long latin1Like = normalized.chars().filter(ch -> (ch >= 0x00C0 && ch <= 0x00FF) || "çæåéè¤¥¼œ".indexOf(ch) >= 0).count();
         return latin1Like >= 2;
     }
