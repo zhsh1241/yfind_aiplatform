@@ -302,7 +302,7 @@ public class DataManagementService {
             .filter(t -> List.of("IMAGE_TAGGING", "IMAGE_SEGMENTATION").contains(t.scene()))
             .toList();
         if (eligible && templates.isEmpty()) { code = "ANNOTATION_TEMPLATE_OPTIONAL"; message = "当前无已发布模板，可在创建标注任务时直接输入标签"; }
-        return new DatasetAnnotationCandidateResponse(d.datasetId(), d.name(), d.currentVersionId(), d.dataType(), d.status(), eligible, code, message, templates, AnnotationService.supportedExportFormats());
+        return new DatasetAnnotationCandidateResponse(d.datasetId(), readableDatasetName(d), d.currentVersionId(), d.dataType(), d.status(), eligible, code, message, templates, AnnotationService.supportedExportFormats());
     }
 
     public List<DatasetAnnotationTaskResponse> annotationTasks(PlatformPrincipal principal, String datasetId) {
@@ -1099,7 +1099,7 @@ public class DataManagementService {
     private void ensureSourceReferenceable(PlatformPrincipal p, DataSourceRecord s, String action) { if(!"ACTIVE".equals(s.status()) || !"OK".equals(s.diagnosticCode()) || s.lastTestAt()==null){ audit(p,s.tenantId(),action,"DataSource",s.sourceId(),"FAILURE","WARNING",s.status(),s.diagnosticCode(),TRACE_TAG+";DAT-001"); throw new PlatformException(PlatformError.CONFLICT,"DATA_SOURCE_NOT_ACTIVE: 连接测试未通过或未激活的数据源不得被同步任务或数据集导入引用"); } }
     private DataStandardProfileResponse standardProfile(DatasetRecord d) {
         String sourceType = sourceTypeForDataset(d); List<DataStandardFieldResponse> fields = standardFields(d, sourceType); int matched = (int) fields.stream().filter(f -> "MATCHED".equals(f.mappingStatus())).count(); int issues = (int) fields.stream().filter(f -> !"MATCHED".equals(f.mappingStatus())).count(); int score = Math.min(98, 70 + matched * 5 - issues * 3 + ("PREPROCESSED".equals(d.datasetType()) ? 8 : 0));
-        return new DataStandardProfileResponse(d.datasetId(), d.name(), d.datasetType(), d.dataType(), sourceType, "PROFILED", score, fields.size(), matched, issues, fields);
+        return new DataStandardProfileResponse(d.datasetId(), readableDatasetName(d), d.datasetType(), d.dataType(), sourceType, "PROFILED", score, fields.size(), matched, issues, fields);
     }
     private List<DataStandardFieldResponse> standardFields(DatasetRecord d, String sourceType) {
         String dataType = upper(d.dataType(), "OBJECT");
@@ -1130,18 +1130,56 @@ public class DataManagementService {
     private String standardTaskTenant(String datasetId) { return dataset(datasetId).tenantId(); }
     private DataStandardTaskResponse standardTask(String id) { return jdbc.queryForObject("SELECT t.*,sd.name AS source_dataset_name,od.name AS output_dataset_name,sd.tenant_id FROM data_standard_task t JOIN dataset sd ON sd.dataset_id=t.source_dataset_id LEFT JOIN dataset od ON od.dataset_id=t.output_dataset_id WHERE t.task_id=?", (rs,n)->standardTaskResponse(rs), id); }
     private DataStandardTaskRecord standardTaskRecord(String id) { return jdbc.queryForObject("SELECT * FROM data_standard_task WHERE task_id=?", (rs,n)->new DataStandardTaskRecord(rs.getString("task_id"),rs.getString("source_dataset_id"),rs.getString("source_version_id"),rs.getString("output_dataset_id"),rs.getString("name"),rs.getString("standard_profile"),rs.getString("status"),nullableInt(rs,"quality_score_before")), id); }
-    private DataStandardTaskResponse standardTaskResponse(java.sql.ResultSet rs) throws java.sql.SQLException { return new DataStandardTaskResponse(rs.getString("task_id"),rs.getString("source_dataset_id"),rs.getString("source_dataset_name"),rs.getString("source_version_id"),rs.getString("output_dataset_id"),rs.getString("output_dataset_name"),rs.getString("name"),rs.getString("standard_profile"),rs.getString("status"),nullableInt(rs,"quality_score_before"),nullableInt(rs,"quality_score_after"),rs.getString("diagnostic_code"),rs.getString("diagnostic_message"),rs.getObject("last_run_at",OffsetDateTime.class),rs.getObject("updated_at",OffsetDateTime.class)); }
+    private DataStandardTaskResponse standardTaskResponse(java.sql.ResultSet rs) throws java.sql.SQLException { return new DataStandardTaskResponse(rs.getString("task_id"),rs.getString("source_dataset_id"),readableDatasetName(rs.getString("source_dataset_id"),rs.getString("source_dataset_name"),null,null),rs.getString("source_version_id"),rs.getString("output_dataset_id"),readableDatasetName(rs.getString("output_dataset_id"),rs.getString("output_dataset_name"),null,null),rs.getString("name"),rs.getString("standard_profile"),rs.getString("status"),nullableInt(rs,"quality_score_before"),nullableInt(rs,"quality_score_after"),rs.getString("diagnostic_code"),rs.getString("diagnostic_message"),rs.getObject("last_run_at",OffsetDateTime.class),rs.getObject("updated_at",OffsetDateTime.class)); }
     private void ensureDatasetReadable(PlatformPrincipal p, DatasetRecord d, boolean download) { if(!canSeeTenant(p,d.tenantId())){ audit(p,p.user().tenantId(),"DATASET_CROSS_BU_ACCESS_DENIED","Dataset",d.datasetId(),"FAILURE","CRITICAL",p.user().tenantId(),d.tenantId(),TRACE_TAG+";DAT-012"); throw new PlatformException(PlatformError.NOT_FOUND,"数据集不存在"); } if((download || "RESTRICTED".equals(d.accessLevel())) && !hasDatasetGrant(p,d)){ audit(p,d.tenantId(),"DATASET_ACCESS_REQUIRED","Dataset",d.datasetId(),"FAILURE","WARNING",null,p.user().id(),TRACE_TAG+";DAT-006"); throw new PlatformException(PlatformError.FORBIDDEN,"DATASET_ACCESS_REQUIRED: 受限数据集需要有效授权"); } }
     private boolean hasDatasetGrant(PlatformPrincipal p, DatasetRecord d) { if(p.isSuperAdmin() || d.ownerId().equals(p.user().id()) || "PUBLIC".equals(d.accessLevel())) return true; Integer c=jdbc.queryForObject("SELECT COUNT(*) FROM dataset_access_grant WHERE dataset_id=? AND user_id=? AND status='ACTIVE' AND expires_at > ?",Integer.class,d.datasetId(),p.user().id(),now()); return c!=null && c>0; }
     private List<DatasetSummaryResponse> allDatasetSummaries(PlatformPrincipal p) { return jdbc.query("SELECT d.*,u.display_name AS owner_name,v.version_name AS current_version_name FROM dataset d JOIN platform_user u ON u.id=d.owner_id LEFT JOIN dataset_version v ON v.version_id=d.current_version_id WHERE d.status <> 'DELETED' ORDER BY d.updated_at DESC", (rs,n)->datasetRecord(rs)).stream().filter(d -> canSeeTenant(p,d.tenantId())).map(d -> datasetSummary(p, d)).toList(); }
-    private DatasetSummaryResponse datasetSummary(PlatformPrincipal principal, DatasetRecord d) { return new DatasetSummaryResponse(d.datasetId(),d.name(),d.datasetType(),d.dataType(),d.tenantId(),d.projectId(),d.currentVersionId(),d.currentVersionName(),d.status(),d.accessLevel(),split(d.tags()),versionCount(d.datasetId()),d.recordCount(),d.sizeBytes(),d.ownerId(),d.ownerName(),d.description(),d.archivedAt(),d.updatedAt(),!"ARCHIVED".equals(d.status()),principal.isSuperAdmin() && "ARCHIVED".equals(d.status()) && !hasDatasetReference(d.datasetId())); }
+    private DatasetSummaryResponse datasetSummary(PlatformPrincipal principal, DatasetRecord d) { return new DatasetSummaryResponse(d.datasetId(),readableDatasetName(d),d.datasetType(),d.dataType(),d.tenantId(),d.projectId(),d.currentVersionId(),d.currentVersionName(),d.status(),d.accessLevel(),split(d.tags()),versionCount(d.datasetId()),d.recordCount(),d.sizeBytes(),d.ownerId(),d.ownerName(),d.description(),d.archivedAt(),d.updatedAt(),!"ARCHIVED".equals(d.status()),principal.isSuperAdmin() && "ARCHIVED".equals(d.status()) && !hasDatasetReference(d.datasetId())); }
+
+    private String readableDatasetName(DatasetRecord d) { return readableDatasetName(d.datasetId(), d.name(), d.datasetType(), d.dataType()); }
+    private String readableDatasetName(String datasetId, String name, String datasetType, String dataType) {
+        if (blank(datasetId)) return name;
+        if (!isUnreadableText(name)) return name;
+        DatasetNameHint hint = datasetNameHint(datasetId, datasetType, dataType);
+        return hint.label() + "数据集-" + idSuffix(datasetId);
+    }
+    private DatasetNameHint datasetNameHint(String datasetId, String datasetType, String dataType) {
+        if (!blank(datasetType) || !blank(dataType)) return new DatasetNameHint(blank(datasetType, ""), blank(dataType, ""));
+        List<DatasetNameHint> rows = jdbc.query("SELECT dataset_type,data_type FROM dataset WHERE dataset_id=?", (rs,n) -> new DatasetNameHint(rs.getString("dataset_type"), rs.getString("data_type")), datasetId);
+        return rows.isEmpty() ? new DatasetNameHint("", "") : rows.getFirst();
+    }
+    private String idSuffix(String datasetId) {
+        if (blank(datasetId)) return "UNKNOWN";
+        String normalized = datasetId.trim();
+        return normalized.length() <= 6 ? normalized : normalized.substring(normalized.length() - 6);
+    }
+    private boolean isUnreadableText(String value) {
+        if (value == null || value.isBlank()) return true;
+        String normalized = value.trim();
+        if (normalized.startsWith("乱码") || normalized.indexOf('�') >= 0 || normalized.indexOf('Ã') >= 0 || normalized.indexOf('Â') >= 0) return true;
+        long latin1Like = normalized.chars().filter(ch -> (ch >= 0x00C0 && ch <= 0x00FF) || "çæåéè¤¥¼œ".indexOf(ch) >= 0).count();
+        return latin1Like >= 2;
+    }
+    private record DatasetNameHint(String datasetType, String dataType) {
+        String label() {
+            String type = dataType == null ? "" : dataType.toUpperCase(Locale.ROOT);
+            return switch (type) {
+                case "IMAGE" -> "图片";
+                case "AUDIO_VIDEO", "VIDEO" -> "视频";
+                case "TEXT" -> "文本";
+                case "TABULAR" -> "表格";
+                case "TIME_SERIES", "TELEMETRY" -> "时序";
+                default -> "PREPROCESSED".equals(datasetType == null ? "" : datasetType.toUpperCase(Locale.ROOT)) ? "预处理" : "数据";
+            };
+        }
+    }
     private DatasetStatsResponse stats(List<DatasetSummaryResponse> ds) { return new DatasetStatsResponse(ds.size(), ds.stream().filter(i->"RAW".equals(i.datasetType())).count(), ds.stream().filter(i->"PREPROCESSED".equals(i.datasetType())).count(), ds.stream().filter(i->"ANNOTATED".equals(i.datasetType())).count(), ds.stream().filter(i->"RESTRICTED".equals(i.accessLevel())).count(), ds.stream().mapToLong(DatasetSummaryResponse::sizeBytes).sum()); }
     private DataSourceRecord source(String id) { return jdbc.queryForObject("SELECT * FROM data_source WHERE source_id=?", (rs,n)->sourceRecord(rs), id); }
     private DataSourceRecord sourceRecord(java.sql.ResultSet rs) throws java.sql.SQLException { return new DataSourceRecord(rs.getString("source_id"),rs.getString("name"),rs.getString("source_type"),rs.getString("tenant_id"),rs.getString("project_id"),rs.getString("endpoint"),nullableInt(rs,"port"),rs.getString("database_name"),rs.getString("credential_mode"),rs.getString("secret_ref"),rs.getString("shared_scope"),rs.getString("description"),rs.getString("status"),rs.getObject("last_test_at",OffsetDateTime.class),rs.getString("diagnostic_code"),rs.getString("diagnostic_message"),nullableInt(rs,"latency_ms"),rs.getString("created_by"),rs.getObject("created_at",OffsetDateTime.class),rs.getObject("updated_at",OffsetDateTime.class)); }
     private DataSourceResponse sourceResponse(DataSourceRecord s) { return new DataSourceResponse(s.sourceId(),s.name(),s.sourceType(),s.tenantId(),s.projectId(),s.endpoint(),s.port(),s.databaseName(),s.credentialMode(),maskSecret(s.secretRef()),s.sharedScope(),s.description(),s.status(),s.lastTestAt(),s.diagnosticCode(),s.diagnosticMessage(),s.latencyMs(),s.updatedAt()); }
     private SyncTaskRecord syncTask(String id) { return jdbc.queryForObject("SELECT t.*,s.name AS source_name,d.name AS target_dataset_name,s.tenant_id FROM data_source_sync_task t JOIN data_source s ON s.source_id=t.source_id LEFT JOIN dataset d ON d.dataset_id=t.target_dataset_id WHERE t.task_id=?", (rs,n)->syncTaskRecord(rs), id); }
     private SyncTaskRecord syncTaskRecord(java.sql.ResultSet rs) throws java.sql.SQLException { return new SyncTaskRecord(rs.getString("task_id"),rs.getString("source_id"),rs.getString("source_name"),rs.getString("target_dataset_id"),rs.getString("target_dataset_name"),rs.getString("name"),rs.getString("schedule_mode"),rs.getString("sync_scope"),rs.getString("status"),rs.getObject("last_run_at",OffsetDateTime.class),rs.getString("last_result"),rs.getString("diagnostic_code"),rs.getString("diagnostic_message"),rs.getString("tenant_id")); }
-    private DataSourceSyncTaskResponse syncTaskResponse(SyncTaskRecord t) { return new DataSourceSyncTaskResponse(t.taskId(),t.sourceId(),t.sourceName(),t.targetDatasetId(),t.targetDatasetName(),t.name(),t.scheduleMode(),t.syncScope(),t.status(),t.lastRunAt(),t.lastResult(),t.diagnosticCode(),t.diagnosticMessage()); }
+    private DataSourceSyncTaskResponse syncTaskResponse(SyncTaskRecord t) { return new DataSourceSyncTaskResponse(t.taskId(),t.sourceId(),t.sourceName(),t.targetDatasetId(),readableDatasetName(t.targetDatasetId(),t.targetDatasetName(),null,null),t.name(),t.scheduleMode(),t.syncScope(),t.status(),t.lastRunAt(),t.lastResult(),t.diagnosticCode(),t.diagnosticMessage()); }
     private DatasetRecord dataset(String id) { return jdbc.queryForObject("SELECT d.*,u.display_name AS owner_name,v.version_name AS current_version_name FROM dataset d JOIN platform_user u ON u.id=d.owner_id LEFT JOIN dataset_version v ON v.version_id=d.current_version_id WHERE d.dataset_id=?", (rs,n)->datasetRecord(rs), id); }
     private DatasetRecord datasetVisibleOrNotFound(PlatformPrincipal p,String id) { DatasetRecord d=dataset(id); if(d.deletedAt()!=null || "DELETED".equals(d.status())) throw new PlatformException(PlatformError.NOT_FOUND,"数据集不存在"); if(!canSeeTenant(p,d.tenantId())){ audit(p,p.user().tenantId(),"DATASET_CROSS_BU_ACCESS_DENIED","Dataset",id,"FAILURE","CRITICAL",p.user().tenantId(),d.tenantId(),TRACE_TAG+";DAT-012"); throw new PlatformException(PlatformError.NOT_FOUND,"数据集不存在"); } return d; }
     private DatasetRecord datasetRecord(java.sql.ResultSet rs) throws java.sql.SQLException { return new DatasetRecord(rs.getString("dataset_id"),rs.getString("name"),rs.getString("dataset_type"),rs.getString("data_type"),rs.getString("tenant_id"),rs.getString("project_id"),rs.getString("current_version_id"),rs.getString("current_version_name"),rs.getString("status"),rs.getString("access_level"),rs.getString("tags"),rs.getLong("record_count"),rs.getLong("size_bytes"),rs.getString("owner_id"),rs.getString("owner_name"),rs.getString("description"),rs.getObject("archived_at",OffsetDateTime.class),rs.getObject("deleted_at",OffsetDateTime.class),rs.getObject("updated_at",OffsetDateTime.class)); }
@@ -1160,7 +1198,7 @@ public class DataManagementService {
             LEFT JOIN platform_user rv ON rv.id=r.reviewed_by
             WHERE r.request_id=?
             """, (rs,n)->accessRequestResponse(rs), id); }
-    private DatasetAccessRequestResponse accessRequestResponse(java.sql.ResultSet rs) throws java.sql.SQLException { return new DatasetAccessRequestResponse(rs.getString("request_id"),rs.getString("dataset_id"),rs.getString("dataset_name"),rs.getString("tenant_id"),rs.getString("requester_id"),rs.getString("requester_name"),rs.getString("purpose"),rs.getString("status"),rs.getObject("created_at",OffsetDateTime.class),rs.getString("reviewed_by"),rs.getString("reviewer_name"),rs.getObject("reviewed_at",OffsetDateTime.class)); }
+    private DatasetAccessRequestResponse accessRequestResponse(java.sql.ResultSet rs) throws java.sql.SQLException { return new DatasetAccessRequestResponse(rs.getString("request_id"),rs.getString("dataset_id"),readableDatasetName(rs.getString("dataset_id"),rs.getString("dataset_name"),null,null),rs.getString("tenant_id"),rs.getString("requester_id"),rs.getString("requester_name"),rs.getString("purpose"),rs.getString("status"),rs.getObject("created_at",OffsetDateTime.class),rs.getString("reviewed_by"),rs.getString("reviewer_name"),rs.getObject("reviewed_at",OffsetDateTime.class)); }
     private AccessRequestRecord accessRequestRecord(String id) { return jdbc.queryForObject("SELECT * FROM dataset_access_request WHERE request_id=?", (rs,n)->new AccessRequestRecord(rs.getString("request_id"),rs.getString("dataset_id"),rs.getString("requester_id"),rs.getString("status")), id); }
     private boolean canReviewAccessRequests(PlatformPrincipal p) { return p.hasPermission("data:dataset:access-request:review") || p.hasPermission("data:dataset:grant"); }
     private void requireAccessReviewPermission(PlatformPrincipal p) { if(!canReviewAccessRequests(p)) identityService.requirePermission(p,"data:dataset:access-request:review"); }

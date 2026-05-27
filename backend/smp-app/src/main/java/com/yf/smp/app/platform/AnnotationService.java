@@ -248,7 +248,7 @@ public class AnnotationService {
             "INSERT INTO annotation_label_template (template_id, tenant_id, name, scene, label_type, label_schema_json, label_studio_config_xml, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'PUBLISHED', ?, ?, ?)",
             templateId,
             source.tenantId(),
-            blank(inlineTemplateName, source.name() + " " + sceneLabel(scene) + "模板"),
+            blank(inlineTemplateName, readableDatasetName(source) + " " + sceneLabel(scene) + "模板"),
             scene,
             defaultLabelType(scene),
             schemaJson,
@@ -628,13 +628,13 @@ public class AnnotationService {
 
     private AnnotationTaskSummaryResponse taskSummary(ResultSet rs) throws SQLException {
         String taskId = rs.getString("task_id");
-        return new AnnotationTaskSummaryResponse(taskId, rs.getString("name"), rs.getString("scene"), sceneLabel(rs.getString("scene")), rs.getString("source_dataset_id"), rs.getString("source_dataset_name"), rs.getString("template_id"), rs.getString("template_name"), rs.getString("tenant_id"), rs.getString("status"), rs.getBoolean("review_enabled"), rs.getBoolean("prelabel_enabled"), rs.getBoolean("label_studio_enabled"), rs.getLong("total_count"), rs.getLong("annotated_count"), rs.getLong("reviewed_count"), nullableInt(rs, "quality_score"), assignmentUsers(taskId), rs.getObject("deadline", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
+        return new AnnotationTaskSummaryResponse(taskId, rs.getString("name"), rs.getString("scene"), sceneLabel(rs.getString("scene")), rs.getString("source_dataset_id"), readableDatasetName(rs.getString("source_dataset_id"), rs.getString("source_dataset_name"), null, null), rs.getString("template_id"), rs.getString("template_name"), rs.getString("tenant_id"), rs.getString("status"), rs.getBoolean("review_enabled"), rs.getBoolean("prelabel_enabled"), rs.getBoolean("label_studio_enabled"), rs.getLong("total_count"), rs.getLong("annotated_count"), rs.getLong("reviewed_count"), nullableInt(rs, "quality_score"), assignmentUsers(taskId), rs.getObject("deadline", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
     }
 
     private AnnotationTaskSummaryResponse summary(AnnotationTaskRecord task) {
         DatasetInfo dataset = datasetInfo(task.sourceDatasetId());
         AnnotationLabelTemplateRecord template = templateRecord(task.templateId());
-        return new AnnotationTaskSummaryResponse(task.taskId(), task.name(), task.scene(), sceneLabel(task.scene()), task.sourceDatasetId(), dataset.name(), task.templateId(), template.name(), task.tenantId(), task.status(), task.reviewEnabled(), task.prelabelEnabled(), task.labelStudioEnabled(), task.totalCount(), task.annotatedCount(), task.reviewedCount(), task.qualityScore(), assignmentUsers(task.taskId()), task.deadline(), task.updatedAt());
+        return new AnnotationTaskSummaryResponse(task.taskId(), task.name(), task.scene(), sceneLabel(task.scene()), task.sourceDatasetId(), readableDatasetName(dataset), task.templateId(), template.name(), task.tenantId(), task.status(), task.reviewEnabled(), task.prelabelEnabled(), task.labelStudioEnabled(), task.totalCount(), task.annotatedCount(), task.reviewedCount(), task.qualityScore(), assignmentUsers(task.taskId()), task.deadline(), task.updatedAt());
     }
 
     private List<AnnotationUserResponse> assignmentUsers(String taskId) {
@@ -840,7 +840,7 @@ public class AnnotationService {
         boolean eligible = "ACTIVE".equals(item.status()) && "IMAGE".equals(upper(item.dataType(), "")) && (!"PREPROCESSED".equals(item.datasetType()) || (!artifactBlocked && confirmed));
         return new AnnotationSourceDatasetResponse(
             item.datasetId(),
-            item.name(),
+            readableDatasetName(item),
             item.datasetType(),
             item.dataType(),
             item.currentVersionId(),
@@ -851,6 +851,45 @@ public class AnnotationService {
             null,
             artifactBlocked ? "ARTIFACT_WATERMARK" : null
         );
+    }
+
+
+    private String readableDatasetName(DatasetInfo item) { return readableDatasetName(item.datasetId(), item.name(), item.datasetType(), item.dataType()); }
+    private String readableDatasetName(String datasetId, String name, String datasetType, String dataType) {
+        if (blank(datasetId)) return name;
+        if (!isUnreadableText(name)) return name;
+        DatasetNameHint hint = datasetNameHint(datasetId, datasetType, dataType);
+        return hint.label() + "数据集-" + idSuffix(datasetId);
+    }
+    private DatasetNameHint datasetNameHint(String datasetId, String datasetType, String dataType) {
+        if (!blank(datasetType) || !blank(dataType)) return new DatasetNameHint(blank(datasetType, ""), blank(dataType, ""));
+        List<DatasetNameHint> rows = jdbc.query("SELECT dataset_type,data_type FROM dataset WHERE dataset_id=?", (rs,n) -> new DatasetNameHint(rs.getString("dataset_type"), rs.getString("data_type")), datasetId);
+        return rows.isEmpty() ? new DatasetNameHint("", "") : rows.getFirst();
+    }
+    private String idSuffix(String datasetId) {
+        if (blank(datasetId)) return "UNKNOWN";
+        String normalized = datasetId.trim();
+        return normalized.length() <= 6 ? normalized : normalized.substring(normalized.length() - 6);
+    }
+    private boolean isUnreadableText(String value) {
+        if (value == null || value.isBlank()) return true;
+        String normalized = value.trim();
+        if (normalized.startsWith("乱码") || normalized.indexOf('�') >= 0 || normalized.indexOf('Ã') >= 0 || normalized.indexOf('Â') >= 0) return true;
+        long latin1Like = normalized.chars().filter(ch -> (ch >= 0x00C0 && ch <= 0x00FF) || "çæåéè¤¥¼œ".indexOf(ch) >= 0).count();
+        return latin1Like >= 2;
+    }
+    private record DatasetNameHint(String datasetType, String dataType) {
+        String label() {
+            String type = dataType == null ? "" : dataType.toUpperCase(Locale.ROOT);
+            return switch (type) {
+                case "IMAGE" -> "图片";
+                case "AUDIO_VIDEO", "VIDEO" -> "视频";
+                case "TEXT" -> "文本";
+                case "TABULAR" -> "表格";
+                case "TIME_SERIES", "TELEMETRY" -> "时序";
+                default -> "PREPROCESSED".equals(datasetType == null ? "" : datasetType.toUpperCase(Locale.ROOT)) ? "预处理" : "数据";
+            };
+        }
     }
 
     private void ensureWorkOwnerOrAdmin(PlatformPrincipal principal, AnnotationWorkItemRecord item) {

@@ -404,6 +404,67 @@ class DataManagementControllerTest {
     }
 
     @Test
+    void datasetResponsesFallbackUnreadableNames() throws Exception {
+        // BUG-20260527-dataset-name-mojibake：历史乱码数据集在 API 边界统一兜底展示
+        String admin = login("admin", "YF");
+        String datasetId = "DATASET-MOJIBAKE-001";
+        String versionId = "DVER-MOJIBAKE-001";
+        String fallbackName = "图片数据集-KE-001";
+        jdbc.update("DELETE FROM annotation_task WHERE task_id='ANN-MOJIBAKE-001'");
+        jdbc.update("DELETE FROM data_standard_task WHERE task_id='DSTD-MOJIBAKE-001'");
+        jdbc.update("DELETE FROM dataset_access_request WHERE request_id='DAR-MOJIBAKE-001'");
+        jdbc.update("UPDATE dataset SET current_version_id=NULL WHERE dataset_id=?", datasetId);
+        jdbc.update("DELETE FROM dataset_version WHERE version_id=?", versionId);
+        jdbc.update("DELETE FROM dataset WHERE dataset_id=?", datasetId);
+        jdbc.update("""
+            INSERT INTO dataset (dataset_id,name,dataset_type,data_type,tenant_id,project_id,current_version_id,status,access_level,tags,record_count,size_bytes,owner_id,description,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?)
+            """, datasetId, "乱码数据集A", "RAW", "IMAGE", "TENANT-CABIN", null, "ACTIVE", "TEAM", "乱码,图片", 3L, 1024L, "USR-ADMIN", "BUG-20260527 unreadable dataset name", OffsetDateTime.now(), OffsetDateTime.now());
+        jdbc.update("""
+            INSERT INTO dataset_version (version_id,dataset_id,version_name,status,record_count,size_bytes,content_safety_status,diagnostic_code,diagnostic_message,created_by,created_at,published_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            """, versionId, datasetId, "v1.0.0", "PUBLISHED", 3L, 1024L, "PASSED", "OK", "unit", "USR-ADMIN", OffsetDateTime.now(), OffsetDateTime.now());
+        jdbc.update("UPDATE dataset SET current_version_id=? WHERE dataset_id=?", versionId, datasetId);
+        jdbc.update("""
+            INSERT INTO data_standard_task (task_id,source_dataset_id,source_version_id,output_dataset_id,name,standard_profile,rule_json,status,quality_score_before,quality_score_after,diagnostic_code,diagnostic_message,created_by,created_at,updated_at,last_run_at)
+            VALUES ('DSTD-MOJIBAKE-001',?,?,NULL,'乱码标准化任务','INDUSTRIAL_VISUAL_STANDARD','{}','READY',80,NULL,'READY','unit','USR-ADMIN',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,NULL)
+            """, datasetId, versionId);
+        jdbc.update("""
+            INSERT INTO dataset_access_request (request_id,dataset_id,requester_id,purpose,status,created_at)
+            VALUES ('DAR-MOJIBAKE-001',?,'USR-ANNOTATOR','验证乱码兜底','PENDING',CURRENT_TIMESTAMP)
+            """, datasetId);
+        jdbc.update("""
+            INSERT INTO annotation_task (task_id, tenant_id, project_id, source_dataset_id, source_version_id, template_id, name, scene, status, review_enabled, prelabel_enabled, label_studio_enabled, prelabel_model_source, prelabel_confidence, total_count, annotated_count, reviewed_count, quality_score, deadline, note, created_by, created_at, updated_at)
+            VALUES ('ANN-MOJIBAKE-001','TENANT-CABIN',NULL,? ,?,'LT-WELD-BBOX','乱码源数据标注任务','OBJECT_DETECTION','IN_PROGRESS',TRUE,FALSE,TRUE,'TODO_CONFIRM_PRELABEL_MODEL_SOURCE',0.70,3,0,0,NULL,NULL,'bug regression','USR-ADMIN',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+            """, datasetId, versionId);
+
+        JsonNode list = getJson("/api/v1/datasets", "trace-bug-mojibake-list", admin);
+        assertThat(list.toString()).contains(fallbackName).doesNotContain("乱码数据集A");
+
+        JsonNode detail = getJson("/api/v1/datasets/" + datasetId, "trace-bug-mojibake-detail", admin);
+        assertThat(detail.at("/data/dataset/name").asText()).isEqualTo(fallbackName);
+        assertThat(detail.at("/data/dataset/datasetId").asText()).isEqualTo(datasetId);
+
+        JsonNode candidate = getJson("/api/v1/datasets/" + datasetId + "/annotation-candidates", "trace-bug-mojibake-candidate", admin);
+        assertThat(candidate.at("/data/datasetName").asText()).isEqualTo(fallbackName);
+
+        JsonNode profile = getJson("/api/v1/datasets/" + datasetId + "/standard-profile", "trace-bug-mojibake-profile", admin);
+        assertThat(profile.at("/data/datasetName").asText()).isEqualTo(fallbackName);
+
+        JsonNode tasks = getJson("/api/v1/data-standard-tasks", "trace-bug-mojibake-standard-tasks", admin);
+        assertThat(tasks.toString()).contains(fallbackName).doesNotContain("乱码数据集A");
+
+        JsonNode access = getJson("/api/v1/dataset-access-requests?datasetId=" + datasetId, "trace-bug-mojibake-access", admin);
+        assertThat(access.toString()).contains(fallbackName).doesNotContain("乱码数据集A");
+
+        JsonNode annotationSources = getJson("/api/v1/annotation/source-datasets?keyword=" + datasetId, "trace-bug-mojibake-ann-sources", admin);
+        assertThat(annotationSources.toString()).contains(fallbackName).doesNotContain("乱码数据集A");
+
+        JsonNode annotationTasks = getJson("/api/v1/annotation/tasks", "trace-bug-mojibake-ann-tasks", admin);
+        assertThat(annotationTasks.toString()).contains(fallbackName).doesNotContain("乱码数据集A");
+    }
+
+    @Test
     void connectorProbeAcceptsHttpEndpointForTcpOnlyIndustrialProtocol() throws Exception {
         // TASK-data-source-dataset-management AC-11
         try (ServerSocket server = new ServerSocket(0)) {
