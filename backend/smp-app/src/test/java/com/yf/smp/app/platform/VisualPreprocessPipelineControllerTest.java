@@ -37,9 +37,26 @@ class VisualPreprocessPipelineControllerTest {
         JsonNode operators = getJson("/api/v1/operators?categoryGroup=VISUAL_PREPROCESS&supportsPreview=true", "trace-f017-operators", admin);
         assertThat(operators.at("/code").asInt()).isZero();
         assertThat(operators.at("/data/items").findValuesAsText("operatorId"))
-            .contains("OP-IMG-WATERMARK", "OP-IMG-ENHANCE", "OP-VIDEO-FRAME-EXTRACT", "OP-VIDEO-FPS-EXTRACT");
+            .contains("OP-IMG-WATERMARK", "OP-IMG-ENHANCE", "OP-VIDEO-FRAME-EXTRACT", "OP-VIDEO-FPS-EXTRACT")
+            .doesNotContain("OP-READ-DATASET");
         assertThat(operators.toString()).contains("TRADITIONAL_ONLY");
         assertThat(operators.toString()).contains("\"defaultOutputDatasetDataType\":\"IMAGE\"");
+
+        JsonNode commonOperators = getJson("/api/v1/operators?categoryGroup=COMMON&supportsPreview=true", "trace-f017-common-operators", admin);
+        assertThat(commonOperators.at("/code").asInt()).isZero();
+        JsonNode readDataset = null;
+        for (JsonNode item : commonOperators.at("/data/items")) {
+            if ("OP-READ-DATASET".equals(item.at("/operatorId").asText())) {
+                readDataset = item;
+                break;
+            }
+        }
+        assertThat(readDataset).isNotNull();
+        assertThat(readDataset.at("/categoryGroup").asText()).isEqualTo("COMMON");
+        assertThat(readDataset.at("/category").asText()).isEqualTo("DATA_INPUT");
+        assertThat(readDataset.at("/subCategory").asText()).isEqualTo("SOURCE");
+        assertThat(readDataset.at("/dataType").asText()).isEqualTo("ANY");
+        assertThat(readDataset.at("/supportsPreview").asBoolean()).isTrue();
 
         JsonNode operatorDetail = getJson("/api/v1/operators/OP-IMG-WATERMARK", "trace-f017-operator-detail", admin);
         assertThat(operatorDetail.at("/code").asInt()).isZero();
@@ -109,6 +126,26 @@ class VisualPreprocessPipelineControllerTest {
             """.formatted(outputDatasetId, jdbc.queryForObject("SELECT current_version_id FROM dataset WHERE dataset_id=?", String.class, outputDatasetId)), buAdmin);
         assertThat(createTask.at("/code").asInt()).isZero();
         assertThat(createTask.at("/data/task/sourceDatasetId").asText()).isEqualTo(outputDatasetId);
+    }
+
+    @Test
+    void processingTaskListCreatesFromDatasetAndReturnsEditorEntryRows() throws Exception {
+        // TASK-visual-preprocess-operators-pipeline AC-02 AC-10: 加工任务列表 -> 选择数据集创建 -> 进入 Pipeline 编辑器
+        String buAdmin = login("buadmin", "CABIN");
+
+        JsonNode created = postJson("/api/v1/pipeline-processing-tasks", "trace-f017-processing-task-create", """
+            {"pipelineId":"PIPE-VIDEO-PREP","sourceDatasetId":"DATASET-WELD-VIDEO-001"}
+            """, buAdmin);
+        assertThat(created.at("/code").asInt()).isZero();
+        String runId = created.at("/data/run/runId").asText();
+        assertThat(created.at("/data/run/pipelineId").asText()).isEqualTo("PIPE-VIDEO-PREP");
+        assertThat(created.at("/data/preview/sourceDatasetId").asText()).isEqualTo("DATASET-WELD-VIDEO-001");
+
+        JsonNode list = getJson("/api/v1/pipeline-processing-tasks?keyword=焊缝视频", "trace-f017-processing-task-list", buAdmin);
+        assertThat(list.at("/code").asInt()).isZero();
+        assertThat(list.at("/data/items").toString()).contains(runId);
+        assertThat(list.at("/data/items").toString()).contains("焊缝视频抽帧预处理");
+        assertThat(list.at("/data/items").toString()).contains("焊缝视频巡检数据集");
     }
 
     @Test

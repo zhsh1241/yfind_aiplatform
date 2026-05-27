@@ -88,6 +88,28 @@ F017 在 F011 Pipeline 编辑器 / 算子广场与 F012 标注集成之间冻结
 - Permission: `data:pipeline:read`。
 - Response: `VisualPipelineRunDetailResponse`。
 
+#### `GET /api/v1/pipeline-processing-tasks`
+- Description: 查询 Pipeline 加工任务列表，用于 `/pipeline` 页面进入编辑器之前展示已有加工任务。
+- Permission: `data:pipeline:read`。
+- Query: `keyword?`, `status?`, `page?`, `pageSize?`。
+- Frozen behavior:
+  - 仅返回当前用户可见 BU 下的加工任务。
+  - 列表项必须包含 `taskId/runId`、Pipeline 模板、输入数据集、输出数据集、运行状态、结果处置状态和诊断信息。
+- Response: `PipelineProcessingTaskListResponse`。
+
+#### `POST /api/v1/pipeline-processing-tasks`
+- Description: 从任务列表创建一次加工任务；请求必须显式选择 Pipeline 模板与输入数据集，创建成功后前端进入 Pipeline 编辑器。
+- Permission: `data:pipeline:run`。
+- Audit: 复用 `PIPELINE_PREPROCESS_RUN_STARTED` / `PIPELINE_PREPROCESS_RUN_SUCCEEDED`。
+- Request:
+```json
+{
+  "pipelineId": "PIPE-VIDEO-PREP",
+  "sourceDatasetId": "DATASET-WELD-VIDEO-001"
+}
+```
+- Response: `VisualPipelineRunDetailResponse`。
+
 ### 2.3 结果预览 / 确认 / 激活
 
 #### `GET /api/v1/preprocessed-datasets/{datasetId}/preview`

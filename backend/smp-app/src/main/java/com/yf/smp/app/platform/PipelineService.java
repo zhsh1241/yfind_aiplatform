@@ -191,6 +191,34 @@ public class PipelineService {
         return jdbc.query("SELECT * FROM pipeline_run WHERE pipeline_id=? ORDER BY started_at DESC", (rs, n) -> runSummary(rs), pipelineId);
     }
 
+    public PipelineProcessingTaskListResponse processingTasks(PlatformPrincipal principal, String keyword, String status, int page, int pageSize) {
+        identityService.requirePermission(principal, "data:pipeline:read");
+        Map<String, PipelineSummaryResponse> summaries = new HashMap<>();
+        for (PipelineSummaryResponse summary : allPipelineSummaries()) {
+            summaries.put(summary.pipelineId(), summary);
+        }
+        List<PipelineProcessingTaskSummaryResponse> filtered = allProcessingTasks().stream()
+            .filter(item -> {
+                PipelineSummaryResponse summary = summaries.get(item.pipelineId());
+                return summary != null && canSeeTenant(principal, summary.tenantId());
+            })
+            .filter(item -> blank(status) || item.status().equalsIgnoreCase(status) || (item.resultDatasetStatus() != null && item.resultDatasetStatus().equalsIgnoreCase(status)))
+            .filter(item -> matches(item.taskId(), keyword) || matches(item.pipelineName(), keyword) || matches(item.sourceDatasetName(), keyword) || matches(item.sourceDatasetId(), keyword) || matches(item.outputDatasetId(), keyword))
+            .toList();
+        int normalizedPage = Math.max(1, page);
+        int normalizedPageSize = Math.max(1, Math.min(100, pageSize));
+        int from = Math.min((normalizedPage - 1) * normalizedPageSize, filtered.size());
+        int to = Math.min(from + normalizedPageSize, filtered.size());
+        return new PipelineProcessingTaskListResponse(filtered.subList(from, to), filtered.size(), normalizedPage, normalizedPageSize);
+    }
+
+    @Transactional(noRollbackFor = PlatformException.class)
+    public PipelineRunDetailResponse createProcessingTask(PlatformPrincipal principal, PipelineProcessingTaskCreateRequest request) {
+        String pipelineId = require(request.pipelineId(), "Pipeline 不能为空");
+        String sourceDatasetId = require(request.sourceDatasetId(), "加工任务必须选择数据集");
+        return runPipeline(principal, pipelineId, new PipelineRunRequest("MANUAL", sourceDatasetId));
+    }
+
     public PipelineRunDetailResponse runDetail(PlatformPrincipal principal, String runId) {
         identityService.requirePermission(principal, "data:pipeline:read");
         PipelineRunSummaryResponse run = runSummaryById(runId);
@@ -559,6 +587,38 @@ public class PipelineService {
             """, (rs, n) -> new PipelineSummaryResponse(rs.getString("pipeline_id"), rs.getString("name"), rs.getString("tenant_id"), rs.getString("project_id"), rs.getString("status"), rs.getString("current_version_id"), rs.getString("owner_id"), rs.getString("owner_name"), rs.getInt("node_count"), rs.getInt("run_count"), rs.getString("description"), rs.getString("template_code"), rs.getString("source_dataset_id"), rs.getString("source_version_id"), rs.getString("source_dataset_data_type"), rs.getObject("updated_at", OffsetDateTime.class)));
     }
 
+    private List<PipelineProcessingTaskSummaryResponse> allProcessingTasks() {
+        return jdbc.query("""
+            SELECT r.*, p.name AS pipeline_name, d.name AS source_dataset_name, d.current_version_id AS source_version_id
+            FROM pipeline_run r
+            JOIN pipeline_definition p ON p.pipeline_id=r.pipeline_id
+            LEFT JOIN dataset d ON d.dataset_id=r.sample_dataset_id
+            ORDER BY r.started_at DESC
+            """, (rs, n) -> {
+                PipelineRunSummaryResponse run = runSummary(rs);
+                return new PipelineProcessingTaskSummaryResponse(
+                    run.runId(),
+                    run.pipelineId(),
+                    rs.getString("pipeline_name"),
+                    rs.getString("sample_dataset_id"),
+                    rs.getString("source_dataset_name"),
+                    rs.getString("source_version_id"),
+                    run.outputDatasetId(),
+                    run.status(),
+                    run.resultDatasetStatus(),
+                    run.diagnosticCode(),
+                    run.diagnosticMessage(),
+                    run.durationMs(),
+                    run.totalCount(),
+                    run.successCount(),
+                    run.skippedCount(),
+                    run.failedCount(),
+                    run.startedAt(),
+                    run.endedAt()
+                );
+            });
+    }
+
     private PipelineSummaryResponse pipelineSummaryVisible(PlatformPrincipal principal, String pipelineId, boolean write) {
         List<PipelineSummaryResponse> rows = allPipelineSummaries().stream().filter(item -> item.pipelineId().equals(pipelineId)).toList();
         if (rows.isEmpty()) throw new PlatformException(PlatformError.NOT_FOUND, "Pipeline 不存在");
@@ -612,20 +672,21 @@ public class PipelineService {
     private OperatorSummaryResponse operatorSummary(java.sql.ResultSet rs) throws java.sql.SQLException {
         String operatorId = rs.getString("operator_id");
         boolean visual = isVisualOperator(operatorId);
+        boolean readDataset = "OP-READ-DATASET".equals(operatorId);
         return new OperatorSummaryResponse(
             operatorId,
             rs.getString("name"),
-            visual ? "VISUAL_PREPROCESS" : "GENERAL",
-            rs.getString("category"),
-            subCategory(operatorId),
-            operatorDataType(operatorId),
+            readDataset ? "COMMON" : blank(rs.getString("category_group"), visual ? "VISUAL_PREPROCESS" : "GENERAL"),
+            readDataset ? "DATA_INPUT" : rs.getString("category"),
+            blank(rs.getString("sub_category"), subCategory(operatorId)),
+            readDataset ? "ANY" : blank(rs.getString("data_type"), operatorDataType(operatorId)),
             rs.getString("stage"),
             rs.getString("kind"),
             rs.getString("status"),
-            visual,
-            enhancementMode(operatorId),
-            defaultOutputDatasetDataType(operatorId),
-            annotationRiskLevel(operatorId),
+            readDataset || rs.getBoolean("supports_preview") || visual,
+            blank(rs.getString("enhancement_mode"), enhancementMode(operatorId)),
+            readDataset ? "ANY" : blank(rs.getString("default_output_dataset_data_type"), defaultOutputDatasetDataType(operatorId)),
+            blank(rs.getString("annotation_risk_level"), annotationRiskLevel(operatorId)),
             rs.getString("description"),
             rs.getString("before_example"),
             rs.getString("after_example"),
@@ -724,6 +785,7 @@ public class PipelineService {
 
     private String subCategory(String operatorId) {
         return switch (blank(operatorId, "")) {
+            case "OP-READ-DATASET" -> "SOURCE";
             case "OP-IMG-WATERMARK" -> "WATERMARK";
             case "OP-IMG-ENHANCE" -> "QUALITY_ENHANCEMENT";
             case "OP-IMAGE-RESIZE", "OP-IMG-RESIZE" -> "RESIZE";
@@ -739,6 +801,9 @@ public class PipelineService {
     }
 
     private String operatorDataType(String operatorId) {
+        if ("OP-READ-DATASET".equals(operatorId)) {
+            return "ANY";
+        }
         return operatorId != null && operatorId.startsWith("OP-VIDEO-") ? "AUDIO_VIDEO" : "IMAGE";
     }
 
@@ -747,6 +812,9 @@ public class PipelineService {
     }
 
     private String defaultOutputDatasetDataType(String operatorId) {
+        if ("OP-READ-DATASET".equals(operatorId)) {
+            return "ANY";
+        }
         return isFrameExtractionOperator(operatorId) ? "IMAGE" : operatorDataType(operatorId);
     }
 

@@ -20,6 +20,16 @@ UPDATE operator_catalog SET
     annotation_risk_level='LOW'
 WHERE category_group IS NULL OR category_group='GENERAL';
 
+UPDATE operator_catalog SET
+    category_group='COMMON',
+    category='DATA_INPUT',
+    sub_category='SOURCE',
+    data_type='ANY',
+    supports_preview=TRUE,
+    default_output_dataset_data_type='ANY',
+    annotation_risk_level='LOW'
+WHERE operator_id='OP-READ-DATASET';
+
 INSERT INTO operator_catalog (operator_id, name, category_group, category, sub_category, data_type, stage, kind, tenant_id, description, parameter_schema_json, input_schema_json, output_schema_json, endpoint, credential_ref, timeout_seconds, concurrency_limit, status, version, before_example, after_example, usage_count, pipeline_count, error_rate, enhancement_mode, default_output_dataset_data_type, annotation_risk_level, created_by, created_at, updated_at, supports_preview)
 VALUES
     ('OP-IMG-WATERMARK', '图片加水印', 'VISUAL_PREPROCESS', '图片处理', 'WATERMARK', 'IMAGE', '预处理', 'BUILTIN', NULL, '添加预览水印或产物水印；进入标注链路默认关闭产物水印', '{"required":["previewWatermarkEnabled","artifactWatermarkEnabled"],"properties":{"previewWatermarkEnabled":{"type":"boolean","default":true},"artifactWatermarkEnabled":{"type":"boolean","default":false},"watermarkText":{"type":"string"},"position":{"type":"string","enum":["TOP_LEFT","TOP_RIGHT","BOTTOM_LEFT","BOTTOM_RIGHT","CENTER"]},"opacity":{"type":"number","minimum":0.1,"maximum":1.0}}}', '{"dataType":"IMAGE"}', '{"dataType":"IMAGE"}', NULL, NULL, NULL, NULL, 'PUBLISHED', '1.0.0', '原始工业图片', '预览叠加水印或产物写入水印', 126, 8, 0.01, NULL, 'IMAGE', 'MEDIUM', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, TRUE),

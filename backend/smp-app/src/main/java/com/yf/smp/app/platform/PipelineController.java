@@ -75,6 +75,22 @@ public class PipelineController {
         return PlatformResponses.ok(service.runPipeline(principal(authorization), pipelineId, request == null ? new PipelineRunRequest(null, null) : request));
     }
 
+    @GetMapping("/pipeline-processing-tasks")
+    ResponseEntity<ApiResponse<PipelineProcessingTaskListResponse>> processingTasks(
+        @RequestHeader(name = "Authorization", required = false) String authorization,
+        @RequestParam(required = false) String keyword,
+        @RequestParam(required = false) String status,
+        @RequestParam(defaultValue = "1") int page,
+        @RequestParam(defaultValue = "20") int pageSize
+    ) {
+        return PlatformResponses.ok(service.processingTasks(principal(authorization), keyword, status, page, pageSize));
+    }
+
+    @PostMapping("/pipeline-processing-tasks")
+    ResponseEntity<ApiResponse<PipelineRunDetailResponse>> createProcessingTask(@RequestHeader(name = "Authorization", required = false) String authorization, @RequestBody PipelineProcessingTaskCreateRequest request) {
+        return PlatformResponses.ok(service.createProcessingTask(principal(authorization), request));
+    }
+
     @GetMapping("/pipelines/{pipelineId}/runs")
     ResponseEntity<ApiResponse<List<PipelineRunSummaryResponse>>> runs(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String pipelineId) {
         return PlatformResponses.ok(service.runs(principal(authorization), pipelineId));

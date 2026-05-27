@@ -30,6 +30,7 @@
 | T-P0-08 | AC-08 | 预览水印与产物水印分离 | 配置图片加水印算子，开启预览水印，关闭产物水印，运行并查询详情/预览 | `previewWatermarkApplied=true`、`artifactWatermarkApplied=false`；预览可见防泄漏水印，但产物未被不可逆写入 |
 | T-P0-09 | AC-08 | 带不可逆产物水印的结果默认不可进入标注链路 | 配置 `artifactWatermarkEnabled=true` 运行成功并确认激活，查询标注来源或直接创建标注任务 | 结果集 `annotationEligible=false`，来源列表过滤或明确不可选；创建标注任务返回 409/422，审计记录阻断原因 |
 | T-P0-10 | AC-09 | 视频抽帧结果以图片型预处理数据集进入后续标注链路 | 使用 ACTIVE 视频数据集抽帧并激活结果，再创建图片型标注任务 | 结果数据集 `datasetType=PREPROCESSED`、`datasetDataType=IMAGE`，可被图片标注任务成功引用 |
+| T-P0-10A | AC-10 | 加工任务列表创建任务并进入 Pipeline 编辑器 | 打开 `/pipeline`，查看加工任务列表；点击“新建加工任务”，选择 Pipeline 模板与 ACTIVE 数据集并提交 | 列表展示已有加工任务；创建请求显式携带 `pipelineId/sourceDatasetId`；创建成功后自动进入 Pipeline 编辑器并展示运行详情 |
 | T-P0-11 | AC-02 AC-07 | 请求 AI 超分或未知增强模式被拒绝 | 提交图片质量提高 Pipeline/save request，传 `enhancementMode=AI_SUPER_RESOLUTION` 或未知值 | API 返回 422，消息指向一期仅支持传统增强，不落库/不启动运行 |
 | T-P0-12 | AC-03 AC-04 | DAT-005 已激活预处理版本不得原地修改 | 激活结果集后尝试修改该版本关联的处理参数/文件内容或复用原版本再次写入 | API 返回 409，拒绝修改已激活版本，要求重新运行生成新版本 |
 | T-P0-13 | AC-03 | DAT-007 缺少血缘或处理参数快照时拒绝激活 | 模拟结果集缺少 `sourceDatasetId`、`sourceVersionId`、operatorChain 或参数快照，再调用 activate | API 返回 422，提示血缘/参数不完整，不允许激活 |
@@ -65,10 +66,10 @@
 ## 5. Cross-cutting Verification
 
 - Frontend E2E:
-  - 覆盖 `/opmarket` 视觉算子筛选、`/pipeline` 创建/运行/结果预览/确认/激活、`/ann` 来源选择与阻断提示。
+  - 覆盖 `/opmarket` 视觉算子筛选、`/pipeline` 加工任务列表/选择数据集创建/进入编辑器/运行/结果预览/确认/激活、`/ann` 来源选择与阻断提示。
   - 至少包含：未激活不可选、确认后激活、激活后可选、产物水印阻断、视频抽帧进入图片标注。
 - Backend API / integration:
-  - 控制器/API 测试覆盖 `/api/v1/operators`、`/api/v1/pipelines`、`/api/v1/pipeline-runs/{runId}`、`/api/v1/preprocessed-datasets/{datasetId}/preview|confirm|activate`、`/api/v1/annotation/source-datasets`、`/api/v1/annotation/tasks`。
+  - 控制器/API 测试覆盖 `/api/v1/operators`、`/api/v1/pipelines`、`/api/v1/pipeline-processing-tasks`、`/api/v1/pipeline-runs/{runId}`、`/api/v1/preprocessed-datasets/{datasetId}/preview|confirm|activate`、`/api/v1/annotation/source-datasets`、`/api/v1/annotation/tasks`。
   - 集成测试断言 `dataset` / `dataset_version` / `data_lineage` / 审计表落库结果与状态流转。
 - Permission:
   - 覆盖 `data:operator:read`、`data:pipeline:read`、`data:pipeline:write`、`data:pipeline:run`、`data:dataset:publish`、`data:annotation:write`。
@@ -92,6 +93,7 @@
 - AC-07 -> T-P0-02, T-P0-11, T-P2-04
 - AC-08 -> T-P0-08, T-P0-09, T-P0-15, T-P1-06, T-P1-09, T-P2-05
 - AC-09 -> T-P0-03, T-P0-10, T-P1-07, T-P2-02
+- AC-10 -> T-P0-10A
 
 ## 7. Required commands
 

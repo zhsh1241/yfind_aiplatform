@@ -16,8 +16,6 @@ import {
   type DatasetAnnotationTask,
   type DataSourceSummary,
   type DataSourceSyncTask,
-  type DataStandardProfile,
-  type DataStandardTask,
   type DatasetDetail,
   type DatasetSummary,
   type DatasetUploadSession,
@@ -28,6 +26,7 @@ import {
   type PipelineDetail,
   type PipelineEdge,
   type PipelineNode,
+  type PipelineProcessingTaskSummary,
   type PipelineRunDetail,
   type PipelineSaveInput,
   type PipelineVariable,
@@ -45,7 +44,7 @@ const processingRunStatusText = (status?: string | null) => ({
   PENDING: '待运行',
 } as Record<string, string>)[status ?? ''] ?? status ?? '-';
 const fmtSize = (n?: number | null) => !n ? '0 B' : n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : n > 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${n} B`;
-const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', VIDEO: '视频', AUDIO_VIDEO: '视频', TEXT: '文本', TABULAR: '表格', EVENT: '事件', TIME_SERIES: '时序库', TELEMETRY: '遥测', FILE: '文件', OBJECT: '对象', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', RTSP_STREAM: 'RTSP视频流', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '外部接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件', VISUAL_PREPROCESS: '视觉预处理', IMAGE_PROCESSING: '图片处理', VIDEO_PROCESSING: '视频处理', QUALITY_ENHANCEMENT: '质量增强', WATERMARK: '水印', FRAME_EXTRACTION: '抽帧', TRADITIONAL_ONLY: '传统增强', CONFIRMED: '已确认', PENDING_CONFIRMATION: '待确认', READY: '就绪' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
+const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', VIDEO: '视频', AUDIO_VIDEO: '视频', ANY: '任意类型', TEXT: '文本', TABULAR: '表格', EVENT: '事件', TIME_SERIES: '时序库', TELEMETRY: '遥测', FILE: '文件', OBJECT: '对象', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', RTSP_STREAM: 'RTSP视频流', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '外部接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件', COMMON: '通用算子', GENERAL: '通用算子', DATA_INPUT: '数据输入', SOURCE: '数据源', VISUAL_PREPROCESS: '视觉预处理', IMAGE_PROCESSING: '图片处理', VIDEO_PROCESSING: '视频处理', QUALITY_ENHANCEMENT: '质量增强', WATERMARK: '水印', FRAME_EXTRACTION: '抽帧', TRADITIONAL_ONLY: '传统增强', CONFIRMED: '已确认', PENDING_CONFIRMATION: '待确认', READY: '就绪' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
 const localFileRowKey = (file: File) => `${(file as File & { webkitRelativePath?: string }).webkitRelativePath ?? file.name}-${file.size}-${file.lastModified}`;
 const localFileRelativePath = (file: File) => (file as File & { webkitRelativePath?: string }).webkitRelativePath ?? '';
 const LOCAL_UPLOAD_BATCH_MAX_FILES = 10;
@@ -132,24 +131,35 @@ const stringifyObjectConfig = (value: Record<string, unknown>) => JSON.stringify
 const stableJson = (value: unknown) => JSON.stringify(value);
 const fmtDateTime = (value?: string | null) => value ? value.replace('T', ' ').replace('Z', '') : '-';
 
-const toSaveInput = (detail: PipelineDetail, nodes: PipelineNode[], edges: PipelineEdge[], variables: PipelineVariable[]): PipelineSaveInput => ({
-  name: detail.pipeline.name,
-  tenantId: detail.pipeline.tenantId,
-  projectId: detail.pipeline.projectId,
-  description: detail.pipeline.description,
-  templateCode: detail.pipeline.templateCode,
-  sourceDatasetId: detail.pipeline.sourceDatasetId,
-  sourceVersionId: detail.pipeline.sourceVersionId,
-  resultDatasetConfig: {
-    datasetName: `${detail.pipeline.name} 输出`,
-    datasetType: 'PREPROCESSED',
-    datasetDataType: detail.pipeline.sourceDatasetDataType === 'AUDIO_VIDEO' ? 'IMAGE' : 'IMAGE',
-    autoActivate: false,
-  },
-  nodes,
-  edges,
-  variables,
-});
+const readDatasetConfigFromNodes = (nodes: PipelineNode[]) => {
+  const readNode = nodes.find((item) => item.operatorId === 'OP-READ-DATASET');
+  const config = parseObjectConfig(readNode?.configJson);
+  const datasetId = typeof config?.datasetId === 'string' && config.datasetId ? config.datasetId : undefined;
+  const versionId = typeof config?.versionId === 'string' && config.versionId ? config.versionId : undefined;
+  return { datasetId, versionId };
+};
+
+const toSaveInput = (detail: PipelineDetail, nodes: PipelineNode[], edges: PipelineEdge[], variables: PipelineVariable[]): PipelineSaveInput => {
+  const readConfig = readDatasetConfigFromNodes(nodes);
+  return {
+    name: detail.pipeline.name,
+    tenantId: detail.pipeline.tenantId,
+    projectId: detail.pipeline.projectId,
+    description: detail.pipeline.description,
+    templateCode: detail.pipeline.templateCode,
+    sourceDatasetId: readConfig.datasetId ?? detail.pipeline.sourceDatasetId,
+    sourceVersionId: readConfig.versionId ?? detail.pipeline.sourceVersionId,
+    resultDatasetConfig: {
+      datasetName: `${detail.pipeline.name} 输出`,
+      datasetType: 'PREPROCESSED',
+      datasetDataType: detail.pipeline.sourceDatasetDataType === 'AUDIO_VIDEO' ? 'IMAGE' : 'IMAGE',
+      autoActivate: false,
+    },
+    nodes,
+    edges,
+    variables,
+  };
+};
 
 const annStatusText = (status?: string) => ({
   DRAFT: '草稿',
@@ -304,10 +314,58 @@ const annotationSourceLabel = (item: AnnotationSourceDataset) => [
   `· ${datasetStatusText(item.status)}`,
 ].join('');
 
+
+const normalizeOperatorForDisplay = (operator: OperatorSummary): OperatorSummary => operator.operatorId === 'OP-READ-DATASET'
+  ? { ...operator, categoryGroup: 'COMMON', category: 'DATA_INPUT', subCategory: 'SOURCE', dataType: 'ANY', supportsPreview: true, defaultOutputDatasetDataType: operator.defaultOutputDatasetDataType ?? 'ANY' }
+  : operator;
+
+const uniqueOperators = (items: OperatorSummary[]) => Array.from(new Map(items.map((item) => [item.operatorId, normalizeOperatorForDisplay(item)])).values());
+
+const operatorMatchesKeyword = (operator: OperatorSummary, keyword: string) => {
+  const normalized = keyword.trim().toLowerCase();
+  if (!normalized) return true;
+  return [operator.name, operator.description, operator.category, operator.subCategory, operator.operatorId]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(normalized));
+};
+
+
+function OperatorDetailView({ detail, onApprove, loading }: { detail?: OperatorDetail; onApprove: (operatorId: string) => void; loading: boolean }) {
+  if (!detail) return <Alert type="info" showIcon title="请选择算子" description="点击算子卡片后查看参数、输入输出、审核与冻结默认值。" />;
+  const op = normalizeOperatorForDisplay(detail.operator);
+  return (
+    <Space direction="vertical" className="full-width">
+      <Descriptions size="small" bordered column={1}>
+        <Descriptions.Item label="算子ID"><Typography.Text copyable>{op.operatorId}</Typography.Text></Descriptions.Item>
+        <Descriptions.Item label="分类">{visualOperatorLabel(op)}</Descriptions.Item>
+        <Descriptions.Item label="数据类型">{txt(op.dataType)}</Descriptions.Item>
+        <Descriptions.Item label="状态"><Tag color={color(op.status)}>{op.status}</Tag></Descriptions.Item>
+        <Descriptions.Item label="说明">{op.description ?? '-'}</Descriptions.Item>
+      </Descriptions>
+      {detail.annotationRiskNotice ? <Alert type="warning" showIcon title="标注风险提示" description={detail.annotationRiskNotice} /> : null}
+      {detail.frozenDefaults ? (
+        <Descriptions size="small" bordered column={1} title="冻结默认值">
+          <Descriptions.Item label="预览水印">{String(detail.frozenDefaults.previewWatermarkEnabled ?? '-')}</Descriptions.Item>
+          <Descriptions.Item label="产物水印">{String(detail.frozenDefaults.artifactWatermarkEnabled ?? '-')}</Descriptions.Item>
+          <Descriptions.Item label="产物水印可标注">{String(detail.frozenDefaults.annotationEligibleWhenArtifactWatermarked ?? '-')}</Descriptions.Item>
+        </Descriptions>
+      ) : null}
+      <Typography.Text strong>参数 JSON Schema</Typography.Text>
+      <Input.TextArea rows={6} value={safeJson(detail.parameterSchemaJson)} readOnly />
+      <Typography.Text strong>输入 / 输出 Schema</Typography.Text>
+      <Input.TextArea rows={5} value={`输入:\n${safeJson(detail.inputSchemaJson)}\n\n输出:\n${safeJson(detail.outputSchemaJson)}`} readOnly />
+      <Space>
+        <Button type="primary" onClick={() => onApprove(op.operatorId)} loading={loading} disabled={op.status === 'PUBLISHED'}>审核通过</Button>
+        <Tag>评审记录 {detail.reviews.length}</Tag>
+      </Space>
+    </Space>
+  );
+}
+
 const defaultPipelineNodeConfig = (operator: OperatorSummary, detail: PipelineDetail) => {
   switch (operator.operatorId) {
     case 'OP-READ-DATASET':
-      return JSON.stringify({ datasetId: detail.pipeline.sourceDatasetId ?? 'DATASET-WELD-DEFECT' });
+      return JSON.stringify({ datasetId: detail.pipeline.sourceDatasetId ?? 'DATASET-WELD-DEFECT', versionId: detail.pipeline.sourceVersionId ?? undefined });
     case 'OP-IMG-WATERMARK':
       return JSON.stringify({
         previewWatermarkEnabled: true,
@@ -352,10 +410,16 @@ function PipelineNodeConfigForm({
   node,
   operator,
   onChange,
+  datasetOptions = [],
+  readDatasetVersions = [],
+  readDatasetVersionsLoading = false,
 }: {
   node?: PipelineNode;
   operator?: Pick<OperatorSummary, 'operatorId' | 'name' | 'enhancementMode' | 'defaultOutputDatasetDataType' | 'annotationRiskLevel'> | null;
   onChange: (configJson: string) => void;
+  datasetOptions?: { value: string; label: string; dataset: DatasetSummary }[];
+  readDatasetVersions?: DatasetVersion[];
+  readDatasetVersionsLoading?: boolean;
 }) {
   const config = useMemo(() => parseObjectConfig(node?.configJson), [node?.configJson]);
   const operatorId = operator?.operatorId ?? node?.operatorId;
@@ -381,14 +445,58 @@ function PipelineNodeConfigForm({
   );
 
   switch (operatorId) {
-    case 'OP-READ-DATASET':
+    case 'OP-READ-DATASET': {
+      const selectedDatasetId = typeof config.datasetId === 'string' ? config.datasetId : undefined;
+      const selectedDataset = datasetOptions.find((item) => item.value === selectedDatasetId)?.dataset;
+      const versionOptions = readDatasetVersions.length > 0
+        ? readDatasetVersions.map((version) => ({ value: version.versionId, label: `${version.versionName} · ${version.versionId} · ${txt(version.status)}${version.isCurrent ? ' · 当前' : ''}` }))
+        : selectedDataset?.currentVersionId
+          ? [{ value: selectedDataset.currentVersionId, label: `${selectedDataset.currentVersionName ?? '当前版本'} · ${selectedDataset.currentVersionId}` }]
+          : [];
+      const selectDataset = (datasetId: string) => {
+        const dataset = datasetOptions.find((item) => item.value === datasetId)?.dataset;
+        onChange(stringifyObjectConfig({
+          ...config,
+          datasetId,
+          versionId: dataset?.currentVersionId ?? undefined,
+        }));
+      };
       return (
         <Form layout="vertical">
-          <Form.Item label="源数据集ID">
-            <Input value={String(config.datasetId ?? '')} onChange={(event) => updateField('datasetId', event.target.value)} />
+          <Form.Item label="输入数据集">
+            <Select
+              aria-label="读取数据集算子输入数据集"
+              showSearch
+              optionFilterProp="label"
+              placeholder="选择原始或预处理导出的数据集"
+              value={selectedDatasetId}
+              onChange={selectDataset}
+              options={datasetOptions.map(({ value, label }) => ({ value, label }))}
+            />
           </Form.Item>
+          <Form.Item label="数据集版本">
+            <Select
+              aria-label="读取数据集算子数据集版本"
+              showSearch
+              optionFilterProp="label"
+              loading={readDatasetVersionsLoading}
+              placeholder="请选择数据集版本"
+              value={typeof config.versionId === 'string' ? config.versionId : selectedDataset?.currentVersionId ?? undefined}
+              onChange={(value) => updateField('versionId', value)}
+              options={versionOptions}
+            />
+          </Form.Item>
+          {selectedDataset ? (
+            <Alert
+              type="info"
+              showIcon
+              message="已选择数据源"
+              description={`${selectedDataset.name} · ${txt(selectedDataset.datasetType)} / ${txt(selectedDataset.dataType)} · ${datasetStatusText(selectedDataset.status)}`}
+            />
+          ) : null}
         </Form>
       );
+    }
     case 'OP-IMG-WATERMARK':
       return (
         <Space direction="vertical" className="full-width">
@@ -2013,7 +2121,9 @@ export function AnnotationReviewPage() {
 export function DataPipelineStandardPage() {
   const qc = useQueryClient();
   const [msg, holder] = message.useMessage();
-  const [selectedPipelineId, setSelectedPipelineId] = useState<string>();
+  const navigate = useNavigate();
+  const loc = useLocation() as { state?: { pipelineId?: string; openRunTask?: boolean } };
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string | undefined>(loc.state?.pipelineId);
   const [selectedPipelineDatasetId, setSelectedPipelineDatasetId] = useState<string>();
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
   const [draftNodes, setDraftNodes] = useState<PipelineNode[]>();
@@ -2021,15 +2131,20 @@ export function DataPipelineStandardPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const [operatorKeyword, setOperatorKeyword] = useState('');
-  const [selectedDatasetId, setSelectedDatasetId] = useState<string>();
+  const [configOpen, setConfigOpen] = useState(false);
   const [latestRun, setLatestRun] = useState<PipelineRunDetail | null>(null);
+  const [editorOpen, setEditorOpen] = useState(Boolean(loc.state?.pipelineId));
+  const [createOpen, setCreateOpen] = useState(Boolean(loc.state?.openRunTask));
+  const [createTaskForm] = Form.useForm<{ pipelineId: string; sourceDatasetId: string }>();
   const pipelines = useQuery({ queryKey: ['pipelines'], queryFn: () => dataApi.pipelines() });
   const pipelineId = selectedPipelineId ?? pipelines.data?.items[0]?.pipelineId;
   const pipeline = useQuery({ queryKey: ['pipeline-detail', pipelineId], queryFn: () => dataApi.pipelineDetail(pipelineId!), enabled: Boolean(pipelineId) });
-  const operators = useQuery({ queryKey: ['operators', operatorKeyword], queryFn: () => dataApi.operators({ keyword: operatorKeyword, categoryGroup: 'VISUAL_PREPROCESS', supportsPreview: true }) });
-  const pipelineDatasets = useQuery({ queryKey: ['pipeline-source-datasets'], queryFn: () => dataApi.datasets({ status: 'ACTIVE', pageSize: 100 }) });
-  const overview = useQuery({ queryKey: ['data-standard-overview'], queryFn: dataApi.dataStandardOverview });
-  const profile = useQuery({ queryKey: ['data-standard-profile', selectedDatasetId], queryFn: () => dataApi.dataStandardProfile(selectedDatasetId!), enabled: Boolean(selectedDatasetId) });
+  const commonOperators = useQuery({ queryKey: ['operators', 'COMMON', operatorKeyword], queryFn: () => dataApi.operators({ keyword: operatorKeyword, categoryGroup: 'COMMON', supportsPreview: true }) });
+  const legacyCommonOperators = useQuery({ queryKey: ['operators', 'GENERAL', operatorKeyword], queryFn: () => dataApi.operators({ keyword: operatorKeyword, categoryGroup: 'GENERAL' }) });
+  const readDatasetOperators = useQuery({ queryKey: ['operators', 'READ_DATASET', operatorKeyword], queryFn: () => dataApi.operators({ keyword: operatorKeyword || '读取', category: '数据输入' }) });
+  const visualOperators = useQuery({ queryKey: ['operators', 'VISUAL_PREPROCESS', operatorKeyword], queryFn: () => dataApi.operators({ keyword: operatorKeyword, categoryGroup: 'VISUAL_PREPROCESS', supportsPreview: true }) });
+  const pipelineDatasets = useQuery({ queryKey: ['pipeline-source-datasets'], queryFn: () => dataApi.datasets({ pageSize: 100 }) });
+  const processingTasks = useQuery({ queryKey: ['pipeline-processing-tasks'], queryFn: () => dataApi.pipelineProcessingTasks({ pageSize: 100 }) });
   const nodes = draftNodes ?? pipeline.data?.nodes ?? [];
   const edges = draftEdges ?? pipeline.data?.edges ?? [];
   const variables = useMemo(
@@ -2037,7 +2152,13 @@ export function DataPipelineStandardPage() {
     [pipeline.data?.variables],
   );
   const selectedNode = nodes.find((item) => item.nodeId === selectedNodeId) ?? nodes[0];
-  const selectedOperator = operators.data?.items.find((item) => item.operatorId === selectedNode?.operatorId);
+  const operatorCatalogItems = useMemo(() => uniqueOperators([
+    ...(commonOperators.data?.items ?? []),
+    ...(legacyCommonOperators.data?.items ?? []).filter((item) => item.operatorId === 'OP-READ-DATASET'),
+    ...(readDatasetOperators.data?.items ?? []).filter((item) => item.operatorId === 'OP-READ-DATASET'),
+    ...(visualOperators.data?.items ?? []),
+  ]), [commonOperators.data?.items, legacyCommonOperators.data?.items, readDatasetOperators.data?.items, visualOperators.data?.items]);
+  const selectedOperator = operatorCatalogItems.find((item) => item.operatorId === selectedNode?.operatorId);
   const validationIssues = pipeline.data?.validation.errors ?? [];
   const validationWarnings = pipeline.data?.validation.warnings ?? [];
   const selectedNodeIndex = selectedNode ? nodes.findIndex((item) => item.nodeId === selectedNode.nodeId) : -1;
@@ -2047,10 +2168,10 @@ export function DataPipelineStandardPage() {
   );
   const selectablePipelineDatasets = useMemo(
     () => (pipelineDatasets.data?.items ?? [])
-      .filter((item) => item.status === 'ACTIVE' && item.currentVersionId && ['IMAGE', 'AUDIO_VIDEO', 'VIDEO'].includes(item.dataType))
+      .filter((item) => ['ACTIVE', 'CONFIRMED', 'PENDING_CONFIRMATION'].includes(item.status) && item.currentVersionId && ['IMAGE', 'AUDIO_VIDEO', 'VIDEO'].includes(item.dataType))
       .map((item) => ({
         value: item.datasetId,
-        label: `${item.name} · ${txt(item.dataType)} · ${item.datasetId}`,
+        label: `${item.name} · ${txt(item.datasetType)} · ${txt(item.dataType)} · ${datasetStatusText(item.status)} · ${item.currentVersionName ?? item.currentVersionId} · ${item.datasetId}`,
         dataset: item,
       })),
     [pipelineDatasets.data?.items],
@@ -2061,6 +2182,13 @@ export function DataPipelineStandardPage() {
   const runRecords = latestRun?.run && latestRun.run.pipelineId === pipelineId && !persistedRunRecords.some((item) => item.runId === latestRun.run.runId)
     ? [latestRun.run, ...persistedRunRecords]
     : persistedRunRecords;
+  useEffect(() => {
+    if (!createOpen) return;
+    createTaskForm.setFieldsValue({
+      pipelineId: selectedPipelineId ?? pipelines.data?.items[0]?.pipelineId,
+      sourceDatasetId: selectablePipelineDatasets[0]?.value,
+    });
+  }, [createOpen, createTaskForm, pipelines.data?.items, selectablePipelineDatasets, selectedPipelineId]);
   const savePipeline = useMutation({
     mutationFn: () => dataApi.updatePipeline(pipelineId!, toSaveInput(pipeline.data!, nodes, edges, variables)),
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] }); msg.success('Pipeline 算子组合模板已保存并通过校验'); },
@@ -2080,11 +2208,29 @@ export function DataPipelineStandardPage() {
     mutationFn: () => dataApi.runPipeline(pipelineId!, { triggerMode: 'MANUAL', sampleDatasetId: effectivePipelineDatasetId ?? undefined }),
     onSuccess: async (result) => {
       await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+      await qc.invalidateQueries({ queryKey: ['pipeline-processing-tasks'] });
       await qc.invalidateQueries({ queryKey: ['datasets'] });
       await qc.invalidateQueries({ queryKey: ['annotation-source-datasets'] });
       setLatestRun(result);
       setRunOpen(true);
       msg.success('加工任务运行完成，已生成一条加工记录和待确认预处理数据集。');
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const createProcessingTask = useMutation({
+    mutationFn: (values: { pipelineId: string; sourceDatasetId: string }) => dataApi.createPipelineProcessingTask(values),
+    onSuccess: async (result, values) => {
+      setSelectedPipelineId(values.pipelineId);
+      setSelectedPipelineDatasetId(values.sourceDatasetId);
+      setLatestRun(result);
+      setCreateOpen(false);
+      setEditorOpen(true);
+      setRunOpen(true);
+      await qc.invalidateQueries({ queryKey: ['pipelines'] });
+      await qc.invalidateQueries({ queryKey: ['pipeline-detail', values.pipelineId] });
+      await qc.invalidateQueries({ queryKey: ['pipeline-processing-tasks'] });
+      await qc.invalidateQueries({ queryKey: ['datasets'] });
+      msg.success('加工任务已创建，已进入 Pipeline 编辑器查看运行结果。');
     },
     onError: (e: Error) => msg.error(e.message),
   });
@@ -2113,20 +2259,47 @@ export function DataPipelineStandardPage() {
     },
     onError: (e: Error) => msg.error(e.message),
   });
-  const createTask = useMutation({
-    mutationFn: (datasetId: string) => dataApi.createDataStandardTask({ datasetId, name: `${profile.data?.datasetName ?? '数据集'} 自动标准化`, standardProfile: undefined }),
-    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['data-standard-overview'] }); msg.success('标准化任务已创建'); },
-    onError: (e: Error) => msg.error(e.message),
+  const selectedNodeConfig = parseObjectConfig(selectedNode?.configJson);
+  const selectedReadDatasetId = selectedNode?.operatorId === 'OP-READ-DATASET' && typeof selectedNodeConfig?.datasetId === 'string' ? selectedNodeConfig.datasetId : undefined;
+  const selectedReadDatasetDetail = useQuery({
+    queryKey: ['pipeline-read-dataset-detail', selectedReadDatasetId],
+    queryFn: () => dataApi.datasetDetail(selectedReadDatasetId!),
+    enabled: Boolean(selectedReadDatasetId),
   });
-  const runTask = useMutation({
-    mutationFn: dataApi.runDataStandardTask,
-    onSuccess: async (r) => { await qc.invalidateQueries({ queryKey: ['data-standard-overview'] }); await qc.invalidateQueries({ queryKey: ['datasets'] }); msg.success(`标准化完成，输出数据集 ${r.outputDatasetId}`); },
-    onError: (e: Error) => msg.error(e.message),
-  });
-  const profiles = overview.data?.profiles ?? [];
-  const tasks = overview.data?.tasks ?? [];
-  const selected = profile.data ?? profiles.find((i) => i.datasetId === selectedDatasetId) ?? profiles[0];
-  const marketplaceOperators = operators.data?.items ?? [];
+  const marketplaceOperators = operatorCatalogItems;
+  const operatorGroups = useMemo(() => [
+    { key: 'COMMON', title: '通用算子', items: marketplaceOperators.filter((op) => ['COMMON', 'GENERAL'].includes(op.categoryGroup ?? '')) },
+    { key: 'VISUAL_PREPROCESS', title: '视觉预处理算子', items: marketplaceOperators.filter((op) => op.categoryGroup === 'VISUAL_PREPROCESS') },
+  ].filter((group) => group.items.length > 0), [marketplaceOperators]);
+  const renderOperatorCards = (items: OperatorSummary[]) => (
+    <Space direction="vertical" className="full-width">
+      {items.map((op) => (
+        <Card key={op.operatorId} size="small" className="operator-chip" onClick={() => addNode(op)}>
+          <Space direction="vertical" size={2}>
+            <Space wrap>
+              <Tag color={op.categoryGroup === 'COMMON' ? 'cyan' : op.kind === 'BUILTIN' ? 'blue' : 'purple'}>{txt(op.categoryGroup)}</Tag>
+              <Tag>{txt(op.category)}</Tag>
+              {op.dataType ? <Tag color="geekblue">{txt(op.dataType)}</Tag> : null}
+              {op.supportsPreview ? <Tag color="green">支持预览</Tag> : null}
+              <b>{op.name}</b>
+            </Space>
+            <Typography.Text type="secondary">{op.description}</Typography.Text>
+            <Typography.Text type="secondary">{visualOperatorLabel(op)}{op.enhancementMode ? ` · ${txt(op.enhancementMode)}` : ''}</Typography.Text>
+          </Space>
+        </Card>
+      ))}
+    </Space>
+  );
+  const operatorTabItems = operatorGroups.map((group) => ({
+    key: group.key,
+    label: `${group.title}（${group.items.length}）`,
+    children: renderOperatorCards(group.items.slice(0, group.key === 'COMMON' ? 4 : 8)),
+  }));
+  const operatorDrawerTabItems = operatorGroups.map((group) => ({
+    key: group.key,
+    label: `${group.title}（${group.items.length}）`,
+    children: <div className="operator-market-grid">{group.items.map((op) => <Card key={op.operatorId} hoverable onClick={() => addNode(op)}><Space direction="vertical"><Space wrap><Tag color={op.categoryGroup === 'COMMON' ? 'cyan' : undefined}>{txt(op.categoryGroup)}</Tag><Tag>{txt(op.category)}</Tag>{op.dataType ? <Tag color="geekblue">{txt(op.dataType)}</Tag> : null}{op.supportsPreview ? <Tag color="green">支持预览</Tag> : null}</Space><Typography.Title level={5}>{op.name}</Typography.Title><Typography.Text type="secondary">{op.description}</Typography.Text><Typography.Text type="secondary">{visualOperatorLabel(op)}{op.defaultOutputDatasetDataType ? ` · 输出 ${txt(op.defaultOutputDatasetDataType)}` : ''}</Typography.Text><div><Tag color="blue">调用 {op.usageCount}</Tag><Tag color="orange">Pipeline {op.pipelineCount}</Tag></div></Space></Card>)}</div>,
+  }));
   const previewDatasetId = latestRun?.run.outputDatasetId ?? pipeline.data?.runs[0]?.outputDatasetId ?? null;
   const activation = latestRun?.activation;
   const previewProcessParams = parseObjectConfig(latestRun?.preview?.processParamsJson);
@@ -2168,6 +2341,10 @@ export function DataPipelineStandardPage() {
   };
   const updateSelectedNodeConfig = (configJson: string) => {
     setNodes((items) => items.map((item) => item.nodeId === selectedNode?.nodeId ? { ...item, configJson } : item));
+  };
+  const selectNodeForConfig = (nodeId: string) => {
+    setSelectedNodeId(nodeId);
+    setConfigOpen(true);
   };
   const deleteNodeById = (nodeId: string) => {
     const targetNode = nodes.find((item) => item.nodeId === nodeId);
@@ -2214,15 +2391,16 @@ export function DataPipelineStandardPage() {
     setSelectedNodeId(firstIssueNodeId);
     msg.warning('已定位到首个校验问题节点。');
   };
-  const standardOperators = [
-    ['数据校验', '验证 Schema 合法性、范围约束、类型一致性'],
-    ['空值填充', '按字段标准处理缺失值'],
-    ['去重', '基于样本哈希和业务主键去除重复'],
-    ['异常过滤', '按标准范围过滤离群值'],
-    ['归一化', '统一单位、时间和数值尺度'],
-    ['格式转换', 'COCO/YOLO/CSV/JSONL 等格式标准化'],
-  ];
-  if (pipeline.data && pipelineId) return (
+  const openEditorForTask = (task: PipelineProcessingTaskSummary) => {
+    setSelectedPipelineId(task.pipelineId);
+    setSelectedPipelineDatasetId(task.sourceDatasetId ?? undefined);
+    setSelectedNodeId(undefined);
+    setDraftNodes(undefined);
+    setDraftEdges(undefined);
+    setEditorOpen(true);
+    navigate('/pipeline', { replace: true, state: { pipelineId: task.pipelineId } });
+  };
+  if (pipeline.data && pipelineId && editorOpen) return (
     <div className="content-page pipeline-editor-page">
       {holder}
       <div className="page-hero">
@@ -2242,13 +2420,16 @@ export function DataPipelineStandardPage() {
               setSelectedPipelineDatasetId(undefined);
               setLatestRun(null);
               setRunOpen(false);
+              setConfigOpen(false);
             }}
             options={(pipelines.data?.items ?? []).map((item) => ({ value: item.pipelineId, label: item.name }))}
           />
           <Button onClick={() => setAddOpen(true)}>＋ 添加算子</Button>
           <Button onClick={() => saveVersion.mutate()} loading={saveVersion.isPending}>保存快照</Button>
           <Button type={hasDraftChanges ? 'primary' : 'default'} onClick={() => savePipeline.mutate()} loading={savePipeline.isPending}>💾 保存模板</Button>
-          <Button type="primary" onClick={() => runPipeline.mutate()} loading={runPipeline.isPending} disabled={!effectivePipelineDatasetId || !pipeline.data.validation.valid || nodes.length === 0}>＋ 新建加工任务</Button>
+          <Button onClick={() => setEditorOpen(false)}>返回加工任务列表</Button>
+          <Button type="primary" onClick={() => setCreateOpen(true)}>＋ 新建加工任务</Button>
+          <Button onClick={() => runPipeline.mutate()} loading={runPipeline.isPending} disabled={!effectivePipelineDatasetId || !pipeline.data.validation.valid || nodes.length === 0}>运行当前数据集</Button>
         </Space>
       </div>
       <Card
@@ -2304,7 +2485,7 @@ export function DataPipelineStandardPage() {
       </div>
       <div className="pipeline-grid">
         <Card title={<Space><span>DAG 画布</span><Tag color={pipeline.data.validation.valid ? 'green' : 'red'}>{pipeline.data.validation.diagnosticCode}</Tag></Space>} className="pipeline-canvas-card">
-          <PipelineCanvas nodes={nodes} edges={edges} selectedNodeId={selectedNode?.nodeId} onSelect={setSelectedNodeId} onMove={moveNode} onDelete={deleteNodeById} />
+          <PipelineCanvas nodes={nodes} edges={edges} selectedNodeId={selectedNode?.nodeId} onSelect={selectNodeForConfig} onMove={moveNode} onDelete={deleteNodeById} />
           <Typography.Text type="secondary">拖拽节点可重新排序 · 从左侧算子库拖入可添加新节点 · 当前节点 {nodes.length} 个</Typography.Text>
           <div className="pipeline-validation-panel">
             {validationIssues.length > 0 ? (
@@ -2327,44 +2508,21 @@ export function DataPipelineStandardPage() {
         <div className="pipeline-sidebar">
           <Card title="算子库" className="operator-library">
             <Input.Search placeholder="搜索算子名称、类型或功能描述…" value={operatorKeyword} onChange={(event) => setOperatorKeyword(event.target.value)} style={{ marginBottom: 12 }} />
-            <Space direction="vertical" className="full-width">
-              {marketplaceOperators.slice(0, 8).map((op) => (
-                <Card key={op.operatorId} size="small" className="operator-chip" onClick={() => addNode(op)}>
-                  <Space direction="vertical" size={2}>
-                    <Space>
-                      <Tag color={op.kind === 'BUILTIN' ? 'blue' : 'purple'}>{txt(op.category)}</Tag>
-                      {op.dataType ? <Tag color="geekblue">{txt(op.dataType)}</Tag> : null}
-                      {op.supportsPreview ? <Tag color="green">支持预览</Tag> : null}
-                      <b>{op.name}</b>
-                    </Space>
-                    <Typography.Text type="secondary">{op.description}</Typography.Text>
-                    <Typography.Text type="secondary">{visualOperatorLabel(op)}{op.enhancementMode ? ` · ${txt(op.enhancementMode)}` : ''}</Typography.Text>
-                  </Space>
-                </Card>
-              ))}
-            </Space>
+            <Tabs size="small" items={operatorTabItems} />
           </Card>
-          <Card title={`⚙ ${selectedNode?.label ?? '算子配置'}`} className="node-config-card">
+          <Card title="当前选中节点" className="node-config-card">
             <Space direction="vertical" className="full-width">
               <Descriptions size="small" column={1} bordered>
-                <Descriptions.Item label="算子">{selectedOperator?.name ?? selectedNode?.operatorName}</Descriptions.Item>
-                <Descriptions.Item label="阶段">{selectedOperator?.stage ?? '-'}</Descriptions.Item>
-                <Descriptions.Item label="处理类目">{selectedOperator ? visualOperatorLabel(selectedOperator) : '-'}</Descriptions.Item>
+                <Descriptions.Item label="节点">{selectedNode?.label ?? '未选择'}</Descriptions.Item>
+                <Descriptions.Item label="算子">{selectedOperator?.name ?? selectedNode?.operatorName ?? '-'}</Descriptions.Item>
                 <Descriptions.Item label="状态"><Tag color={color(selectedNode?.status)}>{selectedNode?.status ?? 'READY'}</Tag></Descriptions.Item>
               </Descriptions>
+              <Alert type="info" showIcon message="点击画布节点后从右侧抽屉配置参数" description="结构化参数、原始 JSON、恢复默认、格式化和删除操作已统一收敛到右侧配置抽屉。" />
+              <Button type="primary" onClick={() => setConfigOpen(true)} disabled={!selectedNode}>配置算子参数</Button>
               <Space wrap className="pipeline-node-toolbar">
                 <Button size="small" onClick={() => selectAdjacentNode(-1)} disabled={selectedNodeIndex <= 0}>上一节点</Button>
                 <Button size="small" onClick={() => selectAdjacentNode(1)} disabled={selectedNodeIndex < 0 || selectedNodeIndex >= nodes.length - 1}>下一节点</Button>
-                <Button size="small" onClick={resetSelectedNodeConfig} disabled={!selectedNode || !selectedOperator}>恢复默认参数</Button>
-                <Button size="small" onClick={formatSelectedNodeConfig} disabled={!selectedNode}>格式化 JSON</Button>
-                <Button size="small" danger onClick={deleteSelectedNode} disabled={!selectedNode}>删除节点</Button>
               </Space>
-              <Card size="small" title="结构化参数面板">
-                <PipelineNodeConfigForm node={selectedNode} operator={selectedOperator} onChange={updateSelectedNodeConfig} />
-              </Card>
-              <Typography.Text strong>原始配置 JSON</Typography.Text>
-              <Input.TextArea rows={8} value={safeJson(selectedNode?.configJson)} onChange={(event) => updateSelectedNodeConfig(event.target.value)} />
-              <Alert type="success" showIcon title="算子验证通过" description={`输入: 42,850 条；预计输出: 42,850 条；${selectedOperator?.defaultOutputDatasetDataType ? `默认输出 ${txt(selectedOperator.defaultOutputDatasetDataType)} 型结果；` : ''}${selectedOperator?.annotationRiskLevel ? ` 标注风险 ${selectedOperator.annotationRiskLevel}` : ''}`} />
             </Space>
           </Card>
         </div>
@@ -2427,10 +2585,54 @@ export function DataPipelineStandardPage() {
           </Descriptions>
         </Card>
       </div>
+      <Drawer title={`算子参数配置 · ${selectedNode?.label ?? '未选择节点'}`} open={configOpen} onClose={() => setConfigOpen(false)} width={560} destroyOnHidden>
+        <Space direction="vertical" className="full-width">
+          <Descriptions size="small" column={1} bordered>
+            <Descriptions.Item label="节点ID">{selectedNode?.nodeId ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label="算子">{selectedOperator?.name ?? selectedNode?.operatorName ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label="阶段">{selectedOperator?.stage ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label="处理类目">{selectedOperator ? visualOperatorLabel(selectedOperator) : '-'}</Descriptions.Item>
+            <Descriptions.Item label="状态"><Tag color={color(selectedNode?.status)}>{selectedNode?.status ?? 'READY'}</Tag></Descriptions.Item>
+          </Descriptions>
+          {selectedNode?.operatorId === 'OP-READ-DATASET' ? (
+            <Alert
+              type="info"
+              showIcon
+              message="数据源节点用于保存模板默认输入"
+              description={`当前节点 JSON 中的 datasetId 是模板默认源；真正创建/运行加工任务时，优先使用上方“本次要加工的数据集”：${effectivePipelineDatasetId ?? '未选择'}。`}
+            />
+          ) : null}
+          <Space wrap className="pipeline-node-toolbar">
+            <Button size="small" onClick={() => selectAdjacentNode(-1)} disabled={selectedNodeIndex <= 0}>上一节点</Button>
+            <Button size="small" onClick={() => selectAdjacentNode(1)} disabled={selectedNodeIndex < 0 || selectedNodeIndex >= nodes.length - 1}>下一节点</Button>
+            <Button size="small" onClick={resetSelectedNodeConfig} disabled={!selectedNode || !selectedOperator}>恢复默认参数</Button>
+            <Button size="small" onClick={formatSelectedNodeConfig} disabled={!selectedNode}>格式化 JSON</Button>
+            <Button size="small" danger onClick={deleteSelectedNode} disabled={!selectedNode}>删除节点</Button>
+          </Space>
+          <Card size="small" title="结构化参数面板">
+            <PipelineNodeConfigForm node={selectedNode} operator={selectedOperator} onChange={updateSelectedNodeConfig} datasetOptions={selectablePipelineDatasets} readDatasetVersions={selectedReadDatasetDetail.data?.versions ?? []} readDatasetVersionsLoading={selectedReadDatasetDetail.isLoading} />
+          </Card>
+          <Typography.Text strong>原始配置 JSON</Typography.Text>
+          <Input.TextArea rows={10} value={safeJson(selectedNode?.configJson)} onChange={(event) => updateSelectedNodeConfig(event.target.value)} />
+          <Alert type="success" showIcon title="算子验证通过" description={`输入: 42,850 条；预计输出: 42,850 条；${selectedOperator?.defaultOutputDatasetDataType ? `默认输出 ${txt(selectedOperator.defaultOutputDatasetDataType)} 型结果；` : ''}${selectedOperator?.annotationRiskLevel ? ` 标注风险 ${selectedOperator.annotationRiskLevel}` : ''}`} />
+        </Space>
+      </Drawer>
       <Drawer title="添加算子" open={addOpen} onClose={() => setAddOpen(false)} width={680}>
         <Input.Search placeholder="搜索算子名称、类型或功能描述…" value={operatorKeyword} onChange={(event) => setOperatorKeyword(event.target.value)} style={{ marginBottom: 16 }} />
-        <div className="operator-market-grid">{marketplaceOperators.map((op) => <Card key={op.operatorId} hoverable onClick={() => addNode(op)}><Space direction="vertical"><Space wrap><Tag>{txt(op.category)}</Tag>{op.dataType ? <Tag color="geekblue">{txt(op.dataType)}</Tag> : null}{op.supportsPreview ? <Tag color="green">支持预览</Tag> : null}</Space><Typography.Title level={5}>{op.name}</Typography.Title><Typography.Text type="secondary">{op.description}</Typography.Text><Typography.Text type="secondary">{visualOperatorLabel(op)}{op.defaultOutputDatasetDataType ? ` · 输出 ${txt(op.defaultOutputDatasetDataType)}` : ''}</Typography.Text><div><Tag color="blue">调用 {op.usageCount}</Tag><Tag color="orange">Pipeline {op.pipelineCount}</Tag></div></Space></Card>)}</div>
+        <Tabs items={operatorDrawerTabItems} />
       </Drawer>
+      <Modal title="新建加工任务" open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
+        <Form form={createTaskForm} layout="vertical" onFinish={(values) => createProcessingTask.mutate(values)}>
+          <Alert type="info" showIcon title="创建时先选择数据集" description="加工任务会复用所选 Pipeline 模板，并立即基于输入数据集生成一条加工记录；创建成功后自动进入 Pipeline 编辑器查看 DAG 与运行结果。" style={{ marginBottom: 16 }} />
+          <Form.Item name="pipelineId" label="Pipeline 模板" rules={[{ required: true, message: '请选择 Pipeline 模板' }]}>
+            <Select options={(pipelines.data?.items ?? []).map((item) => ({ value: item.pipelineId, label: `${item.name} · ${item.pipelineId}` }))} />
+          </Form.Item>
+          <Form.Item name="sourceDatasetId" label="输入数据集" rules={[{ required: true, message: '请选择要加工的数据集' }]}>
+            <Select showSearch optionFilterProp="label" loading={pipelineDatasets.isLoading} options={selectablePipelineDatasets.map(({ value, label }) => ({ value, label }))} />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" loading={createProcessingTask.isPending}>创建并进入编辑器</Button>
+        </Form>
+      </Modal>
       <Drawer title="沙箱运行详情" open={runOpen} onClose={() => setRunOpen(false)} width={720}>
         <Alert type="success" showIcon title={latestRun?.run.diagnosticMessage ?? 'VISUAL_PREPROCESS_RUN_SUCCEEDED'} description="已生成待确认预处理数据集；请先预览样例和失败摘要，再执行确认与激活。" />
         {latestRun ? (
@@ -2549,83 +2751,52 @@ export function DataPipelineStandardPage() {
       {holder}
       <div className="page-hero">
         <div>
-          <Typography.Title level={3}>数据标准 / Pipeline</Typography.Title>
-          <Typography.Text type="secondary">基于数据集的数据校验、清洗、归一化与格式标准化 · 输出预处理数据集</Typography.Text>
+          <Typography.Title level={3}>Pipeline加工任务</Typography.Title>
+          <Typography.Text type="secondary">先在列表查看已有加工任务；新建时选择数据集，再进入 Pipeline 编辑器配置与查看结果。</Typography.Text>
         </div>
-        <Space><Button onClick={() => overview.refetch()}>刷新画像</Button><Button type="primary" disabled={!selected?.datasetId} onClick={() => selected?.datasetId && createTask.mutate(selected.datasetId)}>＋ 创建标准化任务</Button></Space>
+        <Space>
+          <Button onClick={() => processingTasks.refetch()}>刷新列表</Button>
+          <Button onClick={() => setEditorOpen(true)}>进入Pipeline编辑器</Button>
+          <Button type="primary" onClick={() => setCreateOpen(true)}>＋ 新建加工任务</Button>
+        </Space>
       </div>
-      <Alert type="info" showIcon title="按原型落地的数据标准能力" description="原型将标准化放在 Pipeline 与算子广场中：数据校验、清洗、归一化、格式转换。这里以 F009 数据集为对象，并根据来源数据源类型生成字段标准画像与标准化任务。" style={{ marginBottom: 16 }} />
-      <div className="summary-grid">
-        {[
-          { n: overview.data?.stats.datasetCount ?? 0, l: '可画像数据集' },
-          { n: overview.data?.stats.profiledCount ?? 0, l: '已画像' },
-          { n: overview.data?.stats.compliantCount ?? 0, l: '达标数据集' },
-          { n: overview.data?.stats.issueCount ?? 0, l: '待处理问题' },
-          { n: overview.data?.stats.taskCount ?? 0, l: '标准化任务' },
-        ].map((i) => <Card key={i.l}><Typography.Title level={3}>{i.n}</Typography.Title><Typography.Text type="secondary">{i.l}</Typography.Text></Card>)}
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 16 }}>
-        <Card title="数据集标准画像">
-          <Table<DataStandardProfile>
-            rowKey="datasetId"
-            dataSource={profiles}
-            loading={overview.isLoading}
-            pagination={{ pageSize: 6 }}
-            onRow={(row) => ({ onClick: () => setSelectedDatasetId(row.datasetId) })}
-            columns={[
-              { title: '数据集', dataIndex: 'datasetName' },
-              { title: '来源', dataIndex: 'sourceType', render: (v) => <Tag>{txt(v)}</Tag> },
-              { title: '类型', render: (_, r) => <Tag>{txt(r.datasetType)} / {txt(r.dataType)}</Tag> },
-              { title: '质量分', dataIndex: 'qualityScore', render: (v: number) => <Tag color={v >= 90 ? 'green' : v >= 80 ? 'orange' : 'red'}>{v}</Tag> },
-              { title: '字段', render: (_, r) => `${r.matchedFieldCount}/${r.fieldCount}` },
-              { title: '问题', dataIndex: 'issueCount' },
-            ]}
-          />
-        </Card>
-        <Card title="Pipeline 标准化算子">
-          <Space direction="vertical" className="full-width">
-            {standardOperators.map(([name, desc]) => <Card key={name} size="small"><Space><Tag color="purple">{name}</Tag><Typography.Text type="secondary">{desc}</Typography.Text></Space></Card>)}
-          </Space>
-        </Card>
-      </div>
-      <Card title={`字段标准映射 · ${selected?.datasetName ?? '请选择数据集'}`} style={{ marginTop: 16 }}>
-        <Table
-          rowKey="standardField"
-          dataSource={selected?.fields ?? []}
-          loading={profile.isLoading}
-          pagination={false}
-          columns={[
-            { title: '源字段', dataIndex: 'sourceField' },
-            { title: '标准字段', dataIndex: 'standardField' },
-            { title: '中文名', dataIndex: 'displayName' },
-            { title: '类型', dataIndex: 'dataType' },
-            { title: '单位', dataIndex: 'unit', render: (v) => v ?? '-' },
-            { title: '必填', dataIndex: 'required', render: (v) => v ? '是' : '否' },
-            { title: '状态', dataIndex: 'mappingStatus', render: (v) => <Tag color={v === 'MATCHED' ? 'green' : 'orange'}>{v}</Tag> },
-            { title: '规则', dataIndex: 'rule' },
-          ]}
-        />
-      </Card>
-      <Card title="标准化任务" style={{ marginTop: 16 }}>
-        <Table<DataStandardTask>
+      <Alert type="info" showIcon title="加工任务列表是入口，Pipeline 编辑器是单个任务/模板的配置工作台" description="创建加工任务必须选择输入数据集；进入编辑器后可调整算子、保存模板、查看运行历史与结果处置。" style={{ marginBottom: 16 }} />
+      <Card title="加工任务列表">
+        <Table<PipelineProcessingTaskSummary>
           rowKey="taskId"
-          dataSource={tasks}
-          loading={overview.isLoading}
-          pagination={false}
+          dataSource={processingTasks.data?.items ?? []}
+          loading={processingTasks.isLoading}
+          pagination={{ pageSize: 8 }}
+          scroll={{ x: 1100 }}
+          locale={{ emptyText: '暂无加工任务，点击“新建加工任务”选择数据集后创建' }}
           columns={[
-            { title: '任务', dataIndex: 'name' },
-            { title: '来源数据集', dataIndex: 'sourceDatasetName' },
-            { title: '标准档案', dataIndex: 'standardProfile' },
-            { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> },
-            { title: '质量分', render: (_, r) => `${r.qualityScoreBefore ?? '-'} → ${r.qualityScoreAfter ?? '-'}` },
+            { title: '加工任务', dataIndex: 'taskId', render: (v, r) => <Space direction="vertical" size={0}><Typography.Text copyable>{v}</Typography.Text><Typography.Text type="secondary">{fmtDateTime(r.createdAt)}</Typography.Text></Space> },
+            { title: 'Pipeline模板', dataIndex: 'pipelineName' },
+            { title: '输入数据集', render: (_, r) => <Space direction="vertical" size={0}><Typography.Text>{r.sourceDatasetName ?? r.sourceDatasetId ?? '-'}</Typography.Text><Typography.Text type="secondary">{r.sourceVersionId ?? '-'}</Typography.Text></Space> },
+            { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{processingRunStatusText(v)}</Tag> },
+            { title: '结果处置', dataIndex: 'resultDatasetStatus', render: (v) => v ? <Tag color={color(v)}>{datasetStatusText(v)}</Tag> : '-' },
             { title: '输出数据集', dataIndex: 'outputDatasetId', render: (v) => v ?? '待生成' },
+            { title: '成功/总数', render: (_, r) => r.totalCount != null ? `${r.successCount ?? 0}/${r.totalCount}` : '-' },
             { title: '诊断', dataIndex: 'diagnosticMessage' },
-            { title: '操作', render: (_, r) => <Button size="small" type="primary" disabled={r.status === 'SUCCEEDED'} loading={runTask.isPending} onClick={() => runTask.mutate(r.taskId)}>运行</Button> },
+            { title: '操作', fixed: 'right', render: (_, r) => <Button size="small" type="primary" onClick={() => openEditorForTask(r)}>进入编辑器</Button> },
           ]}
         />
       </Card>
+      <Modal title="新建加工任务" open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
+        <Form form={createTaskForm} layout="vertical" onFinish={(values) => createProcessingTask.mutate(values)}>
+          <Alert type="info" showIcon title="选择数据集后创建加工任务" description="创建成功后会自动进入 Pipeline 编辑器，并在运行详情中展示输出数据集与处置状态。" style={{ marginBottom: 16 }} />
+          <Form.Item name="pipelineId" label="Pipeline 模板" rules={[{ required: true, message: '请选择 Pipeline 模板' }]}>
+            <Select loading={pipelines.isLoading} options={(pipelines.data?.items ?? []).map((item) => ({ value: item.pipelineId, label: `${item.name} · ${item.pipelineId}` }))} />
+          </Form.Item>
+          <Form.Item name="sourceDatasetId" label="输入数据集" rules={[{ required: true, message: '请选择要加工的数据集' }]}>
+            <Select aria-label="新加工任务输入数据集" showSearch optionFilterProp="label" loading={pipelineDatasets.isLoading} options={selectablePipelineDatasets.map(({ value, label }) => ({ value, label }))} />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" loading={createProcessingTask.isPending}>创建并进入编辑器</Button>
+        </Form>
+      </Modal>
     </div>
   );
+
 }
 
 export function DataSourceManagementPage() {
@@ -2937,14 +3108,15 @@ export function OperatorMarketplacePage() {
   const qc = useQueryClient();
   const [msg, holder] = message.useMessage();
   const [keyword, setKeyword] = useState('');
+  const [activeGroup, setActiveGroup] = useState<string>('ALL');
   const [category, setCategory] = useState<string>();
   const [dataType, setDataType] = useState<string>();
   const [detailId, setDetailId] = useState<string>();
   const [customOpen, setCustomOpen] = useState(false);
-  const operators = useQuery({
-    queryKey: ['operators-market', keyword, category, dataType],
-    queryFn: () => dataApi.operators({ keyword, category, categoryGroup: 'VISUAL_PREPROCESS', dataType, supportsPreview: true }),
-  });
+  const commonOperators = useQuery({ queryKey: ['operators-market', 'COMMON', keyword], queryFn: () => dataApi.operators({ keyword, categoryGroup: 'COMMON', supportsPreview: true }) });
+  const legacyCommonOperators = useQuery({ queryKey: ['operators-market', 'GENERAL', keyword], queryFn: () => dataApi.operators({ keyword, categoryGroup: 'GENERAL' }) });
+  const readDatasetOperators = useQuery({ queryKey: ['operators-market', 'READ_DATASET', keyword], queryFn: () => dataApi.operators({ keyword: keyword || '读取', category: '数据输入' }) });
+  const visualOperators = useQuery({ queryKey: ['operators-market', 'VISUAL_PREPROCESS', keyword], queryFn: () => dataApi.operators({ keyword, categoryGroup: 'VISUAL_PREPROCESS', supportsPreview: true }) });
   const detail = useQuery({ queryKey: ['operator-detail', detailId], queryFn: () => dataApi.operatorDetail(detailId!), enabled: Boolean(detailId) });
   const createCustom = useMutation({
     mutationFn: dataApi.createCustomOperator,
@@ -2961,35 +3133,51 @@ export function OperatorMarketplacePage() {
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['operators-market'] }); await qc.invalidateQueries({ queryKey: ['operator-detail', detailId] }); msg.success('算子已审核通过并发布'); },
     onError: (e: Error) => msg.error(e.message),
   });
-  const rows = operators.data?.items ?? [];
+  const allOperators = useMemo(() => uniqueOperators([
+    ...(commonOperators.data?.items ?? []),
+    ...(legacyCommonOperators.data?.items ?? []).filter((item) => item.operatorId === 'OP-READ-DATASET'),
+    ...(readDatasetOperators.data?.items ?? []).filter((item) => item.operatorId === 'OP-READ-DATASET'),
+    ...(visualOperators.data?.items ?? []),
+  ]).filter((op) => operatorMatchesKeyword(op, keyword)), [commonOperators.data?.items, keyword, legacyCommonOperators.data?.items, readDatasetOperators.data?.items, visualOperators.data?.items]);
+  const categories = useMemo(() => Array.from(new Map(allOperators.map((op) => [op.category, { category: op.category, label: txt(op.category), count: allOperators.filter((item) => item.category === op.category && (activeGroup === 'ALL' || item.categoryGroup === activeGroup)).length }])).values()).filter((item) => item.count > 0), [activeGroup, allOperators]);
+  const rows = allOperators.filter((op) => (activeGroup === 'ALL' || op.categoryGroup === activeGroup) && (!category || op.category === category) && (!dataType || op.dataType === dataType));
+  const tabItems = [
+    { key: 'ALL', label: `全部算子（${allOperators.length}）` },
+    { key: 'COMMON', label: `通用算子（${allOperators.filter((op) => op.categoryGroup === 'COMMON').length}）` },
+    { key: 'VISUAL_PREPROCESS', label: `视觉预处理（${allOperators.filter((op) => op.categoryGroup === 'VISUAL_PREPROCESS').length}）` },
+  ].map((tab) => ({ ...tab, children: null }));
+  const loading = commonOperators.isLoading || legacyCommonOperators.isLoading || readDatasetOperators.isLoading || visualOperators.isLoading;
+  const stats = { total: rows.length, builtin: rows.filter((op) => op.kind === 'BUILTIN').length, custom: rows.filter((op) => op.kind !== 'BUILTIN').length };
   return (
     <div className="content-page operator-marketplace-page">
       {holder}
       <div className="page-hero">
         <div>
           <Typography.Title level={3}>算子广场</Typography.Title>
-          <Typography.Text type="secondary">视觉预处理算子目录 · 图片处理 / 视频处理 · 预览能力 / 输出类型 / 标注风险</Typography.Text>
+          <Typography.Text type="secondary">通用算子 / 视觉预处理算子 · 支持按分类、数据类型、关键词筛选</Typography.Text>
         </div>
         <Button type="primary" onClick={() => setCustomOpen(true)}>+ 自定义算子</Button>
       </div>
-      <Alert type="warning" showIcon title="视觉预处理冻结能力说明" description="图片质量提高一期仅支持传统增强；预览水印与产物水印分离；视频抽帧默认输出 IMAGE 型 PREPROCESSED 数据集。" style={{ marginBottom: 16 }} />
+      <Alert type="warning" showIcon title="视觉预处理冻结能力说明" description="图片质量提高一期仅支持传统增强；预览水印与产物水印分离；视频抽帧默认输出 IMAGE 型 PREPROCESSED 数据集。读取数据集属于通用算子，可作为 Pipeline 数据源节点。" style={{ marginBottom: 16 }} />
+      <Tabs activeKey={activeGroup} onChange={(key) => { setActiveGroup(key); setCategory(undefined); }} items={tabItems} />
       <div className="opmarket-layout">
         <Card className="opmarket-cats">
-          <div className={!category ? 'opmarket-cat active' : 'opmarket-cat'} onClick={() => setCategory(undefined)}>全部算子</div>
-          {(operators.data?.categories ?? []).map((item) => <div key={item.category} className={category === item.category ? 'opmarket-cat active' : 'opmarket-cat'} onClick={() => setCategory(item.category)}>{txt(item.category)}<Tag>{item.count}</Tag></div>)}
-          <Alert type="info" showIcon message="图片/视频处理目录" description="首批内置图片加水印、图片质量提高、去噪/锐化、视频抽帧、固定帧率抽帧等算子已冻结。" />
+          <div className={!category ? 'opmarket-cat active' : 'opmarket-cat'} onClick={() => setCategory(undefined)}>当前 Tab 全部</div>
+          {categories.map((item) => <div key={item.category} className={category === item.category ? 'opmarket-cat active' : 'opmarket-cat'} onClick={() => setCategory(item.category)}>{item.label}<Tag>{item.count}</Tag></div>)}
+          <Alert type="info" showIcon message="多 Tab 算子目录" description="通用算子放读取数据集等基础能力；视觉预处理放图片/视频加工算子。" />
         </Card>
         <div>
           <Space style={{ marginBottom: 16 }} wrap>
             <Input.Search placeholder="搜索算子…" value={keyword} onChange={(event) => setKeyword(event.target.value)} style={{ width: 260 }} />
-            <Select allowClear placeholder="数据类型" value={dataType} onChange={setDataType} style={{ width: 140 }} options={[{ value: 'IMAGE', label: '图片' }, { value: 'AUDIO_VIDEO', label: '视频' }]} />
-            <Tag color="blue">总调用次数 {operators.data?.stats.total ?? 0}</Tag>
-            <Tag color="green">内置 {operators.data?.stats.builtin ?? 0}</Tag>
-            <Tag color="purple">自定义 {operators.data?.stats.custom ?? 0}</Tag>
+            <Select allowClear placeholder="数据类型" value={dataType} onChange={setDataType} style={{ width: 140 }} options={[{ value: 'ANY', label: '任意' }, { value: 'IMAGE', label: '图片' }, { value: 'AUDIO_VIDEO', label: '视频' }]} />
+            <Tag color="blue">当前 {stats.total}</Tag>
+            <Tag color="green">内置 {stats.builtin}</Tag>
+            <Tag color="purple">自定义 {stats.custom}</Tag>
           </Space>
           <div className="operator-market-grid">
-            {rows.map((op) => <Card key={op.operatorId} hoverable onClick={() => setDetailId(op.operatorId)}><Space direction="vertical"><Space wrap><Tag color={op.kind === 'BUILTIN' ? 'blue' : 'purple'}>{op.kind}</Tag><Tag>{txt(op.category)}</Tag>{op.dataType ? <Tag color="geekblue">{txt(op.dataType)}</Tag> : null}{op.supportsPreview ? <Tag color="green">支持预览</Tag> : null}</Space><Typography.Title level={5}>{op.name}</Typography.Title><Typography.Text type="secondary">{op.description}</Typography.Text><Typography.Text type="secondary">{visualOperatorLabel(op)}{op.enhancementMode ? ` · ${txt(op.enhancementMode)}` : ''}{op.defaultOutputDatasetDataType ? ` · 输出 ${txt(op.defaultOutputDatasetDataType)}` : ''}</Typography.Text><Space wrap><Tag>调用 {op.usageCount}</Tag><Tag>引用Pipeline数 {op.pipelineCount}</Tag><Tag>错误率 {(op.errorRate * 100).toFixed(1)}%</Tag></Space></Space></Card>)}
+            {loading ? <Card loading /> : rows.map((op) => <Card key={op.operatorId} hoverable onClick={() => setDetailId(op.operatorId)}><Space direction="vertical"><Space wrap><Tag color={op.kind === 'BUILTIN' ? 'blue' : 'purple'}>{op.kind}</Tag><Tag color={op.categoryGroup === 'COMMON' ? 'cyan' : undefined}>{txt(op.categoryGroup)}</Tag><Tag>{txt(op.category)}</Tag>{op.dataType ? <Tag color="geekblue">{txt(op.dataType)}</Tag> : null}{op.supportsPreview ? <Tag color="green">支持预览</Tag> : null}</Space><Typography.Title level={5}>{op.name}</Typography.Title><Typography.Text type="secondary">{op.description}</Typography.Text><Typography.Text type="secondary">{visualOperatorLabel(op)}{op.enhancementMode ? ` · ${txt(op.enhancementMode)}` : ''}{op.defaultOutputDatasetDataType ? ` · 输出 ${txt(op.defaultOutputDatasetDataType)}` : ''}</Typography.Text><Space wrap><Tag>调用 {op.usageCount}</Tag><Tag>引用Pipeline数 {op.pipelineCount}</Tag><Tag>错误率 {(op.errorRate * 100).toFixed(1)}%</Tag></Space></Space></Card>)}
           </div>
+          {!loading && rows.length === 0 ? <Alert type="info" showIcon title="当前筛选下暂无算子" description="可切换 Tab、清空分类或数据类型筛选后再查看。" style={{ marginTop: 16 }} /> : null}
         </div>
       </div>
       <Drawer title={detail.data?.operator.name ?? '算子详情'} open={Boolean(detailId)} onClose={() => setDetailId(undefined)} width={720}>
@@ -3009,38 +3197,6 @@ export function OperatorMarketplacePage() {
         </Form>
       </Modal>
     </div>
-  );
-}
-
-function OperatorDetailView({ detail, onApprove, loading }: { detail?: OperatorDetail; onApprove: (operatorId: string) => void; loading: boolean }) {
-  if (!detail) return <Typography.Text type="secondary">加载算子详情...</Typography.Text>;
-  return (
-    <Space direction="vertical" className="full-width">
-      <Descriptions bordered column={2}>
-        <Descriptions.Item label="分类">{visualOperatorLabel(detail.operator)}</Descriptions.Item>
-        <Descriptions.Item label="状态"><Tag color={color(detail.operator.status)}>{detail.operator.status}</Tag></Descriptions.Item>
-        <Descriptions.Item label="数据类型">{detail.operator.dataType ? txt(detail.operator.dataType) : '-'}</Descriptions.Item>
-        <Descriptions.Item label="支持预览">{detail.operator.supportsPreview ? '是' : '否'}</Descriptions.Item>
-        <Descriptions.Item label="总调用次数">{detail.operator.usageCount}</Descriptions.Item>
-        <Descriptions.Item label="引用Pipeline数">{detail.operator.pipelineCount}</Descriptions.Item>
-        <Descriptions.Item label="Endpoint">{detail.endpointMasked ?? '-'}</Descriptions.Item>
-        <Descriptions.Item label="Credential">{detail.credentialRefMasked ?? '-'}</Descriptions.Item>
-        <Descriptions.Item label="增强模式">{detail.operator.enhancementMode ? txt(detail.operator.enhancementMode) : '-'}</Descriptions.Item>
-        <Descriptions.Item label="默认输出类型">{detail.operator.defaultOutputDatasetDataType ? txt(detail.operator.defaultOutputDatasetDataType) : '-'}</Descriptions.Item>
-      </Descriptions>
-      <Card title="Before / After 示例"><Space direction="vertical"><Typography.Text>Before: {detail.operator.beforeExample}</Typography.Text><Typography.Text>After: {detail.operator.afterExample}</Typography.Text></Space></Card>
-      {detail.annotationRiskNotice || detail.frozenDefaults ? (
-        <Card title="冻结默认项与标注风险">
-          <Space direction="vertical" className="full-width">
-            {detail.annotationRiskNotice ? <Alert type="warning" showIcon message={detail.annotationRiskNotice} /> : null}
-            {detail.frozenDefaults ? <pre className="schema-preview">{safeJson(JSON.stringify(detail.frozenDefaults))}</pre> : null}
-          </Space>
-        </Card>
-      ) : null}
-      <Card title="参数 Schema"><pre className="schema-preview">{safeJson(detail.parameterSchemaJson)}</pre></Card>
-      <Table rowKey="reviewId" dataSource={detail.reviews} pagination={false} columns={[{ title: '审核状态', dataIndex: 'status' }, { title: '原因', dataIndex: 'reason' }, { title: '提交时间', dataIndex: 'submittedAt' }]} />
-      {detail.operator.status === 'SUBMITTED' ? <Button type="primary" loading={loading} onClick={() => onApprove(detail.operator.operatorId)}>审核通过并发布</Button> : null}
-    </Space>
   );
 }
 
