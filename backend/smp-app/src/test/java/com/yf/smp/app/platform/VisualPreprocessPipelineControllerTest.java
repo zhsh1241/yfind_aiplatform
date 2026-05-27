@@ -112,6 +112,45 @@ class VisualPreprocessPipelineControllerTest {
     }
 
     @Test
+    void videoPipelineRunFallsBackToReadableOutputDatasetNameWhenPipelineNameIsMojibake() throws Exception {
+        // BUG-20260527-video-frame-dataset-name-mojibake
+        String buAdmin = login("buadmin", "CABIN");
+
+        JsonNode created = postJson("/api/v1/pipelines", "trace-bug-frame-name-create", """
+            {
+              "name":"乱码视频抽帧Pipeline",
+              "tenantId":"TENANT-CABIN",
+              "description":"模拟历史编码异常的抽帧 Pipeline 名称",
+              "templateCode":"VIDEO_FRAME_TO_IMAGE_PREPROCESS",
+              "sourceDatasetId":"DATASET-WELD-VIDEO-001",
+              "sourceVersionId":"DVER-WELD-VIDEO-001",
+              "resultDatasetConfig":{"datasetName":"乱码视频抽帧Pipeline 输出","datasetType":"PREPROCESSED","datasetDataType":"IMAGE","autoActivate":false},
+              "nodes":[
+                {"nodeId":"read-video","operatorId":"OP-READ-DATASET","label":"读取焊缝视频数据集","positionX":80,"positionY":150,"configJson":"{\\\"datasetId\\\":\\\"DATASET-WELD-VIDEO-001\\\"}"},
+                {"nodeId":"extract","operatorId":"OP-VIDEO-FRAME-EXTRACT","label":"固定间隔抽帧","positionX":320,"positionY":150,"configJson":"{\\\"mode\\\":\\\"FIXED_INTERVAL\\\",\\\"intervalSeconds\\\":2,\\\"outputImageFormat\\\":\\\"JPG\\\"}"}
+              ],
+              "edges":[
+                {"edgeId":"EDGE-bug-frame-name","sourceNodeId":"read-video","targetNodeId":"extract","edgeType":"DATA"}
+              ],
+              "variables":[]
+            }
+            """, buAdmin);
+        assertThat(created.at("/code").asInt()).as(created.at("/message").asText()).isZero();
+        String pipelineId = created.at("/data/pipeline/pipelineId").asText();
+
+        JsonNode run = postJson("/api/v1/pipelines/" + pipelineId + "/runs", "trace-bug-frame-name-run", """
+            {"triggerMode":"MANUAL","sampleDatasetId":"DATASET-WELD-VIDEO-001"}
+            """, buAdmin);
+        assertThat(run.at("/code").asInt()).isZero();
+        String outputDatasetId = run.at("/data/run/outputDatasetId").asText();
+
+        JsonNode outputDetail = getJson("/api/v1/datasets/" + outputDatasetId, "trace-bug-frame-name-output", buAdmin);
+        assertThat(outputDetail.at("/data/dataset/name").asText()).isEqualTo("焊缝视频巡检数据集 抽帧结果");
+        assertThat(outputDetail.at("/data/dataset/name").asText()).doesNotContain("乱码");
+        assertThat(outputDetail.at("/data/dataset/dataType").asText()).isEqualTo("IMAGE");
+    }
+
+    @Test
     void artifactWatermarkPreprocessedDatasetIsBlockedFromAnnotation() throws Exception {
         // TASK-visual-preprocess-operators-pipeline AC-04 AC-05 AC-08 DAT-005 DAT-012
         String buAdmin = login("buadmin", "CABIN");

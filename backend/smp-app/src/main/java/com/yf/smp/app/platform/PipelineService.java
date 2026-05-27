@@ -477,7 +477,7 @@ public class PipelineService {
         String annotationEligible = artifactWatermarkEnabled(pipeline.pipelineId()) ? "ANNOTATION_BLOCKED:ARTIFACT_WATERMARK" : "ANNOTATION_ELIGIBLE";
         String operatorChain = operatorChainJsonForPipeline(pipeline.pipelineId());
         String description = "由 Pipeline 视觉预处理运行 " + runId + " 生成；pipeline=" + pipeline.pipelineId() + ";runId=" + runId + ";sourceDatasetId=" + sample.datasetId() + ";sourceVersionId=" + blank(sample.versionId(), "UNKNOWN") + ";processParams=" + processParams + ";previewManifest=" + previewManifest + ";operatorChain=" + operatorChain + ";annotationEligibility=" + annotationEligible;
-        jdbc.update("INSERT INTO dataset (dataset_id, name, dataset_type, data_type, tenant_id, project_id, current_version_id, status, access_level, tags, record_count, size_bytes, owner_id, description, created_at, updated_at) VALUES (?, ?, 'PREPROCESSED', ?, ?, ?, NULL, 'PENDING_CONFIRMATION', 'TEAM', ?, ?, ?, ?, ?, ?, ?)", datasetId, pipeline.name() + " 输出", datasetDataType, pipeline.tenantId(), pipeline.projectId(), "pipeline,F017,PREPROCESSED,VISUAL_PREPROCESS", outputRecords, outputSize, principal.user().id(), description, at, at);
+        jdbc.update("INSERT INTO dataset (dataset_id, name, dataset_type, data_type, tenant_id, project_id, current_version_id, status, access_level, tags, record_count, size_bytes, owner_id, description, created_at, updated_at) VALUES (?, ?, 'PREPROCESSED', ?, ?, ?, NULL, 'PENDING_CONFIRMATION', 'TEAM', ?, ?, ?, ?, ?, ?, ?)", datasetId, outputDatasetName(pipeline, sample, videoFrameMode), datasetDataType, pipeline.tenantId(), pipeline.projectId(), "pipeline,F017,PREPROCESSED,VISUAL_PREPROCESS", outputRecords, outputSize, principal.user().id(), description, at, at);
         jdbc.update("INSERT INTO dataset_version (version_id, dataset_id, version_name, status, record_count, size_bytes, content_safety_status, diagnostic_code, diagnostic_message, created_by, created_at, published_at) VALUES (?, ?, 'v1.0.0', 'READY', ?, ?, 'PASSED', 'OK', 'VISUAL_PREPROCESS_READY_FOR_CONFIRM', ?, ?, NULL)", versionId, datasetId, outputRecords, outputSize, principal.user().id(), at);
         jdbc.update("UPDATE dataset SET current_version_id=?, updated_at=? WHERE dataset_id=?", versionId, at, datasetId);
         jdbc.update("INSERT INTO platform_file_object (file_id, asset_type, tenant_id, project_id, bucket, object_key, expected_sha256, sha256, expected_size_bytes, size_bytes, content_type, storage_tier, status, owner_id, created_at, updated_at) VALUES (?, 'DATASET', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'STANDARD', 'AVAILABLE', ?, ?, ?)", fileId, pipeline.tenantId(), pipeline.projectId(), outputBucket, outputObjectKey, "sha256-" + fileId.toLowerCase(Locale.ROOT), "sha256-" + fileId.toLowerCase(Locale.ROOT), outputSize, outputSize, videoFrameMode ? "application/zip" : "application/x-parquet", principal.user().id(), at, at);
@@ -488,6 +488,29 @@ public class PipelineService {
         }
         audit(principal, pipeline.tenantId(), "PREPROCESSED_DATASET_CREATED", "Dataset", datasetId, "SUCCESS", "INFO", null, "PENDING_CONFIRMATION", TRACE_TAG + ";DAT-007");
         return datasetId;
+    }
+
+    private String outputDatasetName(PipelineSummaryResponse pipeline, DatasetInfo sample, boolean videoFrameMode) {
+        String pipelineName = blank(pipeline.name(), "");
+        if (!isUnreadableText(pipelineName)) {
+            return pipelineName + " 输出";
+        }
+        String sourceName = blank(sample.name(), "源数据集");
+        return sourceName + (videoFrameMode ? " 抽帧结果" : " 预处理结果");
+    }
+
+    private boolean isUnreadableText(String value) {
+        if (value == null || value.isBlank()) {
+            return true;
+        }
+        String normalized = value.trim();
+        if (normalized.startsWith("乱码") || normalized.indexOf('�') >= 0 || normalized.indexOf('Ã') >= 0 || normalized.indexOf('Â') >= 0) {
+            return true;
+        }
+        long latin1Like = normalized.chars()
+            .filter(ch -> (ch >= 0x00C0 && ch <= 0x00FF) || "çæåéè¤¥¼œ".indexOf(ch) >= 0)
+            .count();
+        return latin1Like >= 2;
     }
 
     private String datasetIdFromReadNode(String pipelineId) {
