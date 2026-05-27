@@ -154,6 +154,18 @@ export async function mockPlatformApis(page: Page) {
   await page.route('**/api/v1/platform/configs**', async (route) => {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: platformConfigs } });
   });
+  await page.route(/\/api\/v1\/platform\/files\/[^/]+\/download-url(?:\?.*)?$/, async (route) => {
+    const fileId = route.request().url().match(/\/api\/v1\/platform\/files\/([^/]+)\/download-url/)?.[1] ?? 'FILE-001';
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { fileId, status: 'READY', downloadUrl: `/api/v1/platform/files/${fileId}/content`, diagnostic: 'AUTHENTICATED_CONTENT_ENDPOINT_READY' } } });
+  });
+  await page.route(/\/api\/v1\/platform\/files\/[^/]+\/content(?:\?.*)?$/, async (route) => {
+    const auth = route.request().headers().authorization ?? '';
+    await route.fulfill({
+      status: auth.startsWith('Bearer ') ? 200 : 401,
+      headers: { 'Content-Type': 'video/mp4', 'Content-Disposition': 'attachment; filename="rtsp-sample.mp4"' },
+      body: auth.startsWith('Bearer ') ? Buffer.from('F018 sandbox mp4 sample e2e') : Buffer.from('unauthorized'),
+    });
+  });
   await page.route('**/api/v1/platform/files**', async (route) => {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: fileObjects } });
   });

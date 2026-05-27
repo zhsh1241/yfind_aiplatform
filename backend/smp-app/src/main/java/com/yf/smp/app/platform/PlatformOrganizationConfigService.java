@@ -374,6 +374,11 @@ public class PlatformOrganizationConfigService {
         if (!diagnostic.startsWith("TODO_CONFIRM")) {
             url = objectStorageService.publicObjectUrl(file.bucket(), file.objectKey());
         }
+        if (url == null || url.isBlank()) {
+            url = "/api/v1/platform/files/" + fileId + "/content";
+            status = "READY";
+            diagnostic = diagnostic.startsWith("TODO_CONFIRM") ? diagnostic + ";AUTHENTICATED_CONTENT_ENDPOINT_READY" : "AUTHENTICATED_CONTENT_ENDPOINT_READY";
+        }
         recordAudit(principal, file.tenantId(), "FILE_DOWNLOAD_REQUESTED", "FileObject", fileId, "SUCCESS", "INFO", null, null, diagnostic);
         return new FileDownloadResponse(fileId, status, url, diagnostic);
     }

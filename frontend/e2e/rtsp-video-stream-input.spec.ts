@@ -23,6 +23,12 @@ test('TASK-rtsp-video-stream-input AC-01 AC-02 AC-03 AC-04 AC-05 AC-06 AC-07 sup
   await page.getByRole('cell', { name: 'F018 RTSP 采样视频数据集' }).getByText('F018 RTSP 采样视频数据集').click();
   await expect(page.getByRole('heading', { name: 'F018 RTSP 采样视频数据集' })).toBeVisible();
   await expect(page.getByText('video/mp4')).toBeVisible();
+  const download = page.waitForEvent('download');
+  const contentRequest = page.waitForRequest((request) => request.url().includes('/api/v1/platform/files/FILE-RTSP-SAMPLE-001/content'));
+  await page.getByRole('button', { name: '获取下载链接' }).click();
+  expect((await contentRequest).headers().authorization).toBe('Bearer token-f006');
+  expect((await download).suggestedFilename()).toBe('FILE-RTSP-SAMPLE-001.mp4');
+  await expect(page.getByText('文件下载已开始')).toBeVisible();
   await page.getByRole('tab', { name: '血缘' }).click();
   await expect(page.getByRole('cell', { name: 'RTSP_STREAM', exact: true })).toBeVisible();
   await expect(page.getByRole('cell', { name: 'CAPTURE_SAMPLE', exact: true })).toBeVisible();

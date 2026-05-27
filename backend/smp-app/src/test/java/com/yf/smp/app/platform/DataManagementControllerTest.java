@@ -184,6 +184,11 @@ class DataManagementControllerTest {
             assertThat(detail.at("/data/dataset/dataType").asText()).isEqualTo("AUDIO_VIDEO");
             assertThat(detail.at("/data/dataset/status").asText()).isEqualTo("ACTIVE");
             assertThat(detail.at("/data/files").findValuesAsText("contentType")).contains("video/mp4", "video/quicktime", "video/x-msvideo");
+            String uploadedVideoFileId = detail.at("/data/files/0/fileId").asText();
+            BinaryResponse uploadedVideoContent = getBytes("/api/v1/platform/files/" + uploadedVideoFileId + "/content", "trace-f015-video-file-content", buAdmin);
+            assertThat(uploadedVideoContent.statusCode()).isEqualTo(200);
+            assertThat(uploadedVideoContent.contentType()).startsWith("video/mp4");
+            assertThat(new String(uploadedVideoContent.body(), StandardCharsets.UTF_8)).isEqualTo("mp4-payload");
             assertThat(detail.at("/data/lineage/0/sourceType").asText()).isEqualTo("LOCAL_UPLOAD");
             JsonNode candidate = getJson("/api/v1/datasets/" + datasetId + "/annotation-candidates", "trace-f015-video-annotation-candidate", buAdmin);
             assertThat(candidate.at("/data/eligible").asBoolean()).isFalse();
@@ -563,6 +568,11 @@ class DataManagementControllerTest {
         assertThat(detail.at("/data/dataset/dataType").asText()).isEqualTo("AUDIO_VIDEO");
         assertThat(detail.at("/data/files/0/fileRole").asText()).isEqualTo("RAW");
         assertThat(detail.at("/data/files/0/contentType").asText()).isEqualTo("video/mp4");
+        String fileId = detail.at("/data/files/0/fileId").asText();
+        BinaryResponse sampleContent = getBytes("/api/v1/platform/files/" + fileId + "/content", "trace-f018-rtsp-file-content", admin);
+        assertThat(sampleContent.statusCode()).isEqualTo(200);
+        assertThat(sampleContent.contentType()).startsWith("video/mp4");
+        assertThat(new String(sampleContent.body(), StandardCharsets.UTF_8)).contains("F018 sandbox mp4 sample");
         assertThat(detail.at("/data/lineage/0/sourceType").asText()).isEqualTo("RTSP_STREAM");
         assertThat(detail.at("/data/lineage/0/transformType").asText()).isEqualTo("CAPTURE_SAMPLE");
 

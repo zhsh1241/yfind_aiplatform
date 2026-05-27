@@ -61,6 +61,25 @@ const ANNOTATION_POLYGON_CENTER_MARK_SIZE = 6;
 const localUploadAccept = (dataType?: string) => dataType === 'AUDIO_VIDEO' ? '.mp4,.mov,.avi,video/mp4,video/quicktime,video/x-msvideo' : 'image/*,.zip';
 const localUploadHint = (dataType?: string) => dataType === 'AUDIO_VIDEO' ? 'mp4 / mov / avi 视频文件' : '图片 / zip 包';
 
+const filenameFromObjectKey = (objectKey?: string | null, fallback = 'dataset-file') => {
+  if (!objectKey) return fallback;
+  const normalized = objectKey.replace(/\\/g, '/');
+  const filename = normalized.substring(normalized.lastIndexOf('/') + 1);
+  return filename || fallback;
+};
+
+const triggerBrowserDownload = (blob: Blob, filename: string) => {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = filename;
+  link.rel = 'noopener noreferrer';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+};
+
 const splitLocalUploadBatches = (files: File[]) => {
   const batches: File[][] = [];
   let current: File[] = [];
@@ -3379,14 +3398,21 @@ export function DatasetDetailPage() {
     await qc.invalidateQueries({ queryKey: ['dataset-detail', datasetId, versionId ?? selectedVersionId] });
   };
   const download = useMutation({
-    mutationFn: platformApi.fileDownloadUrl,
-    onSuccess: (result) => {
-      if (result.downloadUrl) {
-        window.open(result.downloadUrl, '_blank', 'noopener,noreferrer');
-        msg.success('已打开文件下载链接');
+    mutationFn: async (file: { fileId: string; objectKey?: string | null }) => {
+      const result = await platformApi.fileDownloadUrl(file.fileId);
+      const content = await platformApi.downloadFileContent(file.fileId);
+      return { result, content, filename: content.filename ?? filenameFromObjectKey(file.objectKey, file.fileId) };
+    },
+    onSuccess: ({ result, content, filename }) => {
+      if (typeof URL === 'undefined' || typeof document === 'undefined') {
+        msg.warning(`当前浏览器不支持自动下载：${result.diagnostic}`);
         return;
       }
-      msg.warning(`文件下载未配置：${result.diagnostic}`);
+      triggerBrowserDownload(content.blob, filename);
+      msg.success('文件下载已开始');
+      if (result.diagnostic.includes('TODO_CONFIRM')) {
+        msg.info('对象存储直链未配置，已通过平台鉴权接口下载。');
+      }
     },
     onError: (e: Error) => msg.error(e.message),
   });
@@ -3516,7 +3542,7 @@ export function DatasetDetailPage() {
     { title: 'Content-Type', dataIndex: 'contentType', render: (v: string | null) => v ?? '-' },
     { title: '大小', render: (_: unknown, r: { sizeBytes?: number | null }) => fmtSize(r.sizeBytes) },
     { title: 'SHA256', dataIndex: 'sha256', render: (v: string | null) => v ? <Typography.Text className="mono" copyable>{v}</Typography.Text> : '-' },
-    { title: '下载', render: (_: unknown, r: { fileId: string; status: string }) => <Button size="small" disabled={r.status !== 'BOUND'} loading={download.isPending} onClick={() => download.mutate(r.fileId)}>获取下载链接</Button> },
+    { title: '下载', render: (_: unknown, r: { fileId: string; status: string; objectKey?: string | null }) => <Button size="small" disabled={r.status !== 'BOUND'} loading={download.isPending} onClick={() => download.mutate(r)}>获取下载链接</Button> },
     { title: '绑定 ID', dataIndex: 'bindingId', render: (v: string) => <Typography.Text className="mono" copyable>{v}</Typography.Text> },
     { title: '解绑', render: (_: unknown, r: { bindingId: string; versionId: string }) => canWriteSelectedVersion ? <Button size="small" danger loading={unbind.isPending} onClick={() => Modal.confirm({ title: '解绑当前版本文件？', content: '仅删除当前版本的绑定关系，不删除底层文件对象。', okText: '确认解绑', onOk: () => unbind.mutateAsync({ versionId: r.versionId, bindingId: r.bindingId }) })}>解绑</Button> : null },
   ];

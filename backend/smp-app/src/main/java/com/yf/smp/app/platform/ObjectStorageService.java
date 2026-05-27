@@ -9,6 +9,9 @@ import io.minio.StatObjectArgs;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -48,8 +51,12 @@ class ObjectStorageService {
     }
 
     void uploadObjectIfConfigured(String bucket, String objectKey, byte[] content, String contentType) {
+        if (content == null) {
+            return;
+        }
+        writeLocalObject(bucket, objectKey, content);
         MinioClient client = minioClientProvider.getIfAvailable();
-        if (client == null || content == null) {
+        if (client == null) {
             return;
         }
         try {
@@ -88,14 +95,14 @@ class ObjectStorageService {
     byte[] readObject(String bucket, String objectKey) {
         MinioClient client = minioClientProvider.getIfAvailable();
         if (client == null) {
-            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "MinIO 未配置");
+            return readLocalObject(bucket, objectKey, "MinIO 未配置");
         }
         try (InputStream stream = client.getObject(GetObjectArgs.builder().bucket(bucket).object(objectKey).build());
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             stream.transferTo(output);
             return output.toByteArray();
         } catch (Exception exception) {
-            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "MinIO 文件读取失败: " + exception.getMessage());
+            return readLocalObject(bucket, objectKey, "MinIO 文件读取失败: " + exception.getMessage());
         }
     }
 
@@ -151,6 +158,41 @@ class ObjectStorageService {
             return;
         }
         client.makeBucket(MakeBucketArgs.builder().bucket(bucket).build());
+    }
+
+    private void writeLocalObject(String bucket, String objectKey, byte[] content) {
+        Path path = localObjectPath(bucket, objectKey);
+        try {
+            Files.createDirectories(path.getParent());
+            Files.write(path, content);
+        } catch (Exception exception) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "本地对象副本写入失败: " + exception.getMessage());
+        }
+    }
+
+    private byte[] readLocalObject(String bucket, String objectKey, String fallbackReason) {
+        Path path = localObjectPath(bucket, objectKey);
+        if (!Files.exists(path)) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, fallbackReason + "；本地对象副本不存在");
+        }
+        try {
+            return Files.readAllBytes(path);
+        } catch (Exception exception) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, fallbackReason + "；本地对象副本读取失败: " + exception.getMessage());
+        }
+    }
+
+    private Path localObjectPath(String bucket, String objectKey) {
+        Path base = Paths.get(System.getProperty("java.io.tmpdir"), "yfind-aiplatform-object-store", safePathSegment(bucket));
+        Path resolved = base.resolve(Paths.get(objectKey.replace('\\', '/'))).normalize();
+        if (!resolved.startsWith(base.normalize())) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "对象存储路径非法");
+        }
+        return resolved;
+    }
+
+    private String safePathSegment(String value) {
+        return sanitize(value).replaceAll("[^A-Za-z0-9._-]", "_");
     }
 
     private String sanitize(String value) {

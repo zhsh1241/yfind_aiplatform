@@ -273,6 +273,12 @@ export type FileDownloadResponse = {
   diagnostic: string;
 };
 
+export type FileContentDownload = {
+  blob: Blob;
+  contentType: string;
+  filename?: string;
+};
+
 export type NotificationChannel = {
   channelId: string;
   channelType: string;
@@ -604,6 +610,17 @@ export const platformApi = {
   },
   async fileDownloadUrl(fileId: string) {
     return unwrap<FileDownloadResponse>(apiClient.get(`/api/v1/platform/files/${fileId}/download-url`));
+  },
+  async downloadFileContent(fileId: string): Promise<FileContentDownload> {
+    const response = await apiClient.get<Blob>(`/api/v1/platform/files/${fileId}/content`, { responseType: 'blob' });
+    const disposition = response.headers['content-disposition'];
+    const filenameMatch = typeof disposition === 'string' ? disposition.match(/filename="?([^"]+)"?/i) : null;
+    const responseContentType = response.headers['content-type'];
+    return {
+      blob: response.data,
+      contentType: typeof responseContentType === 'string' ? responseContentType : 'application/octet-stream',
+      filename: filenameMatch?.[1],
+    };
   },
   fileContentUrl(fileId: string) {
     const base = apiClient?.defaults?.baseURL ?? '';
