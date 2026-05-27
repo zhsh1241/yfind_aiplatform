@@ -10,8 +10,8 @@ test('TASK-local-dataset-upload AC-01 AC-02 无可用数据源时展示本地上
   await page.getByRole('button', { name: '＋ 新建数据集' }).click();
   await expect(page.getByRole('heading', { name: '新建数据集 / 上传向导' })).toBeVisible();
   await expect(page.getByText('当前无可用数据源')).toBeVisible();
-  await expect(page.getByRole('button', { name: '直接上传图片' })).toBeVisible();
-  await expect(page.getByText('本地上传图片', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '直接上传文件' })).toBeVisible();
+  await expect(page.getByText('本地上传文件', { exact: true })).toBeVisible();
 });
 
 test('TASK-local-dataset-upload AC-05 本地上传提交后可在详情页继续发起标注任务', async ({ page }) => {
@@ -44,6 +44,39 @@ test('TASK-local-dataset-upload AC-05 本地上传提交后可在详情页继续
   await expect(page.getByRole('dialog', { name: '从数据集创建标注任务' })).toBeVisible();
   await page.getByRole('button', { name: '创建任务' }).click();
   await expect(page.getByText('已从数据集创建标注任务')).toBeVisible();
+});
+
+test('TASK-local-dataset-upload AC-02 AC-03 前端直接上传 mp4 建立视频数据集', async ({ page }) => {
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/v1/data-sources', async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e-f015-video', timestamp: new Date().toISOString(), data: [] } });
+  });
+
+  await page.getByText('数据集管理').click();
+  await page.getByRole('button', { name: '＋ 新建数据集' }).click();
+  await expect(page.getByRole('heading', { name: '新建数据集 / 上传向导' })).toBeVisible();
+  await page.locator('input.ant-input').first().fill('F015 本地上传视频数据集');
+  await page.getByLabel('数据类型').click();
+  await page.getByTitle('视频（mp4/mov/avi）').click();
+  await page.getByRole('button', { name: '下一步：创建上传会话' }).click();
+  await expect(page.getByText(/上传会话 DUS-E2E-VIDEO/)).toBeVisible();
+  await expect(page.getByText('拖拽文件，或点击选择mp4 / mov / avi 视频文件')).toBeVisible();
+
+  await page.locator('input[type="file"]').first().setInputFiles({
+    name: 'weld-line.mp4',
+    mimeType: 'video/mp4',
+    buffer: Buffer.from('fake-mp4-binary'),
+  });
+  await page.getByRole('button', { name: '上传并登记到平台', exact: true }).click();
+  await expect(page.getByText(/已接收 1 个文件，拒绝 0 个文件/)).toBeVisible();
+  await expect(page.getByRole('row', { name: /weld-line\.mp4 UPLOADED 4096 B FILE_ACCEPTED/ })).toBeVisible();
+
+  await page.getByRole('button', { name: '提交并创建数据集' }).click();
+  await expect(page.getByText(/阶段进度：SECURITY_SCAN · 70%/)).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'F015 本地上传视频数据集' })).toBeVisible();
+  await expect(page.locator('.ant-descriptions').getByText('视频', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('video/mp4')).toBeVisible();
+  await expect(page.getByText(/当前数据集尚未达到可发起标注任务的状态/)).toBeVisible();
 });
 
 test('TASK-local-dataset-upload AC-01 AC-03 AC-05 数据源导入旧路径仍可继续使用', async ({ page }) => {

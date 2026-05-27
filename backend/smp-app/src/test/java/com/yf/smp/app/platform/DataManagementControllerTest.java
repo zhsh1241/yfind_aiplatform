@@ -144,6 +144,96 @@ class DataManagementControllerTest {
     }
 
     @Test
+    void localVideoDatasetUploadSessionAcceptsMp4MovAviAndCommitsAudioVideoDataset() throws Exception {
+        // TASK-local-dataset-upload AC-02 AC-03 AC-06: 视频直传产品化补充
+        String admin = login("admin", "YF");
+        HttpServer server = mockContentSafetyServer("""
+            {"status":"PASSED"}
+            """);
+        try {
+            putJson("/api/v1/platform/configs/content_safety.endpoint", "trace-f015-video-config-content-safety", """
+                {"scopeType":"BU","scopeId":"TENANT-CABIN","value":"%s","reason":"F015 video upload test override"}
+                """.formatted(serverEndpoint(server)), admin);
+            String buAdmin = login("buadmin", "CABIN");
+            JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-video-session-create", """
+                {"name":"F015 本地上传视频数据集","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"AUDIO_VIDEO","tags":["视频","直传"],"description":"前端直接上传 mp4/mov/avi 建立视频数据集","creationMode":"LOCAL_UPLOAD"}
+                """, buAdmin);
+            assertThat(created.at("/code").asInt()).isZero();
+            String sessionId = created.at("/data/sessionId").asText();
+
+            JsonNode uploaded = postMultipart(
+                "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
+                "trace-f015-video-upload",
+                List.of(
+                    new MultipartPart("files", "weld-line.mp4", "video/mp4", "mp4-payload".getBytes(StandardCharsets.UTF_8)),
+                    new MultipartPart("files", "weld-angle.mov", "video/quicktime", "mov-payload".getBytes(StandardCharsets.UTF_8)),
+                    new MultipartPart("files", "weld-legacy.avi", "video/x-msvideo", "avi-payload".getBytes(StandardCharsets.UTF_8))
+                ),
+                buAdmin
+            );
+            assertThat(uploaded.at("/code").asInt()).isZero();
+            assertThat(uploaded.at("/data/summary/acceptedFiles").asInt()).isEqualTo(3);
+            assertThat(uploaded.at("/data/files").findValuesAsText("contentType")).contains("video/mp4", "video/quicktime", "video/x-msvideo");
+
+            JsonNode committed = postJson("/api/v1/dataset-upload-sessions/" + sessionId + "/commit", "trace-f015-video-commit", "{\"publishRequested\":false}", buAdmin);
+            assertThat(committed.at("/data/status").asText()).isEqualTo("PROCESSING");
+
+            JsonNode completed = waitForUploadSessionStatus(sessionId, buAdmin, "READY");
+            String datasetId = completed.at("/data/datasetId").asText();
+            JsonNode detail = getJson("/api/v1/datasets/" + datasetId, "trace-f015-video-dataset-detail", buAdmin);
+            assertThat(detail.at("/data/dataset/dataType").asText()).isEqualTo("AUDIO_VIDEO");
+            assertThat(detail.at("/data/dataset/status").asText()).isEqualTo("ACTIVE");
+            assertThat(detail.at("/data/files").findValuesAsText("contentType")).contains("video/mp4", "video/quicktime", "video/x-msvideo");
+            assertThat(detail.at("/data/lineage/0/sourceType").asText()).isEqualTo("LOCAL_UPLOAD");
+            JsonNode candidate = getJson("/api/v1/datasets/" + datasetId + "/annotation-candidates", "trace-f015-video-annotation-candidate", buAdmin);
+            assertThat(candidate.at("/data/eligible").asBoolean()).isFalse();
+            assertThat(candidate.at("/data/diagnosticMessage").asText()).contains("抽帧预处理生成 IMAGE 数据集");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void localVideoDatasetUploadRejectsNonVideoFile() throws Exception {
+        String buAdmin = login("buadmin", "CABIN");
+        JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-video-invalid-create", """
+            {"name":"F015 非视频格式","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"VIDEO","creationMode":"LOCAL_UPLOAD"}
+            """, buAdmin);
+        String sessionId = created.at("/data/sessionId").asText();
+        JsonNode rejected = postMultipart(
+            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
+            "trace-f015-video-invalid-upload",
+            List.of(new MultipartPart("files", "notes.txt", "text/plain", "not-video".getBytes(StandardCharsets.UTF_8))),
+            buAdmin
+        );
+        assertThat(rejected.at("/code").asInt()).isEqualTo(42200);
+        assertThat(rejected.at("/message").asText()).contains("UPLOAD_FILE_FORMAT_NOT_ALLOWED");
+        JsonNode queried = getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-video-invalid-query", buAdmin);
+        assertThat(queried.at("/data/files/0/diagnosticMessage").asText()).contains("mp4/mov/avi");
+    }
+
+    @Test
+    void localVideoDatasetUploadRejectsZipEvenWhenZipContainsVideo() throws Exception {
+        String buAdmin = login("buadmin", "CABIN");
+        JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-video-zip-create", """
+            {"name":"F015 视频 zip 拒绝","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"AUDIO_VIDEO","creationMode":"LOCAL_UPLOAD"}
+            """, buAdmin);
+        String sessionId = created.at("/data/sessionId").asText();
+        byte[] zipBytes = zipOf(new ZipPart("weld-line.mp4", "mp4-payload".getBytes(StandardCharsets.UTF_8)));
+        JsonNode rejected = postMultipart(
+            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
+            "trace-f015-video-zip-upload",
+            List.of(new MultipartPart("files", "videos.zip", "application/zip", zipBytes)),
+            buAdmin
+        );
+        assertThat(rejected.at("/code").asInt()).isEqualTo(42200);
+        assertThat(rejected.at("/message").asText()).contains("UPLOAD_FILE_FORMAT_NOT_ALLOWED");
+        JsonNode queried = getJson("/api/v1/dataset-upload-sessions/" + sessionId, "trace-f015-video-zip-query", buAdmin);
+        assertThat(queried.at("/data/summary/acceptedFiles").asInt()).isZero();
+        assertThat(queried.at("/data/files/0/diagnosticMessage").asText()).contains("mp4/mov/avi");
+    }
+
+    @Test
     void localDatasetUploadSecurityBlockedFilesDoNotEnterReadyVersion() throws Exception {
         // TASK-local-dataset-upload AC-04 AC-06
         String admin = login("admin", "YF");
@@ -268,7 +358,7 @@ class DataManagementControllerTest {
         JsonNode rejected = postMultipart(
             "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
             "trace-f015-oversize-upload",
-            List.of(new MultipartPart("files", "too-large.jpg", "image/jpeg", new byte[5 * 1024 * 1024 + 1])),
+            List.of(new MultipartPart("files", "too-large.jpg", "image/jpeg", new byte[(int) (100L * 1024 * 1024 + 1)])),
             buAdmin
         );
         assertThat(rejected.at("/code").asInt()).isEqualTo(41300);

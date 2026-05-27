@@ -38,7 +38,7 @@ const color = (status?: string) => ['ACTIVE', 'PUBLISHED', 'TESTED', 'OK', 'AVAI
   ? 'green'
   : ['UNCONFIGURED', 'DRAFT', 'PAUSED'].includes(status ?? '') ? 'orange' : ['FAILED', 'DISABLED', 'ARCHIVED'].includes(status ?? '') ? 'red' : 'blue';
 const fmtSize = (n?: number | null) => !n ? '0 B' : n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : n > 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${n} B`;
-const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', AUDIO_VIDEO: '影音', TEXT: '文本', TABULAR: '表格', EVENT: '事件', TIME_SERIES: '时序库', TELEMETRY: '遥测', FILE: '文件', OBJECT: '对象', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '外部接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件', VISUAL_PREPROCESS: '视觉预处理', IMAGE_PROCESSING: '图片处理', VIDEO_PROCESSING: '视频处理', QUALITY_ENHANCEMENT: '质量增强', WATERMARK: '水印', FRAME_EXTRACTION: '抽帧', TRADITIONAL_ONLY: '传统增强', CONFIRMED: '已确认', PENDING_CONFIRMATION: '待确认', READY: '就绪' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
+const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', VIDEO: '视频', AUDIO_VIDEO: '视频', TEXT: '文本', TABULAR: '表格', EVENT: '事件', TIME_SERIES: '时序库', TELEMETRY: '遥测', FILE: '文件', OBJECT: '对象', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '外部接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件', VISUAL_PREPROCESS: '视觉预处理', IMAGE_PROCESSING: '图片处理', VIDEO_PROCESSING: '视频处理', QUALITY_ENHANCEMENT: '质量增强', WATERMARK: '水印', FRAME_EXTRACTION: '抽帧', TRADITIONAL_ONLY: '传统增强', CONFIRMED: '已确认', PENDING_CONFIRMATION: '待确认', READY: '就绪' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
 const localFileRowKey = (file: File) => `${(file as File & { webkitRelativePath?: string }).webkitRelativePath ?? file.name}-${file.size}-${file.lastModified}`;
 const localFileRelativePath = (file: File) => (file as File & { webkitRelativePath?: string }).webkitRelativePath ?? '';
 const LOCAL_UPLOAD_BATCH_MAX_FILES = 10;
@@ -58,6 +58,8 @@ const ANNOTATION_DRAFT_POLYGON_VERTEX_RADIUS = 2.2;
 const ANNOTATION_DRAFT_POLYGON_CLOSE_RADIUS = 3.1;
 const ANNOTATION_DRAFT_POLYGON_HIT_RADIUS = 7;
 const ANNOTATION_POLYGON_CENTER_MARK_SIZE = 6;
+const localUploadAccept = (dataType?: string) => dataType === 'AUDIO_VIDEO' ? '.mp4,.mov,.avi,video/mp4,video/quicktime,video/x-msvideo' : 'image/*,.zip';
+const localUploadHint = (dataType?: string) => dataType === 'AUDIO_VIDEO' ? 'mp4 / mov / avi 视频文件' : '图片 / zip 包';
 
 const splitLocalUploadBatches = (files: File[]) => {
   const batches: File[][] = [];
@@ -2956,6 +2958,7 @@ export function DatasetUploadPage() {
   const [uploadSession, setUploadSession] = useState<DatasetUploadSession | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<string>();
   const [selectedLocalFiles, setSelectedLocalFiles] = useState<File[]>([]);
+  const [localUploadDataType, setLocalUploadDataType] = useState<'IMAGE' | 'AUDIO_VIDEO'>('IMAGE');
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const qc = useQueryClient();
   const sources = useQuery({ queryKey: ['data-sources'], queryFn: dataApi.dataSources });
@@ -3024,6 +3027,8 @@ export function DatasetUploadPage() {
       setTargetDatasetId(undefined);
     }
   };
+  const selectedUploadAccept = localUploadAccept(localUploadDataType);
+  const selectedUploadHint = localUploadHint(localUploadDataType);
   const create = useMutation({
     mutationFn: dataApi.createDataset,
     onSuccess: async (created) => {
@@ -3039,7 +3044,7 @@ export function DatasetUploadPage() {
     onSuccess: (created) => {
       setUploadSession(created);
       setStep(1);
-      msg.success('本地上传会话已创建，请选择图片或 zip 包。');
+      msg.success(`本地上传会话已创建，请选择${localUploadHint(localUploadDataType)}。`);
     },
     onError: (e: Error) => msg.error(e.message),
   });
@@ -3051,7 +3056,7 @@ export function DatasetUploadPage() {
         session = await dataApi.uploadDatasetSessionFiles(sessionId, batch);
       }
       if (!session) {
-        throw new Error('请选择本地图片或 zip 包后再上传。');
+        throw new Error(`请选择本地${selectedUploadHint}后再上传。`);
       }
       return { session, batchCount: batches.length, fileCount: uploadFiles.length };
     },
@@ -3098,11 +3103,11 @@ export function DatasetUploadPage() {
       <div className="page-hero">
         <div>
           <Typography.Title level={3}>新建数据集 / 上传向导</Typography.Title>
-          <Typography.Text type="secondary">双路径创建 · Ant Design Upload.Dragger · 数据源导入保持兼容 · 无可用数据源时支持本地上传图片</Typography.Text>
+          <Typography.Text type="secondary">双路径创建 · Ant Design Upload.Dragger · 数据源导入保持兼容 · 支持直接上传图片或 mp4/mov/avi 视频建立数据集</Typography.Text>
         </div>
       </div>
       <Card>
-        <Alert type="info" showIcon style={{ marginBottom: 16 }} title="复用 F007 文件元数据 seam" description="数据源导入路径继续复用 platform_file_object 文件事实；本地上传路径新增 upload session + 图片文件登记能力。" />
+        <Alert type="info" showIcon style={{ marginBottom: 16 }} title="复用 F007 文件元数据 seam" description="数据源导入路径继续复用 platform_file_object 文件事实；本地上传路径通过 upload session 登记图片与 mp4/mov/avi 视频文件。" />
         <Steps
           current={step}
           items={[
@@ -3144,7 +3149,7 @@ export function DatasetUploadPage() {
                 name: targetAction === 'APPEND_VERSION' ? (selectedAppendDataset?.name ?? values.name) : values.name,
                 tenantId: currentTenantId,
                 datasetType: 'RAW',
-                dataType: 'IMAGE',
+                dataType: localUploadDataType,
                 accessLevel: values.accessLevel,
                 tags,
                 description: values.description,
@@ -3161,7 +3166,7 @@ export function DatasetUploadPage() {
                 onChange={(value) => resetFlow(value)}
                 options={[
                   { value: 'DATA_SOURCE_IMPORT', label: '从数据源导入', disabled: activeSources.length === 0 },
-                  { value: 'LOCAL_UPLOAD', label: '本地上传图片' },
+                  { value: 'LOCAL_UPLOAD', label: '本地上传文件' },
                 ]}
               />
             </Form.Item>
@@ -3173,22 +3178,45 @@ export function DatasetUploadPage() {
                 title="当前无可用数据源"
                 description={
                   <Space wrap>
-                    <span>你可以直接上传图片创建数据集，或先去配置数据源。</span>
-                    <Button size="small" type="primary" onClick={() => resetFlow('LOCAL_UPLOAD')}>直接上传图片</Button>
+                    <span>你可以直接上传图片或 mp4/mov/avi 视频创建数据集，或先去配置数据源。</span>
+                    <Button size="small" type="primary" onClick={() => resetFlow('LOCAL_UPLOAD')}>直接上传文件</Button>
                     <Button size="small" onClick={() => nav('/datasrc')}>去创建数据源</Button>
                   </Space>
                 }
               />
             ) : null}
             <Form.Item name="name" label="数据集名称" rules={[{ required: true, message: '请输入数据集名称' }]}><Input /></Form.Item>
-            <Form.Item name="dataType" label="数据类型"><Select disabled={effectiveCreationMode === 'LOCAL_UPLOAD'} options={['IMAGE', 'TEXT', 'AUDIO', 'VIDEO', 'TABULAR'].map((v) => ({ value: v, label: txt(v) }))} /></Form.Item>
+            <Form.Item name="dataType" label="数据类型">
+              {effectiveCreationMode === 'LOCAL_UPLOAD' ? (
+                <Select
+                  value={localUploadDataType}
+                  onChange={(value) => {
+                    setLocalUploadDataType(value);
+                    setSelectedLocalFiles([]);
+                  }}
+                  disabled={targetAction === 'APPEND_VERSION'}
+                  options={[
+                    { value: 'IMAGE', label: '图片（image/zip）' },
+                    { value: 'AUDIO_VIDEO', label: '视频（mp4/mov/avi）' },
+                  ]}
+                />
+              ) : (
+                <Select options={['IMAGE', 'TEXT', 'AUDIO', 'VIDEO', 'TABULAR'].map((v) => ({ value: v, label: txt(v) }))} />
+              )}
+            </Form.Item>
             <Form.Item name="accessLevel" label="访问级别"><Select options={['PUBLIC', 'TEAM', 'PRIVATE', 'RESTRICTED'].map((v) => ({ value: v, label: v }))} /></Form.Item>
             {effectiveCreationMode === 'LOCAL_UPLOAD' ? (
               <>
                 <Form.Item label="上传目标">
                   <Select
                     value={targetAction}
-                    onChange={(value) => setTargetAction(value)}
+                    onChange={(value) => {
+                      setTargetAction(value);
+                      if (value === 'APPEND_VERSION') {
+                        setLocalUploadDataType('IMAGE');
+                        setSelectedLocalFiles([]);
+                      }
+                    }}
                     options={[
                       { value: 'CREATE_DATASET', label: '创建新数据集' },
                       { value: 'APPEND_VERSION', label: '追加到既有当前版本' },
@@ -3231,7 +3259,7 @@ export function DatasetUploadPage() {
           <Space direction="vertical" className="full-width">
             <Alert type="info" showIcon title="文件登记 seam" description="选择 F007 platform_file_object，提交后后端执行 AVAILABLE、sha256 与 size 校验，并绑定到当前版本草稿。" />
             <div className="dataset-upload-drop">
-              <Upload.Dragger multiple directory accept="image/*,.zip" showUploadList={false} beforeUpload={() => false}>
+              <Upload.Dragger multiple directory accept="image/*,.zip,.mp4,.mov,.avi" showUploadList={false} beforeUpload={() => false}>
                 <p className="ant-upload-drag-icon">⬆</p>
                 <p className="ant-upload-text">拖拽文件或文件夹</p>
                 <p className="ant-upload-hint">数据源导入路径仅展示拖拽能力占位；实际绑定仍以下方 F007 文件对象清单为准。</p>
@@ -3248,7 +3276,7 @@ export function DatasetUploadPage() {
             <div className="dataset-upload-drop">
               <Upload.Dragger
                 multiple
-                accept="image/*,.zip"
+                accept={selectedUploadAccept}
                 showUploadList={false}
                 beforeUpload={(file) => {
                   appendLocalFiles([file as File]);
@@ -3256,15 +3284,15 @@ export function DatasetUploadPage() {
                 }}
               >
                 <p className="ant-upload-drag-icon">⬆</p>
-                <p className="ant-upload-text">拖拽文件，或点击选择图片 / zip 包</p>
-                <p className="ant-upload-hint">如果要导入整个文件夹，请使用下方“选择文件夹”。选择后会先展示在下方表格，再点击“上传并登记到平台”。平台会按大小自动分批上传，避免大批量图片一次性提交失败。</p>
+                <p className="ant-upload-text">拖拽文件，或点击选择{selectedUploadHint}</p>
+                <p className="ant-upload-hint">如果要导入整个文件夹，请使用下方“选择文件夹”。选择后会先展示在下方表格，再点击“上传并登记到平台”。平台会按大小自动分批上传，避免大批量文件一次性提交失败。</p>
               </Upload.Dragger>
             </div>
             <input
               ref={folderInputRef}
               type="file"
               multiple
-              accept="image/*,.zip"
+              accept={selectedUploadAccept}
               onChange={handleFolderInputChange}
               style={{ display: 'none' }}
               {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
@@ -3278,7 +3306,7 @@ export function DatasetUploadPage() {
               rowKey="key"
               dataSource={selectedLocalFiles.map((file) => ({ key: localFileRowKey(file), name: file.name, relativePath: localFileRelativePath(file), type: file.type || 'application/octet-stream', size: file.size }))}
               pagination={false}
-              locale={{ emptyText: '请选择本地图片或 zip 包。' }}
+              locale={{ emptyText: `请选择本地${selectedUploadHint}。` }}
               columns={[
                 {
                   title: '文件名',

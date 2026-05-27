@@ -755,7 +755,7 @@ export const dataApi = {
   async syncTasks() { return unwrap<DataSourceSyncTask[]>(apiClient.get('/api/v1/data-source-sync-tasks')); },
   async createSyncTask(input: { sourceId: string; targetDatasetId?: string; name: string; scheduleMode: string; syncScope?: string }) { return unwrap<DataSourceSyncTask>(apiClient.post('/api/v1/data-source-sync-tasks', input)); },
   async runSyncTask(taskId: string) { return unwrap<DataSourceSyncTask>(apiClient.post(`/api/v1/data-source-sync-tasks/${taskId}/run`)); },
-  async createDatasetUploadSession(input: { name: string; tenantId?: string; datasetType: string; dataType: string; accessLevel: string; tags: string[]; description?: string; creationMode: 'LOCAL_UPLOAD'; targetAction?: 'CREATE_DATASET' | 'APPEND_VERSION'; targetDatasetId?: string; targetVersionId?: string }) {
+  async createDatasetUploadSession(input: { name: string; tenantId?: string; datasetType: string; dataType: 'IMAGE' | 'AUDIO_VIDEO' | 'VIDEO'; accessLevel: string; tags: string[]; description?: string; creationMode: 'LOCAL_UPLOAD'; targetAction?: 'CREATE_DATASET' | 'APPEND_VERSION'; targetDatasetId?: string; targetVersionId?: string }) {
     return unwrap<DatasetUploadSession>(apiClient.post('/api/v1/dataset-upload-sessions', input));
   },
   async uploadDatasetSessionFiles(sessionId: string, files: File[]) {

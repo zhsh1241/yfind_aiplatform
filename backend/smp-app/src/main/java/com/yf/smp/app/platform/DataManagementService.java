@@ -203,8 +203,8 @@ class DefaultContentSafetyScanner implements ContentSafetyScanner {
 @Service
 public class DataManagementService {
     private static final String TRACE_TAG = "TASK-data-source-dataset-management";
-    private static final long MAX_UPLOAD_FILE_BYTES = 5L * 1024 * 1024;
-    private static final long MAX_UPLOAD_ZIP_BYTES = 20L * 1024 * 1024;
+    private static final long MAX_UPLOAD_FILE_BYTES = 100L * 1024 * 1024;
+    private static final long MAX_UPLOAD_ZIP_BYTES = 500L * 1024 * 1024;
     private static final Logger log = LoggerFactory.getLogger(DataManagementService.class);
     private final JdbcTemplate jdbc;
     private final PlatformIdentityService identityService;
@@ -287,7 +287,13 @@ public class DataManagementService {
         String message = "数据集可创建标注任务";
         boolean eligible = true;
         if (!"ACTIVE".equals(d.status())) { eligible = false; code = "DATASET_NOT_ACTIVE"; message = "DAT-009 要求源数据集必须为 ACTIVE"; }
-        else if (!"IMAGE".equalsIgnoreCase(d.dataType())) { eligible = false; code = "ANNOTATION_DATASET_TYPE_UNSUPPORTED"; message = "当前仅支持图片数据集创建标注任务"; }
+        else if (!"IMAGE".equalsIgnoreCase(d.dataType())) {
+            eligible = false;
+            code = "ANNOTATION_DATASET_TYPE_UNSUPPORTED";
+            message = "AUDIO_VIDEO".equalsIgnoreCase(d.dataType())
+                ? "视频原始数据集需先经过抽帧预处理生成 IMAGE 数据集后再标注"
+                : "当前仅支持图片数据集创建标注任务";
+        }
         List<AnnotationLabelTemplateResponse> templates = annotationService.labelTemplates(principal, "PUBLISHED", null).stream()
             .filter(t -> d.tenantId().equals(t.tenantId()))
             .filter(t -> List.of("IMAGE_TAGGING", "IMAGE_SEGMENTATION").contains(t.scene()))
@@ -355,8 +361,9 @@ public class DataManagementService {
         if (!"RAW".equalsIgnoreCase(blank(r.datasetType(), "RAW"))) {
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_DATASET_TYPE_INVALID: 本地上传仅支持 RAW");
         }
-        if (!"IMAGE".equalsIgnoreCase(blank(r.dataType(), "IMAGE"))) {
-            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_DATA_TYPE_INVALID: 本地上传仅支持 IMAGE");
+        String dataType = normalizeLocalUploadDataType(r.dataType());
+        if ("APPEND_VERSION".equals(upper(r.targetAction(), "CREATE_DATASET")) && !"IMAGE".equals(dataType)) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_APPEND_DATA_TYPE_INVALID: 追加模式当前仅支持 IMAGE 数据集");
         }
         String targetAction = upper(r.targetAction(), "CREATE_DATASET");
         String targetDatasetId = null;
@@ -374,7 +381,7 @@ public class DataManagementService {
             (session_id,dataset_id,version_id,tenant_id,creation_mode,status,dataset_name,dataset_type,data_type,access_level,tags,description,total_files,accepted_files,rejected_files,diagnostic_code,diagnostic_message,created_by,created_at,target_action,target_dataset_id,target_version_id)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
-            sessionId, null, null, tenantId, "LOCAL_UPLOAD", "PENDING_UPLOAD", name, "RAW", "IMAGE",
+            sessionId, null, null, tenantId, "LOCAL_UPLOAD", "PENDING_UPLOAD", name, "RAW", dataType,
             upper(r.accessLevel(), "TEAM"), joinTags(r.tags()), nullIfBlank(r.description()),
             0, 0, 0, "OK", "SESSION_CREATED", principal.user().id(), now, targetAction, targetDatasetId, targetVersionId);
         audit(principal, tenantId, "DATASET_UPLOAD_SESSION_CREATED", "DatasetUploadSession", sessionId, "SUCCESS", "INFO", null, "PENDING_UPLOAD", TRACE_TAG + ";" + targetAction);
@@ -817,6 +824,11 @@ public class DataManagementService {
         long size = part.getSize();
         try {
             if (normalizedName.toLowerCase(Locale.ROOT).endsWith(".zip")) {
+                if (!"IMAGE".equals(session.dataType())) {
+                    insertRejectedUploadFile(session.sessionId(), normalizedName, size, "DATASET_UPLOAD_FILE_TYPE_UNSUPPORTED", unsupportedUploadMessage(session.dataType()));
+                    audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_REJECTED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", normalizedName, "FILE_TYPE_UNSUPPORTED", TRACE_TAG);
+                    throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "UPLOAD_FILE_FORMAT_NOT_ALLOWED: DATASET_UPLOAD_FILE_TYPE_UNSUPPORTED");
+                }
                 if (size > MAX_UPLOAD_ZIP_BYTES) {
                     insertRejectedUploadFile(session.sessionId(), normalizedName, size, "DATASET_UPLOAD_ZIP_SIZE_EXCEEDED", "zip 文件大小超出当前阈值");
                     audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_REJECTED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", normalizedName, "ZIP_SIZE_EXCEEDED", TRACE_TAG);
@@ -851,8 +863,8 @@ public class DataManagementService {
     }
     private void processSingleUploadFile(PlatformPrincipal principal, DatasetUploadSessionRecord session, String fileName, String contentType, byte[] bytes, OffsetDateTime now) {
         long size = bytes.length;
-        if (!isSupportedImageFile(fileName, contentType)) {
-            insertRejectedUploadFile(session.sessionId(), fileName, size, "DATASET_UPLOAD_FILE_TYPE_UNSUPPORTED", "仅支持图片文件与 zip 包");
+        if (!isSupportedUploadFile(session.dataType(), fileName, contentType)) {
+            insertRejectedUploadFile(session.sessionId(), fileName, size, "DATASET_UPLOAD_FILE_TYPE_UNSUPPORTED", unsupportedUploadMessage(session.dataType()));
             audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_REJECTED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", fileName, "FILE_TYPE_UNSUPPORTED", TRACE_TAG);
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "UPLOAD_FILE_FORMAT_NOT_ALLOWED: DATASET_UPLOAD_FILE_TYPE_UNSUPPORTED");
         }
@@ -861,10 +873,15 @@ public class DataManagementService {
             audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_REJECTED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", fileName, "FILE_LIMIT_EXCEEDED", TRACE_TAG);
             throw new PlatformException(PlatformError.PAYLOAD_TOO_LARGE, "DATASET_UPLOAD_FILE_LIMIT_EXCEEDED: 文件大小超出当前阈值");
         }
-        if (!isValidImageContent(bytes)) {
+        if ("IMAGE".equals(session.dataType()) && !isValidImageContent(bytes)) {
             insertRejectedUploadFile(session.sessionId(), fileName, size, "DATASET_UPLOAD_FILE_CORRUPTED", "图片内容损坏或无法解析");
             audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_REJECTED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", fileName, "FILE_CORRUPTED", TRACE_TAG);
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_FILE_CORRUPTED: 图片内容损坏或无法解析");
+        }
+        if ("AUDIO_VIDEO".equals(session.dataType()) && !isValidVideoContent(fileName, contentType, bytes)) {
+            insertRejectedUploadFile(session.sessionId(), fileName, size, "DATASET_UPLOAD_FILE_CORRUPTED", "视频内容损坏、为空或无法识别");
+            audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_REJECTED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", fileName, "VIDEO_FILE_CORRUPTED", TRACE_TAG);
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_FILE_CORRUPTED: 视频内容损坏、为空或无法识别");
         }
         ContentSafetyScanResult scanResult = contentSafetyScanner.scan(contentSafetyEndpoint(session.tenantId()), session.tenantId(), fileName, bytes);
         String fileId = "FILE-" + randomHex(12).toUpperCase(Locale.ROOT);
@@ -1008,10 +1025,30 @@ public class DataManagementService {
         Long total = jdbc.queryForObject("SELECT COALESCE(SUM(f.size_bytes),0) FROM dataset_file df JOIN platform_file_object f ON f.file_id=df.file_id WHERE df.version_id=?", Long.class, versionId);
         return total == null ? 0 : total;
     }
+    private String normalizeLocalUploadDataType(String value) {
+        String type = upper(value, "IMAGE");
+        return switch (type) {
+            case "IMAGE" -> "IMAGE";
+            case "VIDEO", "AUDIO_VIDEO" -> "AUDIO_VIDEO";
+            default -> throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_UPLOAD_DATA_TYPE_INVALID: 本地上传仅支持 IMAGE 或 AUDIO_VIDEO");
+        };
+    }
+    private boolean isSupportedUploadFile(String dataType, String fileName, String contentType) {
+        return "AUDIO_VIDEO".equalsIgnoreCase(dataType) ? isSupportedVideoFile(fileName, contentType) : isSupportedImageFile(fileName, contentType);
+    }
+    private String unsupportedUploadMessage(String dataType) {
+        return "AUDIO_VIDEO".equalsIgnoreCase(dataType) ? "仅支持 mp4/mov/avi 视频文件" : "仅支持图片文件与 zip 包";
+    }
     private boolean isSupportedImageFile(String fileName, String contentType) {
         String name = blank(fileName, "").toLowerCase(Locale.ROOT);
         if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".bmp") || name.endsWith(".webp")) return true;
         return contentType != null && contentType.toLowerCase(Locale.ROOT).startsWith("image/");
+    }
+    private boolean isSupportedVideoFile(String fileName, String contentType) {
+        String name = blank(fileName, "").toLowerCase(Locale.ROOT);
+        if (name.endsWith(".mp4") || name.endsWith(".mov") || name.endsWith(".avi")) return true;
+        String type = blank(contentType, "").toLowerCase(Locale.ROOT);
+        return type.equals("video/mp4") || type.equals("video/quicktime") || type.equals("video/x-msvideo") || type.equals("video/avi");
     }
     private String contentSafetyEndpoint(String tenantId) {
         List<String> values = jdbc.queryForList("SELECT value_json FROM platform_config_value WHERE config_key='content_safety.endpoint' AND ((scope_type='BU' AND scope_id=?) OR (scope_type='GLOBAL' AND scope_id='TENANT-YF')) ORDER BY CASE WHEN scope_type='BU' THEN 0 ELSE 1 END", String.class, tenantId);
@@ -1036,6 +1073,9 @@ public class DataManagementService {
             return false;
         }
     }
+    private boolean isValidVideoContent(String fileName, String contentType, byte[] bytes) {
+        return bytes != null && bytes.length > 0 && isSupportedVideoFile(fileName, contentType);
+    }
     private String detectContentType(String fileName) {
         String name = blank(fileName, "").toLowerCase(Locale.ROOT);
         if (name.endsWith(".png")) return "image/png";
@@ -1043,6 +1083,9 @@ public class DataManagementService {
         if (name.endsWith(".bmp")) return "image/bmp";
         if (name.endsWith(".webp")) return "image/webp";
         if (name.endsWith(".zip")) return "application/zip";
+        if (name.endsWith(".mp4")) return "video/mp4";
+        if (name.endsWith(".mov")) return "video/quicktime";
+        if (name.endsWith(".avi")) return "video/x-msvideo";
         return "application/octet-stream";
     }
     private String sanitizeFileName(String fileName) { return blank(fileName, "file").replace('\\', '-').replace('/', '-').replace(' ', '_'); }
