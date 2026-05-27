@@ -526,6 +526,88 @@ class DataManagementControllerTest {
     }
 
     @Test
+    void rtspStreamSourceTestsSamplesAndBlocksDirectAnnotation() throws Exception {
+        // TASK-rtsp-video-stream-input AC-01 AC-02 AC-03 AC-04 AC-05 AC-06
+        String admin = login("admin", "YF");
+        JsonNode created = postJson("/api/v1/data-sources", "trace-f018-rtsp-create", """
+            {"name":"F018 焊缝 RTSP 视频流","sourceType":"RTSP_STREAM","tenantId":"TENANT-CABIN","endpoint":"rtsp://camera.sandbox.internal/live/weld","port":554,"databaseName":"camera-line-01","credentialMode":"SECRET_REF","secretRef":"secret://sandbox/rtsp-camera","sharedScope":"BU","description":"TASK-rtsp-video-stream-input AC-01"}
+            """, admin);
+        assertThat(created.at("/code").asInt()).isZero();
+        assertThat(created.at("/data/sourceType").asText()).isEqualTo("RTSP_STREAM");
+        assertThat(created.at("/data/secretRefMasked").asText()).startsWith("secret://");
+        String sourceId = created.at("/data/sourceId").asText();
+
+        JsonNode tested = postJson("/api/v1/data-sources/" + sourceId + "/test", "trace-f018-rtsp-test", "{}", admin);
+        assertThat(tested.at("/data/result").asText()).isEqualTo("SUCCESS");
+        assertThat(tested.at("/data/status").asText()).isEqualTo("TESTED");
+        assertThat(tested.at("/data/diagnosticCode").asText()).isEqualTo("OK");
+        assertThat(tested.at("/data/diagnosticMessage").asText()).contains("SANDBOX RTSP_STREAM connector verified");
+
+        JsonNode activated = postJson("/api/v1/data-sources/" + sourceId + "/activate", "trace-f018-rtsp-activate", "{}", admin);
+        assertThat(activated.at("/data/status").asText()).isEqualTo("ACTIVE");
+
+        JsonNode task = postJson("/api/v1/data-source-sync-tasks", "trace-f018-rtsp-task", """
+            {"sourceId":"%s","name":"F018 RTSP 手动采样","scheduleMode":"MANUAL","syncScope":"durationSeconds=10;sampleName=weld-line"}
+            """.formatted(sourceId), admin);
+        assertThat(task.at("/code").asInt()).isZero();
+        assertThat(task.at("/data/diagnosticCode").asText()).isEqualTo("RTSP_SAMPLE_READY");
+        String taskId = task.at("/data/taskId").asText();
+
+        JsonNode run = postJson("/api/v1/data-source-sync-tasks/" + taskId + "/run", "trace-f018-rtsp-run", "{}", admin);
+        assertThat(run.at("/data/status").asText()).isEqualTo("SUCCEEDED");
+        assertThat(run.at("/data/diagnosticMessage").asText()).isEqualTo("SANDBOX_RTSP_STREAM_SAMPLE_READY");
+        String datasetId = run.at("/data/targetDatasetId").asText();
+
+        JsonNode detail = getJson("/api/v1/datasets/" + datasetId, "trace-f018-rtsp-detail", admin);
+        assertThat(detail.at("/data/dataset/datasetType").asText()).isEqualTo("RAW");
+        assertThat(detail.at("/data/dataset/dataType").asText()).isEqualTo("AUDIO_VIDEO");
+        assertThat(detail.at("/data/files/0/fileRole").asText()).isEqualTo("RAW");
+        assertThat(detail.at("/data/files/0/contentType").asText()).isEqualTo("video/mp4");
+        assertThat(detail.at("/data/lineage/0/sourceType").asText()).isEqualTo("RTSP_STREAM");
+        assertThat(detail.at("/data/lineage/0/transformType").asText()).isEqualTo("CAPTURE_SAMPLE");
+
+        JsonNode candidate = getJson("/api/v1/datasets/" + datasetId + "/annotation-candidates", "trace-f018-rtsp-annotation-candidate", admin);
+        assertThat(candidate.at("/data/eligible").asBoolean()).isFalse();
+        assertThat(candidate.at("/data/diagnosticCode").asText()).isEqualTo("ANNOTATION_DATASET_TYPE_UNSUPPORTED");
+        assertThat(candidate.at("/data/diagnosticMessage").asText()).contains("抽帧预处理生成 IMAGE 数据集后再标注");
+
+        JsonNode audit = getJson("/api/v1/platform/audit-logs?action=RTSP_SAMPLE_TASK_RUN_SUCCEEDED", "trace-f018-rtsp-audit", admin);
+        assertThat(audit.at("/data/items/0/action").asText()).isEqualTo("RTSP_SAMPLE_TASK_RUN_SUCCEEDED");
+    }
+
+    @Test
+    void rtspStreamSourceRejectsInvalidUrlMissingCredentialAndDisabledSampling() throws Exception {
+        // TASK-rtsp-video-stream-input AC-01 AC-02 AC-03 AC-06
+        String admin = login("admin", "YF");
+        JsonNode invalid = postJson("/api/v1/data-sources", "trace-f018-rtsp-invalid-url", """
+            {"name":"F018 非法 RTSP","sourceType":"RTSP_STREAM","tenantId":"TENANT-CABIN","endpoint":"http://camera.internal/live","credentialMode":"SECRET_REF","secretRef":"secret://sandbox/rtsp-camera","sharedScope":"BU"}
+            """, admin);
+        assertThat(invalid.at("/code").asInt()).isEqualTo(42200);
+        assertThat(invalid.at("/message").asText()).contains("RTSP_SOURCE_URL_INVALID");
+
+        JsonNode missingCredential = postJson("/api/v1/data-sources", "trace-f018-rtsp-missing-secret", """
+            {"name":"F018 缺凭据 RTSP","sourceType":"RTSP_STREAM","tenantId":"TENANT-CABIN","endpoint":"rtsp://camera.sandbox.internal/live","credentialMode":"SECRET_REF","sharedScope":"BU"}
+            """, admin);
+        assertThat(missingCredential.at("/code").asInt()).isEqualTo(42200);
+        assertThat(missingCredential.at("/message").asText()).contains("RTSP_SOURCE_CREDENTIAL_REQUIRED");
+
+        JsonNode created = postJson("/api/v1/data-sources", "trace-f018-rtsp-disable-create", """
+            {"name":"F018 禁用 RTSP","sourceType":"RTSP_STREAM","tenantId":"TENANT-CABIN","endpoint":"rtsp://camera.sandbox.internal/live","credentialMode":"SECRET_REF","secretRef":"secret://sandbox/rtsp-disabled","sharedScope":"BU"}
+            """, admin);
+        String sourceId = created.at("/data/sourceId").asText();
+        postJson("/api/v1/data-sources/" + sourceId + "/test", "trace-f018-rtsp-disable-test", "{}", admin);
+        postJson("/api/v1/data-sources/" + sourceId + "/activate", "trace-f018-rtsp-disable-activate", "{}", admin);
+        JsonNode disabled = postJson("/api/v1/data-sources/" + sourceId + "/disable", "trace-f018-rtsp-disable", "{}", admin);
+        assertThat(disabled.at("/data/status").asText()).isEqualTo("DISABLED");
+
+        JsonNode syncRejected = postJson("/api/v1/data-source-sync-tasks", "trace-f018-rtsp-disabled-task", """
+            {"sourceId":"%s","name":"禁用 RTSP 采样","scheduleMode":"MANUAL"}
+            """.formatted(sourceId), admin);
+        assertThat(syncRejected.at("/code").asInt()).isEqualTo(40900);
+        assertThat(syncRejected.at("/message").asText()).contains("DATA_SOURCE_NOT_ACTIVE");
+    }
+
+    @Test
     void dataStandardizationProfilesAndRunsOnDatasetsFromDifferentSources() throws Exception {
         // TASK-data-standardization-pipeline AC-01 AC-02 AC-03 AC-04 AC-05
         String admin = login("admin", "YF");

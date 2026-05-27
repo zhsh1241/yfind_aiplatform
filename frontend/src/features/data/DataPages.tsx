@@ -38,7 +38,7 @@ const color = (status?: string) => ['ACTIVE', 'PUBLISHED', 'TESTED', 'OK', 'AVAI
   ? 'green'
   : ['UNCONFIGURED', 'DRAFT', 'PAUSED'].includes(status ?? '') ? 'orange' : ['FAILED', 'DISABLED', 'ARCHIVED'].includes(status ?? '') ? 'red' : 'blue';
 const fmtSize = (n?: number | null) => !n ? '0 B' : n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : n > 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${n} B`;
-const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', VIDEO: '视频', AUDIO_VIDEO: '视频', TEXT: '文本', TABULAR: '表格', EVENT: '事件', TIME_SERIES: '时序库', TELEMETRY: '遥测', FILE: '文件', OBJECT: '对象', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '外部接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件', VISUAL_PREPROCESS: '视觉预处理', IMAGE_PROCESSING: '图片处理', VIDEO_PROCESSING: '视频处理', QUALITY_ENHANCEMENT: '质量增强', WATERMARK: '水印', FRAME_EXTRACTION: '抽帧', TRADITIONAL_ONLY: '传统增强', CONFIRMED: '已确认', PENDING_CONFIRMATION: '待确认', READY: '就绪' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
+const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', VIDEO: '视频', AUDIO_VIDEO: '视频', TEXT: '文本', TABULAR: '表格', EVENT: '事件', TIME_SERIES: '时序库', TELEMETRY: '遥测', FILE: '文件', OBJECT: '对象', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', RTSP_STREAM: 'RTSP视频流', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '外部接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件', VISUAL_PREPROCESS: '视觉预处理', IMAGE_PROCESSING: '图片处理', VIDEO_PROCESSING: '视频处理', QUALITY_ENHANCEMENT: '质量增强', WATERMARK: '水印', FRAME_EXTRACTION: '抽帧', TRADITIONAL_ONLY: '传统增强', CONFIRMED: '已确认', PENDING_CONFIRMATION: '待确认', READY: '就绪' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
 const localFileRowKey = (file: File) => `${(file as File & { webkitRelativePath?: string }).webkitRelativePath ?? file.name}-${file.size}-${file.lastModified}`;
 const localFileRelativePath = (file: File) => (file as File & { webkitRelativePath?: string }).webkitRelativePath ?? '';
 const LOCAL_UPLOAD_BATCH_MAX_FILES = 10;
@@ -2542,42 +2542,46 @@ export function DataSourceManagementPage() {
   const [detail, setDetail] = useState<DataSourceSummary | null>(null);
   const sources = useQuery({ queryKey: ['data-sources'], queryFn: dataApi.dataSources });
   const tasks = useQuery({ queryKey: ['data-sync-tasks'], queryFn: dataApi.syncTasks });
+  const sourceById = (sourceId?: string | null) => (sources.data ?? []).find((source) => source.sourceId === sourceId);
+  const isRtspSource = (sourceId?: string | null) => sourceById(sourceId)?.sourceType === 'RTSP_STREAM';
+  const activeTestedSources = (sources.data ?? []).filter((source) => source.status === 'ACTIVE' && source.diagnosticCode === 'OK');
+  const sourceTypeOptions = ['RELATIONAL_DB', 'FILE', 'OBJECT_STORAGE', 'STREAM', 'RTSP_STREAM', 'TIME_SERIES', 'INDUSTRIAL_PROTOCOL', 'API'];
   const inv = () => Promise.all([qc.invalidateQueries({ queryKey: ['data-sources'] }), qc.invalidateQueries({ queryKey: ['data-sync-tasks'] })]);
   const create = useMutation({ mutationFn: dataApi.createDataSource, onSuccess: async () => { setOpen(false); await inv(); msg.success('数据源已创建'); }, onError: (e: Error) => msg.error(e.message) });
   const test = useMutation({ mutationFn: dataApi.testDataSource, onSuccess: async (r) => { await inv(); msg.info(`${r.result}: ${r.diagnosticMessage}`); }, onError: (e: Error) => msg.error(e.message) });
   const activate = useMutation({ mutationFn: dataApi.activateDataSource, onSuccess: async () => { await inv(); msg.success('数据源已激活'); }, onError: (e: Error) => msg.error(e.message) });
   const disable = useMutation({ mutationFn: dataApi.disableDataSource, onSuccess: inv, onError: (e: Error) => msg.error(e.message) });
-  const createTask = useMutation({ mutationFn: dataApi.createSyncTask, onSuccess: async () => { setSyncOpen(false); await inv(); msg.success('同步任务 seam 已保存'); }, onError: (e: Error) => msg.error(e.message) });
+  const createTask = useMutation({ mutationFn: dataApi.createSyncTask, onSuccess: async (created) => { setSyncOpen(false); await inv(); msg.success(isRtspSource(created.sourceId) ? 'RTSP 采样任务 seam 已保存' : '同步任务 seam 已保存'); }, onError: (e: Error) => msg.error(e.message) });
   const runTask = useMutation({ mutationFn: dataApi.runSyncTask, onSuccess: async (r) => { await inv(); (r.status === 'SUCCEEDED' ? msg.success : msg.warning)(`${r.status}: ${r.diagnosticMessage}`); }, onError: (e: Error) => msg.error(e.message) });
 
   return (
     <div className="content-page">
       {holder}
       <div className="page-hero">
-        <div><Typography.Title level={3}>数据源管理</Typography.Title><Typography.Text type="secondary">管理文件、数据库、API、流、时序库与工业协议数据源连接和同步导入任务</Typography.Text></div>
+        <div><Typography.Title level={3}>数据源管理</Typography.Title><Typography.Text type="secondary">管理文件、数据库、API、流、RTSP 视频流、时序库与工业协议数据源连接、同步导入与采样任务</Typography.Text></div>
         <Space><Button onClick={() => setSyncOpen(true)}>＋ 新建同步任务</Button><Button type="primary" onClick={() => setOpen(true)}>＋ 新建数据源</Button></Space>
       </div>
-      <Alert type="info" showIcon title="数据集导入方式" description="支持文件/对象存储登记导入，也支持关系型数据库、外部 API、流数据、时序库、工业协议通过已激活数据源 + 同步任务导入；本地 sandbox connector 会生成可追踪的数据集版本、文件元数据与血缘。" style={{ marginBottom: 16 }} />
+      <Alert type="info" showIcon title="数据集导入方式" description="支持文件/对象存储登记导入，也支持关系型数据库、外部 API、流数据、RTSP 视频流、时序库、工业协议通过已激活数据源 + 同步/采样任务导入；本地 sandbox connector 会生成可追踪的数据集版本、文件元数据与血缘。RTSP 一期仅登记采样任务与 video/mp4 样本，不引入真实解码。" style={{ marginBottom: 16 }} />
       <Tabs items={[
         { key: 'sources', label: '数据源列表', children: <div className="data-source-grid">{(sources.data ?? []).map((s) => <Card key={s.sourceId} title={<Space><Tag color="blue">{txt(s.sourceType)}</Tag>{s.name}</Space>} extra={<Tag color={color(s.status)}>{s.status}</Tag>}><Space direction="vertical" className="full-width"><Typography.Text className="mono">{s.endpoint}{s.port ? `:${s.port}` : ''}</Typography.Text><Typography.Text type="secondary">secretRef: {s.secretRefMasked}</Typography.Text><Typography.Text type="secondary">诊断：{s.diagnosticCode ?? 'NOT_TESTED'} · {s.diagnosticMessage}</Typography.Text><Space wrap><Button size="small" onClick={() => test.mutate(s.sourceId)}>测试连接</Button><Button size="small" onClick={() => setDetail(s)}>详情/编辑</Button><Button size="small" type="primary" onClick={() => activate.mutate(s.sourceId)}>激活</Button><Button size="small" danger onClick={() => disable.mutate(s.sourceId)}>禁用</Button></Space></Space></Card>)}</div> },
-        { key: 'tasks', label: '同步任务', children: <Table<DataSourceSyncTask> rowKey="taskId" dataSource={tasks.data ?? []} pagination={false} columns={[{ title: '任务名称', dataIndex: 'name' }, { title: '数据源', dataIndex: 'sourceName' }, { title: '目标数据集', dataIndex: 'targetDatasetName', render: (v) => v ?? '待绑定' }, { title: '调度周期', dataIndex: 'scheduleMode' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '诊断', dataIndex: 'diagnosticMessage' }, { title: '操作', render: (_, r) => <Button size="small" onClick={() => runTask.mutate(r.taskId)}>立即同步</Button> }]} /> },
+        { key: 'tasks', label: '同步任务', children: <Table<DataSourceSyncTask> rowKey="taskId" dataSource={tasks.data ?? []} pagination={false} columns={[{ title: '任务名称', dataIndex: 'name' }, { title: '数据源', dataIndex: 'sourceName' }, { title: '目标数据集', dataIndex: 'targetDatasetName', render: (v) => v ?? '待绑定' }, { title: '调度周期', dataIndex: 'scheduleMode' }, { title: '范围/采样参数', dataIndex: 'syncScope', render: (v) => v ?? '-' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '诊断', dataIndex: 'diagnosticMessage' }, { title: '操作', render: (_, r) => <Button size="small" onClick={() => runTask.mutate(r.taskId)}>{isRtspSource(r.sourceId) ? '立即采样' : '立即同步'}</Button> }]} /> },
       ]} />
       <Modal title="新建数据源" open={open} onCancel={() => setOpen(false)} footer={null} destroyOnHidden>
         <Form layout="vertical" onFinish={(v) => create.mutate({ tenantId: currentTenantId, ...v })} initialValues={{ sourceType: 'OBJECT_STORAGE', endpoint: 'TODO_CONFIRM_DATA_SOURCE_ENDPOINT', credentialMode: 'SECRET_REF', secretRef: 'secret://TODO_CONFIRM_DATA_SOURCE_SECRET', sharedScope: 'BU' }}>
           <Form.Item name="name" label="数据源名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="sourceType" label="类型"><Select options={['RELATIONAL_DB', 'FILE', 'OBJECT_STORAGE', 'STREAM', 'TIME_SERIES', 'INDUSTRIAL_PROTOCOL', 'API'].map((v) => ({ value: v, label: txt(v) }))} /></Form.Item>
-          <Form.Item name="endpoint" label="Host / Endpoint" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="sourceType" label="类型"><Select options={sourceTypeOptions.map((v) => ({ value: v, label: txt(v) }))} /></Form.Item>
+          <Form.Item name="endpoint" label="Host / Endpoint" rules={[{ required: true }]} extra="RTSP 示例：rtsp://camera.sandbox.internal/live/weld；生产 URL 安全策略保留 TODO_CONFIRM_RTSP_URL_SECURITY_POLICY。"><Input placeholder="rtsp://camera.sandbox.internal/live/weld" /></Form.Item>
           <Form.Item name="secretRef" label="secretRef（不填写明文凭据）"><Input /></Form.Item>
           <Alert type="warning" showIcon title="敏感字段不回显；Endpoint 包含 sandbox/internal 时启用本地可测 connector，生产外部系统未配置时仍返回 UNCONFIGURED / TODO_CONFIRM_*。" style={{ marginBottom: 16 }} />
           <Button type="primary" htmlType="submit">保存</Button>
         </Form>
       </Modal>
       <Modal title="新建同步任务" open={syncOpen} onCancel={() => setSyncOpen(false)} footer={null} destroyOnHidden>
-        <Form layout="vertical" onFinish={(v) => createTask.mutate(v)} initialValues={{ sourceId: sources.data?.find((s) => s.status === 'ACTIVE' && s.diagnosticCode === 'OK')?.sourceId, scheduleMode: 'MANUAL' }}>
+        <Form layout="vertical" onFinish={(v) => createTask.mutate(v)} initialValues={{ sourceId: activeTestedSources[0]?.sourceId, scheduleMode: 'MANUAL' }}>
           <Form.Item name="name" label="任务名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="sourceId" label="源数据源" rules={[{ required: true }]}><Select options={(sources.data ?? []).filter((s) => s.status === 'ACTIVE' && s.diagnosticCode === 'OK').map((s) => ({ value: s.sourceId, label: s.name }))} /></Form.Item>
+          <Form.Item name="sourceId" label="源数据源" rules={[{ required: true }]}><Select options={activeTestedSources.map((s) => ({ value: s.sourceId, label: `${s.name} · ${txt(s.sourceType)}` }))} /></Form.Item>
           <Form.Item name="targetDatasetId" label="目标数据集 ID（留空则自动创建 RAW 数据集）"><Input /></Form.Item>
-          <Form.Item name="syncScope" label="同步范围 / 表名 / Topic / 点位 / API 路径"><Input placeholder="如 table=work_order 或 topic=weld-events" /></Form.Item>
+          <Form.Item name="syncScope" label="同步范围 / 表名 / Topic / 点位 / API 路径 / RTSP 采样参数" extra="RTSP 采样示例：durationSeconds=10;sampleName=weld-line；采样上限保留 TODO_CONFIRM_RTSP_SAMPLE_LIMITS。"><Input placeholder="如 table=work_order、topic=weld-events 或 durationSeconds=10;sampleName=weld-line" /></Form.Item>
           <Form.Item name="scheduleMode" label="调度方式"><Select options={['MANUAL', 'HOURLY', 'DAILY', 'REALTIME'].map((v) => ({ value: v, label: v }))} /></Form.Item>
           <Button type="primary" htmlType="submit">创建任务</Button>
         </Form>
@@ -2664,7 +2668,7 @@ export function DatasetManagementPage() {
           { n: fmtSize(q.data?.stats.totalSizeBytes), l: '存储使用' },
         ].map((i) => <Card key={i.l}><Typography.Title level={3}>{i.n}</Typography.Title><Typography.Text type="secondary">{i.l}</Typography.Text></Card>)}
       </div>
-      <Alert type="info" showIcon title="如何导入数据集" description="文件导入走上传向导并绑定 F007 文件对象；数据库、API、流数据、时序库、工业协议导入走数据源管理中的同步任务，成功后自动生成数据集、版本、文件元数据和血缘。" style={{ marginBottom: 16 }} />
+      <Alert type="info" showIcon title="如何导入数据集" description="文件导入走上传向导并绑定 F007 文件对象；数据库、API、流数据、RTSP 视频流、时序库、工业协议导入走数据源管理中的同步/采样任务，成功后自动生成数据集、版本、文件元数据和血缘。" style={{ marginBottom: 16 }} />
       <Tabs
         activeKey={datasetType ?? 'ALL'}
         onChange={(key) => setDatasetType(key === 'ALL' ? undefined : key)}
@@ -3521,6 +3525,12 @@ export function DatasetDetailPage() {
       ? candidate.data.status === 'ACTIVE' && candidate.data.dataType === 'IMAGE' && candidate.data.currentVersionId
       : d?.dataset.status === 'ACTIVE' && d?.dataset.dataType === 'IMAGE' && d?.selectedVersionId,
   );
+  const hasRtspLineage = (d?.lineage ?? []).some((item) => item.sourceType === 'RTSP_STREAM');
+  const annotationBlockDescription = hasRtspLineage
+    ? 'RTSP_STREAM 采样生成的视频原始数据集需先经过抽帧预处理生成 IMAGE 数据集后再标注。'
+    : d?.dataset.dataType === 'AUDIO_VIDEO'
+      ? '视频原始数据集需先经过抽帧预处理生成 IMAGE 数据集后再标注。'
+      : '仅 ACTIVE / 可用状态的 IMAGE 数据集可继续发起标注任务。';
   const nextVersionName = d ? `v${(d.dataset.versionCount ?? 0) + 1}` : 'v2';
   const taskScene = Form.useWatch('scene', taskForm) ?? 'IMAGE_TAGGING';
   const taskTemplateMode = Form.useWatch('templateMode', taskForm) ?? 'INLINE_CREATE';
@@ -3567,7 +3577,7 @@ export function DatasetDetailPage() {
           <Button type="primary" disabled={!canCreateAnnotationTask} onClick={() => setTaskOpen(true)}>创建标注任务</Button>
         </Space>
       </div>
-      {!canCreateAnnotationTask ? <Alert type="warning" showIcon style={{ marginBottom: 16 }} title="当前数据集尚未达到可发起标注任务的状态" description="仅 ACTIVE / 可用状态的 IMAGE 数据集可继续发起标注任务。" /> : null}
+      {!canCreateAnnotationTask ? <Alert type="warning" showIcon style={{ marginBottom: 16 }} title="当前数据集尚未达到可发起标注任务的状态" description={annotationBlockDescription} /> : null}
       {d && !canWriteSelectedVersion ? <Alert type="info" showIcon style={{ marginBottom: 16 }} title="当前为只读版本视图" description="只有“当前版本”且版本可变时，才允许追加文件、解绑文件或使用上传向导追加。" /> : null}
       {ref.data ? <Alert type="success" showIcon title={`DatasetReference 可用：${ref.data.versionId}`} style={{ marginBottom: 16 }} /> : null}
       {loc.state?.targetAction === 'APPEND_VERSION' && loc.state?.versionStatus ? (

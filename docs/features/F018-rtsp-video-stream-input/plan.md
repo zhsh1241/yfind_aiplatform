@@ -133,7 +133,7 @@ updated_at: 2026-05-27
 - 真实 RTSP 捕获能力保留：`TODO_CONFIRM_RTSP_CAPTURE_ADAPTER`。
 - sandbox 采样需可在无真实工厂网络下验收。
 
-## Reuse Strategy / 复用策略
+## Reuse Strategy
 
 ### Must Reuse
 

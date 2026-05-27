@@ -53,11 +53,13 @@ class DefaultDataSourceConnectionTester implements DataSourceConnectionTester {
     private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(2);
 
     @Override public DataSourceTestResult test(DataSourceRecord source) {
-        if (source.endpoint() == null || source.endpoint().isBlank() || source.endpoint().startsWith("TODO_CONFIRM")) return new DataSourceTestResult("FAILED", "UNCONFIGURED", "DATA_SOURCE_UNCONFIGURED", blank(source.endpoint(), "TODO_CONFIRM_DATA_SOURCE_ENDPOINT"), null);
+        if (source.endpoint() == null || source.endpoint().isBlank() || source.endpoint().startsWith("TODO_CONFIRM")) return new DataSourceTestResult("FAILED", "UNCONFIGURED", isRtsp(source) ? "RTSP_SOURCE_UNCONFIGURED" : "DATA_SOURCE_UNCONFIGURED", blank(source.endpoint(), isRtsp(source) ? "TODO_CONFIRM_RTSP_ENDPOINT" : "TODO_CONFIRM_DATA_SOURCE_ENDPOINT"), null);
+        if (isRtsp(source) && "SECRET_REF".equalsIgnoreCase(blank(source.credentialMode(), "SECRET_REF")) && (source.secretRef() == null || source.secretRef().isBlank())) return new DataSourceTestResult("FAILED", "UNCONFIGURED", "RTSP_SOURCE_CREDENTIAL_REQUIRED", "RTSP_SOURCE_CREDENTIAL_REQUIRED: RTSP 视频流需要 secretRef 凭据引用", null);
+        if (isRtsp(source) && !isValidRtspEndpoint(source.endpoint())) return new DataSourceTestResult("FAILED", "UNCONFIGURED", "RTSP_SOURCE_URL_INVALID", "RTSP_SOURCE_URL_INVALID: RTSP 视频流 endpoint 必须使用 rtsp:// 协议", null);
         if (source.endpoint().toLowerCase(Locale.ROOT).contains("sandbox") || source.endpoint().toLowerCase(Locale.ROOT).contains("internal")) return new DataSourceTestResult("SUCCESS", "TESTED", "OK", "SANDBOX " + source.sourceType() + " connector verified", 42);
         long start = System.nanoTime();
         if (probe(source)) return new DataSourceTestResult("SUCCESS", "TESTED", "OK", "DOCKER " + source.sourceType() + " connector verified", Math.max(1, (int) Duration.ofNanos(System.nanoTime() - start).toMillis()));
-        return new DataSourceTestResult("FAILED", "UNCONFIGURED", "DATA_SOURCE_UNCONFIGURED", "TODO_CONFIRM_CONNECTOR_FOR_" + source.sourceType(), null);
+        return new DataSourceTestResult("FAILED", "UNCONFIGURED", isRtsp(source) ? "RTSP_STREAM_UNREACHABLE" : "DATA_SOURCE_UNCONFIGURED", isRtsp(source) ? "TODO_CONFIRM_RTSP_URL_SECURITY_POLICY" : "TODO_CONFIRM_CONNECTOR_FOR_" + source.sourceType(), null);
     }
     private boolean probe(DataSourceRecord source) {
         String type = source.sourceType() == null ? "" : source.sourceType().toUpperCase(Locale.ROOT);
@@ -95,7 +97,7 @@ class DefaultDataSourceConnectionTester implements DataSourceConnectionTester {
     }
     private URI baseUri(DataSourceRecord source) {
         String endpoint = source.endpoint().trim();
-        String normalized = endpoint.startsWith("http://") || endpoint.startsWith("https://") ? endpoint : "http://" + endpoint;
+        String normalized = endpoint.startsWith("http://") || endpoint.startsWith("https://") || endpoint.startsWith("rtsp://") ? endpoint : "http://" + endpoint;
         URI uri = URI.create(normalized);
         if (uri.getPort() >= 0 || source.port() == null) return uri;
         return URI.create(uri.getScheme() + "://" + uri.getHost() + ":" + source.port() + blank(uri.getRawPath(), "") + (uri.getRawQuery() == null ? "" : "?" + uri.getRawQuery()));
@@ -114,10 +116,10 @@ class DefaultDataSourceConnectionTester implements DataSourceConnectionTester {
     }
     private String endpointHost(String endpoint) {
         try {
-            URI uri = URI.create(endpoint.startsWith("http://") || endpoint.startsWith("https://") ? endpoint : "tcp://" + endpoint);
+            URI uri = URI.create(endpoint.startsWith("http://") || endpoint.startsWith("https://") || endpoint.startsWith("rtsp://") ? endpoint : "tcp://" + endpoint);
             if (uri.getHost() != null) return uri.getHost();
         } catch (Exception ignored) {}
-        return endpoint.replaceFirst("^https?://", "").replaceFirst("/.*$", "").replaceFirst(":\\d+$", "").trim();
+        return endpoint.replaceFirst("^(https?|rtsp)://", "").replaceFirst("/.*$", "").replaceFirst(":\\d+$", "").trim();
     }
     private List<String> serviceHostCandidates(DataSourceRecord source) {
         String type = source.sourceType() == null ? "" : source.sourceType().toUpperCase(Locale.ROOT);
@@ -128,6 +130,7 @@ class DefaultDataSourceConnectionTester implements DataSourceConnectionTester {
             case "API" -> List.of("source-api", "smp-platform-source-api");
             case "FILE" -> List.of("file-source", "smp-platform-file-source");
             case "STREAM" -> p == 5672 ? List.of("rabbitmq", "smp-platform-rabbitmq") : List.of("kafka", "smp-platform-kafka");
+            case "RTSP_STREAM" -> List.of("rtsp-source", "smp-platform-rtsp");
             case "TIME_SERIES" -> List.of("influxdb", "smp-platform-influxdb");
             case "INDUSTRIAL_PROTOCOL" -> List.of("industrial-protocol", "smp-platform-industrial");
             default -> List.of();
@@ -138,10 +141,12 @@ class DefaultDataSourceConnectionTester implements DataSourceConnectionTester {
     private String defaultHttpPath(String sourceType) { return "OBJECT_STORAGE".equalsIgnoreCase(blank(sourceType, "")) ? "/minio/health/live" : "/health"; }
     private int defaultPort(String sourceType) {
         return switch (sourceType == null ? "" : sourceType.toUpperCase(Locale.ROOT)) {
-            case "RELATIONAL_DB" -> 5432; case "STREAM" -> 9092; case "TIME_SERIES" -> 8086; case "INDUSTRIAL_PROTOCOL" -> 4840; case "OBJECT_STORAGE" -> 9000; default -> 80;
+            case "RELATIONAL_DB" -> 5432; case "STREAM" -> 9092; case "RTSP_STREAM" -> 554; case "TIME_SERIES" -> 8086; case "INDUSTRIAL_PROTOCOL" -> 4840; case "OBJECT_STORAGE" -> 9000; default -> 80;
         };
     }
     private String blank(String value, String fallback) { return value == null || value.isBlank() ? fallback : value; }
+    private boolean isRtsp(DataSourceRecord source) { return "RTSP_STREAM".equalsIgnoreCase(blank(source.sourceType(), "")); }
+    private boolean isValidRtspEndpoint(String endpoint) { try { URI uri = URI.create(endpoint.startsWith("rtsp://") ? endpoint : "rtsp://" + endpoint); return "rtsp".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null && !uri.getHost().isBlank(); } catch (Exception ignored) { return false; } }
 }
 
 @Component
@@ -222,17 +227,16 @@ public class DataManagementService {
     @Transactional public DataSourceResponse createDataSource(PlatformPrincipal principal, DataSourceRequest r) {
         identityService.requirePermission(principal, "data:source:write");
         String tenantId = blank(r.tenantId(), principal.user().tenantId()); ensureCanSeeTenant(principal, tenantId, true); rejectPlainSecret(r.endpoint()); rejectPlainSecret(r.secretRef());
-        String id = "DSRC-" + randomHex(10).toUpperCase(Locale.ROOT); String endpoint = require(r.endpoint(), "数据源 Endpoint 不能为空"); String status = endpoint.startsWith("TODO_CONFIRM") ? "UNCONFIGURED" : "INACTIVE"; OffsetDateTime now = now();
+        String sourceType = normalizeSourceType(r.sourceType()); validateDataSourceRequest(sourceType, r.endpoint(), r.credentialMode(), r.secretRef()); String id = "DSRC-" + randomHex(10).toUpperCase(Locale.ROOT); String endpoint = require(r.endpoint(), "数据源 Endpoint 不能为空"); String status = endpoint.startsWith("TODO_CONFIRM") ? "UNCONFIGURED" : "INACTIVE"; OffsetDateTime now = now();
         jdbc.update(""" 
             INSERT INTO data_source (source_id,name,source_type,tenant_id,project_id,endpoint,port,database_name,credential_mode,secret_ref,shared_scope,description,status,diagnostic_code,diagnostic_message,created_by,created_at,updated_at)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """, id, require(r.name(), "数据源名称不能为空"), normalizeSourceType(r.sourceType()), tenantId, nullIfBlank(r.projectId()), endpoint, r.port(), nullIfBlank(r.databaseName()), upper(r.credentialMode(), "SECRET_REF"), maskSecret(blank(r.secretRef(), "secret://TODO_CONFIRM_DATA_SOURCE_SECRET")), upper(r.sharedScope(), "BU"), nullIfBlank(r.description()), status, status.equals("UNCONFIGURED") ? "DATA_SOURCE_UNCONFIGURED" : "NOT_TESTED", status.equals("UNCONFIGURED") ? endpoint : "待连接测试", principal.user().id(), now, now);
+            """, id, require(r.name(), "数据源名称不能为空"), sourceType, tenantId, nullIfBlank(r.projectId()), endpoint, r.port(), nullIfBlank(r.databaseName()), upper(r.credentialMode(), "SECRET_REF"), maskSecret(blank(r.secretRef(), "secret://TODO_CONFIRM_DATA_SOURCE_SECRET")), upper(r.sharedScope(), "BU"), nullIfBlank(r.description()), status, status.equals("UNCONFIGURED") ? "DATA_SOURCE_UNCONFIGURED" : "NOT_TESTED", status.equals("UNCONFIGURED") ? endpoint : "待连接测试", principal.user().id(), now, now);
         audit(principal, tenantId, "DATA_SOURCE_CREATED", "DataSource", id, "SUCCESS", "INFO", null, status, TRACE_TAG); return sourceResponse(source(id));
     }
 
     @Transactional public DataSourceResponse updateDataSource(PlatformPrincipal principal, String sourceId, DataSourceRequest r) {
-        identityService.requirePermission(principal, "data:source:write"); DataSourceRecord c = source(sourceId); ensureCanSeeTenant(principal, c.tenantId(), true); rejectPlainSecret(r.endpoint()); rejectPlainSecret(r.secretRef());
-        jdbc.update("UPDATE data_source SET name=?,source_type=?,endpoint=?,port=?,database_name=?,credential_mode=?,secret_ref=?,shared_scope=?,description=?,status=CASE WHEN status='ACTIVE' THEN 'INACTIVE' ELSE status END,diagnostic_code=CASE WHEN status='ACTIVE' THEN 'NOT_TESTED' ELSE diagnostic_code END,updated_at=? WHERE source_id=?", blank(r.name(), c.name()), normalizeSourceType(blank(r.sourceType(), c.sourceType())), blank(r.endpoint(), c.endpoint()), r.port() == null ? c.port() : r.port(), blank(r.databaseName(), c.databaseName()), upper(r.credentialMode(), c.credentialMode()), maskSecret(blank(r.secretRef(), c.secretRef())), upper(r.sharedScope(), c.sharedScope()), blank(r.description(), c.description()), now(), sourceId);
+        identityService.requirePermission(principal, "data:source:write"); DataSourceRecord c = source(sourceId); ensureCanSeeTenant(principal, c.tenantId(), true); rejectPlainSecret(r.endpoint()); rejectPlainSecret(r.secretRef()); String updatedType = normalizeSourceType(blank(r.sourceType(), c.sourceType())); String updatedEndpoint = blank(r.endpoint(), c.endpoint()); String updatedCredentialMode = upper(r.credentialMode(), c.credentialMode()); String updatedSecretRef = blank(r.secretRef(), c.secretRef()); validateDataSourceRequest(updatedType, updatedEndpoint, updatedCredentialMode, updatedSecretRef); jdbc.update("UPDATE data_source SET name=?,source_type=?,endpoint=?,port=?,database_name=?,credential_mode=?,secret_ref=?,shared_scope=?,description=?,status=CASE WHEN status='ACTIVE' THEN 'INACTIVE' ELSE status END,diagnostic_code=CASE WHEN status='ACTIVE' THEN 'NOT_TESTED' ELSE diagnostic_code END,updated_at=? WHERE source_id=?", blank(r.name(), c.name()), updatedType, updatedEndpoint, r.port() == null ? c.port() : r.port(), blank(r.databaseName(), c.databaseName()), updatedCredentialMode, maskSecret(updatedSecretRef), upper(r.sharedScope(), c.sharedScope()), blank(r.description(), c.description()), now(), sourceId);
         audit(principal, c.tenantId(), "DATA_SOURCE_UPDATED", "DataSource", sourceId, "SUCCESS", "WARNING", c.status(), "INACTIVE", TRACE_TAG); return sourceResponse(source(sourceId));
     }
 
@@ -258,7 +262,7 @@ public class DataManagementService {
             SELECT t.*,s.name AS source_name,d.name AS target_dataset_name,s.tenant_id FROM data_source_sync_task t JOIN data_source s ON s.source_id=t.source_id LEFT JOIN dataset d ON d.dataset_id=t.target_dataset_id ORDER BY t.updated_at DESC
             """, (rs,n) -> syncTaskRecord(rs)).stream().filter(t -> canSeeTenant(principal, t.tenantId())).map(this::syncTaskResponse).toList();
     }
-    @Transactional(noRollbackFor = PlatformException.class) public DataSourceSyncTaskResponse createSyncTask(PlatformPrincipal principal, DataSourceSyncTaskRequest r) { identityService.requirePermission(principal, "data:sync-task:write"); DataSourceRecord s = source(require(r.sourceId(), "数据源不能为空")); ensureCanSeeTenant(principal, s.tenantId(), true); ensureSourceReferenceable(principal, s, "DATA_SYNC_TASK_SOURCE_REJECTED"); String id = "DSYNC-" + randomHex(10).toUpperCase(Locale.ROOT); OffsetDateTime now = now(); jdbc.update("INSERT INTO data_source_sync_task (task_id,source_id,target_dataset_id,name,schedule_mode,sync_scope,status,diagnostic_code,diagnostic_message,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,'PAUSED','UNCONFIGURED','TODO_CONFIRM_DATA_CONNECTOR_SCHEDULER',?,?,?)", id, s.sourceId(), nullIfBlank(r.targetDatasetId()), require(r.name(), "同步任务名称不能为空"), upper(r.scheduleMode(), "MANUAL"), nullIfBlank(r.syncScope()), principal.user().id(), now, now); audit(principal, s.tenantId(), "DATA_SYNC_TASK_CREATED", "DataSourceSyncTask", id, "SUCCESS", "INFO", null, s.sourceId(), TRACE_TAG); return syncTasks(principal).stream().filter(i -> i.taskId().equals(id)).findFirst().orElseThrow(); }
+    @Transactional(noRollbackFor = PlatformException.class) public DataSourceSyncTaskResponse createSyncTask(PlatformPrincipal principal, DataSourceSyncTaskRequest r) { identityService.requirePermission(principal, "data:sync-task:write"); DataSourceRecord s = source(require(r.sourceId(), "数据源不能为空")); ensureCanSeeTenant(principal, s.tenantId(), true); ensureSourceReferenceable(principal, s, "DATA_SYNC_TASK_SOURCE_REJECTED"); String id = "DSYNC-" + randomHex(10).toUpperCase(Locale.ROOT); OffsetDateTime now = now(); boolean rtsp = isRtspStream(s); String diagnosticCode = rtsp ? "RTSP_SAMPLE_READY" : "UNCONFIGURED"; String diagnosticMessage = rtsp ? "TODO_CONFIRM_RTSP_CAPTURE_ADAPTER; manual sample task ready" : "TODO_CONFIRM_DATA_CONNECTOR_SCHEDULER"; jdbc.update("INSERT INTO data_source_sync_task (task_id,source_id,target_dataset_id,name,schedule_mode,sync_scope,status,diagnostic_code,diagnostic_message,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,'PAUSED',?,?,?, ?,?)", id, s.sourceId(), nullIfBlank(r.targetDatasetId()), require(r.name(), "同步任务名称不能为空"), upper(r.scheduleMode(), "MANUAL"), nullIfBlank(r.syncScope()), diagnosticCode, diagnosticMessage, principal.user().id(), now, now); audit(principal, s.tenantId(), rtsp ? "RTSP_SAMPLE_TASK_CREATED" : "DATA_SYNC_TASK_CREATED", "DataSourceSyncTask", id, "SUCCESS", "INFO", null, s.sourceId(), TRACE_TAG); return syncTasks(principal).stream().filter(i -> i.taskId().equals(id)).findFirst().orElseThrow(); }
     @Transactional public DataSourceSyncTaskResponse runSyncTask(PlatformPrincipal principal, String taskId) {
         identityService.requirePermission(principal, "data:sync-task:write");
         SyncTaskRecord t = syncTask(taskId); DataSourceRecord s = source(t.sourceId()); ensureCanSeeTenant(principal, t.tenantId(), true); ensureSourceReferenceable(principal, s, "DATA_SYNC_TASK_SOURCE_REJECTED");
@@ -275,9 +279,8 @@ public class DataManagementService {
         objectStorageService.uploadObjectIfConfigured(bucket, objectKey, plan.content().getBytes(StandardCharsets.UTF_8), plan.contentType());
         jdbc.update("INSERT INTO platform_file_object (file_id,asset_type,tenant_id,project_id,bucket,object_key,expected_sha256,sha256,expected_size_bytes,size_bytes,content_type,storage_tier,status,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", fileId, "DATASET", s.tenantId(), s.projectId(), bucket, objectKey, sha, sha, plan.sizeBytes(), plan.sizeBytes(), plan.contentType(), "STANDARD", "AVAILABLE", principal.user().id(), now, now);
         String dfId = "DF-" + randomHex(10).toUpperCase(Locale.ROOT); jdbc.update("INSERT INTO dataset_file (id,dataset_id,version_id,file_id,file_role,status,created_at) VALUES (?,?,?,?,?,'BOUND',?)", dfId, did, vid, fileId, plan.fileRole(), now);
-        jdbc.update("INSERT INTO data_lineage (lineage_id,source_type,source_id,target_type,target_id,transform_type,created_at) VALUES (?,'DATA_SOURCE',?,'DATASET_VERSION',?,'IMPORT',?)", "LIN-" + randomHex(10).toUpperCase(Locale.ROOT), s.sourceId(), vid, now);
-        jdbc.update("UPDATE data_source_sync_task SET target_dataset_id=?,status='SUCCEEDED',last_run_at=?,last_result='SUCCESS',diagnostic_code='OK',diagnostic_message=?,updated_at=? WHERE task_id=?", did, now, "SANDBOX_" + s.sourceType() + "_IMPORT_READY", now, taskId);
-        audit(principal, s.tenantId(), "DATA_SYNC_TASK_SUCCEEDED", "DataSourceSyncTask", taskId, "SUCCESS", "INFO", t.status(), did, TRACE_TAG + ";" + s.sourceType() + ";file=" + fileId); return syncTasks(principal).stream().filter(i -> i.taskId().equals(taskId)).findFirst().orElseThrow();
+        jdbc.update("INSERT INTO data_lineage (lineage_id,source_type,source_id,target_type,target_id,transform_type,created_at) VALUES (?,?,?,?,?,?,?)", "LIN-" + randomHex(10).toUpperCase(Locale.ROOT), isRtspStream(s) ? "RTSP_STREAM" : "DATA_SOURCE", s.sourceId(), "DATASET_VERSION", vid, isRtspStream(s) ? "CAPTURE_SAMPLE" : "IMPORT", now); jdbc.update("UPDATE data_source_sync_task SET target_dataset_id=?,status='SUCCEEDED',last_run_at=?,last_result='SUCCESS',diagnostic_code='OK',diagnostic_message=?,updated_at=? WHERE task_id=?", did, now, isRtspStream(s) ? "SANDBOX_RTSP_STREAM_SAMPLE_READY" : "SANDBOX_" + s.sourceType() + "_IMPORT_READY", now, taskId);
+        audit(principal, s.tenantId(), isRtspStream(s) ? "RTSP_SAMPLE_TASK_RUN_SUCCEEDED" : "DATA_SYNC_TASK_SUCCEEDED", "DataSourceSyncTask", taskId, "SUCCESS", "INFO", t.status(), did, TRACE_TAG + ";" + s.sourceType() + ";file=" + fileId); if (isRtspStream(s)) audit(principal, s.tenantId(), "RTSP_SAMPLE_DATASET_BOUND", "Dataset", did, "SUCCESS", "INFO", s.sourceId(), vid, TRACE_TAG + ";file=" + fileId); return syncTasks(principal).stream().filter(i -> i.taskId().equals(taskId)).findFirst().orElseThrow();
     }
 
     public DatasetAnnotationCandidateResponse annotationCandidate(PlatformPrincipal principal, String datasetId) {
@@ -808,6 +811,7 @@ public class DataManagementService {
             case "RELATIONAL_DB" -> importPlan(s, scope, "TABULAR", "SNAPSHOT", "csv", "text/csv", 1280L, "relational snapshot", "table,record_count,source\n" + scope + ",1280," + s.endpoint() + "\n");
             case "API" -> importPlan(s, scope, "TEXT", "SNAPSHOT", "jsonl", "application/jsonl", 640L, "api snapshot", "{\"scope\":\"" + scope + "\",\"sourceType\":\"API\",\"records\":640}\n");
             case "STREAM" -> importPlan(s, scope, "EVENT", "EVENT_BATCH", "jsonl", "application/jsonl", 2048L, "stream event batch", "{\"topic\":\"" + scope + "\",\"event\":\"sandbox-message\",\"seq\":1}\n");
+            case "RTSP_STREAM" -> importPlan(s, scope, "AUDIO_VIDEO", "RAW", "mp4", "video/mp4", 1L, "rtsp sample", "F018 sandbox mp4 sample from " + s.endpoint() + ", scope=" + scope + "\nTODO_CONFIRM_RTSP_CAPTURE_ADAPTER\n");
             case "TIME_SERIES" -> importPlan(s, scope, "TIME_SERIES", "SNAPSHOT", "csv", "text/csv", 1440L, "time-series snapshot", "ts,metric,value,source\n2026-05-18T00:00:00Z," + scope + ",42.0," + s.endpoint() + "\n");
             case "INDUSTRIAL_PROTOCOL" -> importPlan(s, scope, "TELEMETRY", "TELEMETRY", "jsonl", "application/jsonl", 960L, "industrial telemetry snapshot", "{\"protocol\":\"" + scope + "\",\"tag\":\"weld.current\",\"value\":12.3}\n");
             case "FILE" -> importPlan(s, scope, "FILE", "RAW", "manifest.json", "application/json", 1L, "file manifest", "{\"path\":\"" + scope + "\",\"sourceType\":\"FILE\"}\n");
@@ -1116,6 +1120,7 @@ public class DataManagementService {
             String source = lineageSource.getFirst();
             if ("LOCAL_UPLOAD".equals(source)) return "LOCAL_UPLOAD";
             if ("PIPELINE".equals(source)) return "PIPELINE";
+            if ("RTSP_STREAM".equals(source)) return "RTSP_STREAM";
         }
         return "PREPROCESSED".equals(d.datasetType()) ? "PIPELINE" : "UNKNOWN";
     }
@@ -1166,7 +1171,7 @@ public class DataManagementService {
     private void audit(PlatformPrincipal p,String tenantId,String action,String type,String rid,String result,String risk,String before,String after,String detail){ OffsetDateTime at=now(); String event="EVT-"+randomHex(8).toUpperCase(Locale.ROOT), trace=nullToEmpty(PlatformResponses.traceId()), roles=String.join(",",p.roleNames()), id=UUID.randomUUID().toString(); String sig=signature(id,event,tenantId,p.user().id(),p.user().displayName(),roles,action,type,rid,result,risk,before,after,detail,trace,at); jdbc.update("INSERT INTO platform_audit_log (id,event_id,tenant_id,operator_id,operator_name,operator_role,action,resource_type,resource_id,result,risk_level,before_json,after_json,detail_json,trace_id,signature,occurred_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",id,event,tenantId,p.user().id(),p.user().displayName(),roles,action,type,rid,result,risk,before,after,detail,trace,sig,at); }
     private String normalizeSourceType(String value) {
         return switch (upper(value, "OBJECT_STORAGE")) {
-            case "RELATIONAL_DB", "OBJECT_STORAGE", "STREAM", "TIME_SERIES", "INDUSTRIAL_PROTOCOL", "API", "FILE" -> upper(value, "OBJECT_STORAGE");
+            case "RELATIONAL_DB", "OBJECT_STORAGE", "STREAM", "RTSP_STREAM", "TIME_SERIES", "INDUSTRIAL_PROTOCOL", "API", "FILE" -> upper(value, "OBJECT_STORAGE");
             default -> throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATA_SOURCE_TYPE_UNSUPPORTED: 当前不支持该数据源类型");
         };
     }
@@ -1177,6 +1182,16 @@ public class DataManagementService {
             case "AUDIO", "VIDEO", "AUDIO_VIDEO" -> "AUDIO_VIDEO";
             default -> throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATASET_DATA_TYPE_UNSUPPORTED: 当前不支持该数据类型");
         };
+    }
+    private boolean isRtspStream(DataSourceRecord s) { return "RTSP_STREAM".equalsIgnoreCase(blank(s.sourceType(), "")); }
+    private void validateDataSourceRequest(String sourceType, String endpoint, String credentialMode, String secretRef) {
+        if (!"RTSP_STREAM".equals(sourceType)) return;
+        String ep = blank(endpoint, "");
+        if (ep.startsWith("TODO_CONFIRM") || ep.isBlank()) return;
+        String lower = ep.toLowerCase(Locale.ROOT);
+        if (lower.contains("password=") || lower.contains("credentialsecret") || lower.contains("accesskeysecret")) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "DATA_SOURCE_SECRET_NOT_ALLOWED: 不允许保存明文凭据");
+        if (lower.contains("://") && !lower.startsWith("rtsp://")) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "RTSP_SOURCE_URL_INVALID: RTSP 视频流 endpoint 必须使用 rtsp:// 协议");
+        if ("SECRET_REF".equals(upper(credentialMode, "SECRET_REF")) && blank(secretRef)) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "RTSP_SOURCE_CREDENTIAL_REQUIRED: RTSP 视频流需要 secretRef 凭据引用");
     }
     private void rejectPlainSecret(String v){ if(v!=null && (v.toLowerCase(Locale.ROOT).contains("credentialsecret") || v.toLowerCase(Locale.ROOT).contains("accesskeysecret") || v.toLowerCase(Locale.ROOT).contains("password="))) throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED,"DATA_SOURCE_SECRET_NOT_ALLOWED: 不允许保存明文凭据"); }
     private String maskSecret(String v){ if(v==null || v.isBlank() || v.startsWith("TODO_CONFIRM") || v.startsWith("secret://TODO_CONFIRM") || v.startsWith("secret://")) return v; return v.length()<=8?"****":v.substring(0,4)+"****"+v.substring(v.length()-2); }
