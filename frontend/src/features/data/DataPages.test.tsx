@@ -244,7 +244,7 @@ describe('DataPipelineStandardPage operator config panel', () => {
   it('renders run result workbench after sandbox run', async () => {
     renderPage();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: /沙箱运行/ }));
+    await user.click(await screen.findByRole('button', { name: /新建加工任务/ }));
     await waitFor(() => {
       expect(dataApi.runPipeline).toHaveBeenCalledWith('PIPE-VIDEO-PREP', {
         triggerMode: 'MANUAL',
@@ -265,14 +265,15 @@ describe('DataPipelineStandardPage operator config panel', () => {
     expect(await screen.findByText('① 选择本次要加工的数据集')).toBeInTheDocument();
     expect(screen.getByText('Pipeline 是可复用的算子组合；每次点击运行都会生成一条独立加工记录')).toBeInTheDocument();
     expect(screen.getByText('这里是每次加工任务的运行记录，不是 Pipeline 模板本身')).toBeInTheDocument();
-    expect(screen.getByText('运行状态')).toBeInTheDocument();
-    expect(screen.getByText('处置状态')).toBeInTheDocument();
+    expect(screen.getByText('加工任务记录')).toBeInTheDocument();
+    expect(screen.getAllByText('运行状态').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('处置状态').length).toBeGreaterThan(0);
     expect(screen.getByText('运行成功')).toBeInTheDocument();
     expect(screen.getByText('算子组合可保存为版本快照并反复复用')).toBeInTheDocument();
 
     await user.click(screen.getByRole('combobox', { name: '本次要加工的数据集' }));
     await user.click(await screen.findByText(/新一批车间视频数据集/));
-    await user.click(screen.getByRole('button', { name: /沙箱运行/ }));
+    await user.click(screen.getByRole('button', { name: /新建加工任务/ }));
 
     await waitFor(() => {
       expect(dataApi.runPipeline).toHaveBeenCalledWith('PIPE-VIDEO-PREP', {

@@ -335,9 +335,22 @@ body {
 
 .pipeline-panels {
   display: grid;
-  grid-template-columns: 1.2fr 1fr 1fr;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
   gap: 16px;
   margin-top: 16px;
+  align-items: start;
+}
+
+.pipeline-panels > .ant-card {
+  min-width: 0;
+}
+
+.pipeline-run-history-card {
+  grid-row: span 2;
+}
+
+.pipeline-run-history-card .ant-table-wrapper {
+  overflow: hidden;
 }
 
 .pipeline-validation-panel {

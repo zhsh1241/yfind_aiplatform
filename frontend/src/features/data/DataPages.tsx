@@ -2057,7 +2057,10 @@ export function DataPipelineStandardPage() {
   );
   const effectivePipelineDatasetId = selectedPipelineDatasetId ?? pipeline.data?.pipeline.sourceDatasetId ?? selectablePipelineDatasets[0]?.value;
   const selectedPipelineDataset = selectablePipelineDatasets.find((item) => item.value === effectivePipelineDatasetId)?.dataset;
-  const runRecords = pipeline.data?.runs ?? [];
+  const persistedRunRecords = pipeline.data?.runs ?? [];
+  const runRecords = latestRun?.run && latestRun.run.pipelineId === pipelineId && !persistedRunRecords.some((item) => item.runId === latestRun.run.runId)
+    ? [latestRun.run, ...persistedRunRecords]
+    : persistedRunRecords;
   const savePipeline = useMutation({
     mutationFn: () => dataApi.updatePipeline(pipelineId!, toSaveInput(pipeline.data!, nodes, edges, variables)),
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] }); msg.success('Pipeline 算子组合模板已保存并通过校验'); },
@@ -2236,13 +2239,16 @@ export function DataPipelineStandardPage() {
               setSelectedNodeId(undefined);
               setDraftNodes(undefined);
               setDraftEdges(undefined);
+              setSelectedPipelineDatasetId(undefined);
+              setLatestRun(null);
+              setRunOpen(false);
             }}
             options={(pipelines.data?.items ?? []).map((item) => ({ value: item.pipelineId, label: item.name }))}
           />
           <Button onClick={() => setAddOpen(true)}>＋ 添加算子</Button>
           <Button onClick={() => saveVersion.mutate()} loading={saveVersion.isPending}>保存快照</Button>
           <Button type={hasDraftChanges ? 'primary' : 'default'} onClick={() => savePipeline.mutate()} loading={savePipeline.isPending}>💾 保存模板</Button>
-          <Button type="primary" onClick={() => runPipeline.mutate()} loading={runPipeline.isPending} disabled={!pipeline.data.validation.valid || nodes.length === 0}>▶ 沙箱运行</Button>
+          <Button type="primary" onClick={() => runPipeline.mutate()} loading={runPipeline.isPending} disabled={!effectivePipelineDatasetId || !pipeline.data.validation.valid || nodes.length === 0}>＋ 新建加工任务</Button>
         </Space>
       </div>
       <Card
@@ -2255,7 +2261,7 @@ export function DataPipelineStandardPage() {
             type="info"
             showIcon
             title="Pipeline 是可复用的算子组合；每次点击运行都会生成一条独立加工记录"
-            description="先在这里选择本次输入的数据集，再复用下方 DAG 算子组合运行。保存按钮只保存算子组合模板；运行按钮会基于所选数据集生成新的加工记录、输出数据集、结果状态和处理统计。"
+            description="先在这里选择本次输入的数据集，再复用下方 DAG 算子组合运行。保存按钮只保存算子组合模板；“新建加工任务”会基于所选数据集立即生成新的加工记录、输出数据集、结果状态和处理统计。"
           />
           <Select
             aria-label="本次要加工的数据集"
@@ -2315,7 +2321,7 @@ export function DataPipelineStandardPage() {
               />
             ) : null}
             {validationWarnings.length > 0 ? <Alert type="warning" showIcon title={`运行提示（${validationWarnings.length}）`} description={validationWarnings.join('；')} /> : null}
-            {!pipeline.data.validation.valid ? <Typography.Text type="secondary">当前 DAG 未通过校验，已禁用“沙箱运行”。请先修复校验问题并保存。</Typography.Text> : null}
+            {!pipeline.data.validation.valid ? <Typography.Text type="secondary">当前 DAG 未通过校验，已禁用“新建加工任务”。请先修复校验问题并保存。</Typography.Text> : null}
           </div>
         </Card>
         <div className="pipeline-sidebar">
@@ -2364,7 +2370,7 @@ export function DataPipelineStandardPage() {
         </div>
       </div>
       <div className="pipeline-panels">
-        <Card title="运行历史">
+        <Card title="加工任务记录" className="pipeline-run-history-card">
           <Alert
             type="info"
             showIcon
@@ -2372,7 +2378,7 @@ export function DataPipelineStandardPage() {
             message="这里是每次加工任务的运行记录，不是 Pipeline 模板本身"
             description="上方 DAG/算子链是可复用模板；每次运行会按所选数据集生成新的 Run ID、输出数据集和结果处置状态。"
           />
-          <Table rowKey="runId" dataSource={runRecords} pagination={{ pageSize: 5 }} columns={[
+          <Table rowKey="runId" dataSource={runRecords} pagination={{ pageSize: 5 }} scroll={{ x: 920 }} locale={{ emptyText: '暂无加工任务记录，选择数据集后点击“新建加工任务”即可生成' }} columns={[
             { title: '加工记录', dataIndex: 'runId', render: (v, r) => <Space direction="vertical" size={0}><Typography.Text copyable>{v}</Typography.Text><Typography.Text type="secondary">{fmtDateTime(r.startedAt)}</Typography.Text></Space> },
             { title: '运行状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{processingRunStatusText(v)}</Tag> },
             { title: '处置状态', dataIndex: 'resultDatasetStatus', render: (v) => v ? <Tag color={color(v)}>{datasetStatusText(v)}</Tag> : '-' },
