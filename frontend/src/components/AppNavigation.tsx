@@ -24,6 +24,7 @@ export type PrototypePage = {
 export const prototypePages: PrototypePage[] = [
   { key: 'dash', label: '工作台', domain: '工作台' },
   { key: 'ds', label: '数据集管理', domain: '数据管理' },
+  { key: 'tagmgmt', label: '标签管理', domain: '数据管理' },
   { key: 'ann', label: '标注任务', domain: '数据管理' },
   { key: 'annwork', label: '标注工作台', domain: '数据管理' },
   { key: 'datasrc', label: '数据源管理', domain: '数据管理' },

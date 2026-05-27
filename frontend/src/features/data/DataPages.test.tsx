@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import { dataApi } from '../platform/platformApi';
-import { DataPipelineStandardPage } from './DataPages';
+import { DataPipelineStandardPage, TagManagementPage } from './DataPages';
 import { useSessionStore } from '../platform/sessionStore';
 
 vi.mock('../platform/platformApi', async () => {
@@ -131,7 +131,7 @@ vi.mock('../platform/platformApi', async () => {
             currentVersionName: 'v1',
             status: 'ACTIVE',
             accessLevel: 'TEAM',
-            tags: [],
+            tags: ['焊缝', '视频'],
             versionCount: 1,
             recordCount: 1,
             sizeBytes: 1024,
@@ -177,7 +177,7 @@ vi.mock('../platform/platformApi', async () => {
             currentVersionName: '抽帧结果v1',
             status: 'PENDING_CONFIRMATION',
             accessLevel: 'TEAM',
-            tags: [],
+            tags: ['焊缝', '预处理导出'],
             versionCount: 1,
             recordCount: 12,
             sizeBytes: 4096,
@@ -246,6 +246,11 @@ vi.mock('../platform/platformApi', async () => {
       activatePreprocessedDataset: vi.fn().mockResolvedValue({ ...mockRunResult.activation, confirmed: true, status: 'ACTIVE', annotationEligible: true, confirmedAt: '2026-05-26T10:00:00Z', activatedAt: '2026-05-26T10:05:00Z', blockReason: null }),
       createDataStandardTask: vi.fn().mockResolvedValue({}),
       runDataStandardTask: vi.fn().mockResolvedValue({ outputDatasetId: 'DATASET-STD' }),
+      updateDataset: vi.fn().mockResolvedValue({}),
+      labelTemplates: vi.fn().mockResolvedValue([{ templateId: 'LT-WELD-BBOX', name: '焊缝缺陷 BBox 模板', scene: 'IMAGE_TAGGING', labelType: 'BOUNDING_BOX', labelSchemaJson: '{"labels":["裂纹","气孔"]}', labelStudioConfigXml: '<View/>', status: 'PUBLISHED', tenantId: 'TENANT-CABIN', createdBy: 'USR-001', updatedAt: '2026-05-26T00:00:00Z' }]),
+      createLabelTemplate: vi.fn().mockResolvedValue({ templateId: 'LT-NEW', name: '新模板', scene: 'IMAGE_TAGGING', labelType: 'BOUNDING_BOX', labelSchemaJson: '{"labels":["裂纹"]}', labelStudioConfigXml: '<View/>', status: 'DRAFT', tenantId: 'TENANT-CABIN', createdBy: 'USR-001', updatedAt: '2026-05-26T00:00:00Z' }),
+      publishLabelTemplate: vi.fn().mockResolvedValue({}),
+      archiveLabelTemplate: vi.fn().mockResolvedValue({}),
     },
   };
 });
@@ -265,6 +270,40 @@ function renderPage() {
     </QueryClientProvider>,
   );
 }
+
+
+function renderTagManagementPage() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  useSessionStore.setState({
+    token: 'token-test',
+    initialized: true,
+    user: { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: [], menuPermissions: [], sessionVersion: 1 },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <TagManagementPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe('TagManagementPage', () => {
+  it('renders dataset tag catalog and supports dataset tag editing', async () => {
+    renderTagManagementPage();
+    expect(await screen.findByRole('heading', { name: '标签管理' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '标签总览' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '数据集标签' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '标注标签模板' })).toBeInTheDocument();
+    expect(await screen.findByText('焊缝')).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: '数据集标签' }));
+    await user.click((await screen.findAllByText('编辑标签'))[0]);
+    await user.click(screen.getByRole('button', { name: '保存数据集标签' }));
+    await waitFor(() => expect(dataApi.updateDataset).toHaveBeenCalled());
+  });
+});
 
 describe('DataPipelineStandardPage operator config panel', () => {
   it('starts from processing task list and opens editor from an existing task', async () => {

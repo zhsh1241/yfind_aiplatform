@@ -11,7 +11,7 @@ import { ResourceManagementPage } from './features/platform/ResourceManagementPa
 import { OrganizationManagementPage } from './features/platform/OrganizationManagementPage';
 import { SystemConfigPage } from './features/platform/SystemConfigPage';
 import { UserManagementPage } from './features/platform/UserManagementPage';
-import { AnnotationReviewPage, AnnotationTasksPage, AnnotationWorkbenchPage, DataPipelineStandardPage, DataSourceManagementPage, DatasetDetailPage, DatasetManagementPage, DatasetUploadPage, OperatorMarketplacePage } from './features/data/DataPages';
+import { AnnotationReviewPage, AnnotationTasksPage, AnnotationWorkbenchPage, DataPipelineStandardPage, DataSourceManagementPage, DatasetDetailPage, DatasetManagementPage, DatasetUploadPage, OperatorMarketplacePage, TagManagementPage } from './features/data/DataPages';
 import { languageOptions, t } from './features/platform/i18n';
 import { useLocaleStore } from './features/platform/localeStore';
 import { useSessionStore } from './features/platform/sessionStore';
@@ -105,6 +105,7 @@ export default function App() {
             <Route path="/resource" element={canAccess('resource') ? <ResourceManagementPage /> : <NoPermission language={language} />} />
             <Route path="/datasrc" element={canAccess('datasrc') ? <DataSourceManagementPage /> : <NoPermission language={language} />} />
             <Route path="/ds" element={canAccess('ds') ? <DatasetManagementPage /> : <NoPermission language={language} />} />
+            <Route path="/tagmgmt" element={canAccess('tagmgmt') ? <TagManagementPage /> : <NoPermission language={language} />} />
             <Route path="/up" element={canAccess('ds') ? <DatasetUploadPage /> : <NoPermission language={language} />} />
             <Route path="/dsdetail" element={canAccess('ds') ? <DatasetDetailPage /> : <NoPermission language={language} />} />
             <Route path="/ann" element={canAccess('ann') ? <AnnotationTasksPage /> : <NoPermission language={language} />} />

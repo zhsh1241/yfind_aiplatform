@@ -59,6 +59,7 @@ export const messages = {
 const pageLabels = {
   dash: { 'zh-CN': '工作台', 'en-US': 'Dashboard' },
   ds: { 'zh-CN': '数据集管理', 'en-US': 'Datasets' },
+  tagmgmt: { 'zh-CN': '标签管理', 'en-US': 'Tag Management' },
   ann: { 'zh-CN': '标注任务', 'en-US': 'Annotation Tasks' },
   annwork: { 'zh-CN': '标注工作台', 'en-US': 'Annotation Workbench' },
   datasrc: { 'zh-CN': '数据源管理', 'en-US': 'Data Sources' },

@@ -3030,6 +3030,225 @@ export function DatasetManagementPage() {
   );
 }
 
+
+type TagCatalogRow = { tag: string; datasetCount: number; sampleDatasets: DatasetSummary[]; datasetTypes: string[]; latestUpdatedAt: string };
+type TagMaintenanceValues = { tagName: string; datasetIds?: string[] };
+
+const uniqueStrings = (items: string[]) => Array.from(new Set(items.map((item) => item.trim()).filter(Boolean)));
+const normalizeTags = (tags?: string[]) => uniqueStrings(tags ?? []);
+const withTag = (dataset: DatasetSummary, tag: string) => normalizeTags([...dataset.tags, tag]);
+const renameTagForDataset = (dataset: DatasetSummary, from: string, to: string) => normalizeTags(dataset.tags.map((tag) => tag === from ? to : tag));
+const removeTagFromDataset = (dataset: DatasetSummary, tag: string) => normalizeTags(dataset.tags.filter((item) => item !== tag));
+
+function buildTagCatalog(datasets: DatasetSummary[]): TagCatalogRow[] {
+  const map = new Map<string, DatasetSummary[]>();
+  datasets.forEach((dataset) => {
+    normalizeTags(dataset.tags).forEach((tag) => {
+      map.set(tag, [...(map.get(tag) ?? []), dataset]);
+    });
+  });
+  return Array.from(map.entries()).map(([tag, taggedDatasets]) => ({
+    tag,
+    datasetCount: taggedDatasets.length,
+    sampleDatasets: taggedDatasets.slice(0, 3),
+    datasetTypes: uniqueStrings(taggedDatasets.map((dataset) => dataset.datasetType)),
+    latestUpdatedAt: taggedDatasets.map((dataset) => dataset.updatedAt).sort().at(-1) ?? '',
+  })).sort((a, b) => b.datasetCount - a.datasetCount || a.tag.localeCompare(b.tag));
+}
+
+function annotationTemplateSummary(template: AnnotationLabelTemplate) {
+  const labels = parseTemplateLabels(template.labelSchemaJson);
+  return labels.length ? labels.join('，') : '暂未解析到标签项';
+}
+
+export function TagManagementPage() {
+  const qc = useQueryClient();
+  const currentTenantId = useSessionStore((state) => state.user?.tenantId);
+  const [msg, holder] = message.useMessage();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [renameTag, setRenameTag] = useState<TagCatalogRow | null>(null);
+  const [editingDataset, setEditingDataset] = useState<DatasetSummary | null>(null);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [createForm] = Form.useForm<TagMaintenanceValues>();
+  const [renameForm] = Form.useForm<{ tagName: string }>();
+  const [datasetForm] = Form.useForm<{ tags: string[] }>();
+  const [templateForm] = Form.useForm<AnnotationLabelTemplateInput>();
+  const templateScene = Form.useWatch('scene', templateForm) ?? 'IMAGE_TAGGING';
+  const templateSchema = Form.useWatch('labelSchemaJson', templateForm) ?? defaultLabelSchema(templateScene);
+  const datasets = useQuery({ queryKey: ['tag-management-datasets'], queryFn: () => dataApi.datasets({ pageSize: 100 }) });
+  const templates = useQuery({ queryKey: ['tag-management-label-templates'], queryFn: () => dataApi.labelTemplates() });
+  const rows = useMemo(() => datasets.data?.items ?? [], [datasets.data?.items]);
+  const tagRows = useMemo(() => buildTagCatalog(rows), [rows]);
+  const refresh = useCallback(() => Promise.all([
+    qc.invalidateQueries({ queryKey: ['tag-management-datasets'] }),
+    qc.invalidateQueries({ queryKey: ['datasets'] }),
+    qc.invalidateQueries({ queryKey: ['dataset-detail'] }),
+  ]), [qc]);
+  const updateTags = useMutation({
+    mutationFn: async ({ updates }: { updates: Array<{ dataset: DatasetSummary; tags: string[] }> }) => Promise.all(updates.map(({ dataset, tags }) => dataApi.updateDataset(dataset.datasetId, { tags }))),
+    onSuccess: async () => { await refresh(); msg.success('标签已更新'); },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const createTemplate = useMutation({
+    mutationFn: dataApi.createLabelTemplate,
+    onSuccess: async (created) => { await dataApi.publishLabelTemplate(created.templateId); await qc.invalidateQueries({ queryKey: ['tag-management-label-templates'] }); setTemplateOpen(false); msg.success('标注标签模板已创建并发布'); },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const archiveTemplate = useMutation({
+    mutationFn: dataApi.archiveLabelTemplate,
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['tag-management-label-templates'] }); msg.success('模板已归档'); },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const datasetOptions = rows.map((dataset) => ({ value: dataset.datasetId, label: `${dataset.name} · ${txt(dataset.datasetType)} · ${dataset.currentVersionName ?? '无版本'}` }));
+  const tagOptions = tagRows.map((row) => ({ value: row.tag, label: row.tag }));
+
+  const submitCreateTag = (values: TagMaintenanceValues) => {
+    const tag = values.tagName.trim();
+    const targets = rows.filter((dataset) => values.datasetIds?.includes(dataset.datasetId));
+    if (!tag || targets.length === 0) return;
+    updateTags.mutate({ updates: targets.map((dataset) => ({ dataset, tags: withTag(dataset, tag) })) }, { onSuccess: () => { setCreateOpen(false); createForm.resetFields(); } });
+  };
+  const submitRenameTag = (values: { tagName: string }) => {
+    if (!renameTag) return;
+    const nextTag = values.tagName.trim();
+    if (!nextTag || nextTag === renameTag.tag) return;
+    const targets = rows.filter((dataset) => dataset.tags.includes(renameTag.tag));
+    updateTags.mutate({ updates: targets.map((dataset) => ({ dataset, tags: renameTagForDataset(dataset, renameTag.tag, nextTag) })) }, { onSuccess: () => { setRenameTag(null); renameForm.resetFields(); } });
+  };
+  const deleteTag = (row: TagCatalogRow) => {
+    const targets = rows.filter((dataset) => dataset.tags.includes(row.tag));
+    Modal.confirm({
+      title: `删除标签「${row.tag}」？`,
+      content: `将从 ${targets.length} 个数据集中移除此标签，不删除数据集本身。`,
+      okText: '确认删除标签',
+      okButtonProps: { danger: true },
+      onOk: () => updateTags.mutateAsync({ updates: targets.map((dataset) => ({ dataset, tags: removeTagFromDataset(dataset, row.tag) })) }),
+    });
+  };
+  const openDatasetEditor = (dataset: DatasetSummary) => {
+    setEditingDataset(dataset);
+    datasetForm.setFieldsValue({ tags: normalizeTags(dataset.tags) });
+  };
+  const submitDatasetTags = (values: { tags: string[] }) => {
+    if (!editingDataset) return;
+    updateTags.mutate({ updates: [{ dataset: editingDataset, tags: normalizeTags(values.tags) }] }, { onSuccess: () => setEditingDataset(null) });
+  };
+
+  return (
+    <div className="content-page tag-management-page">
+      {holder}
+      <div className="page-hero">
+        <div>
+          <Typography.Title level={3}>标签管理</Typography.Title>
+          <Typography.Text type="secondary">统一维护数据集标签与标注标签模板，当前标签目录从数据集元信息实时汇总。</Typography.Text>
+        </div>
+        <Space wrap>
+          <Button onClick={() => setTemplateOpen(true)}>＋ 新建标注模板</Button>
+          <Button type="primary" onClick={() => setCreateOpen(true)}>＋ 新建标签</Button>
+        </Space>
+      </div>
+      <Alert type="info" showIcon title="标签来源说明" description="数据集标签沿用数据集元信息 tags 字段；新建、重命名、删除标签会批量更新关联数据集。标注标签模板继续复用 Annotation Label Template 与 Label Studio XML 生成能力。" style={{ marginBottom: 16 }} />
+      <div className="summary-grid">
+        {[{ n: tagRows.length, l: '数据集标签数' }, { n: rows.length, l: '纳入治理数据集' }, { n: rows.filter((dataset) => dataset.tags.length > 0).length, l: '已打标签数据集' }, { n: templates.data?.length ?? 0, l: '标注模板' }].map((item) => <Card key={item.l}><Typography.Title level={3}>{item.n}</Typography.Title><Typography.Text type="secondary">{item.l}</Typography.Text></Card>)}
+      </div>
+      <Tabs
+        items={[
+          {
+            key: 'catalog',
+            label: '标签总览',
+            children: <Table<TagCatalogRow>
+              rowKey="tag"
+              dataSource={tagRows}
+              loading={datasets.isLoading}
+              pagination={{ pageSize: 8 }}
+              locale={{ emptyText: '暂无标签，请先新建标签或在数据集元信息中维护 tags。' }}
+              columns={[
+                { title: '标签名', dataIndex: 'tag', render: (tag) => <Tag color="blue">{tag}</Tag> },
+                { title: '使用数据集数', dataIndex: 'datasetCount', render: (value) => <Tag color="purple">{value}</Tag> },
+                { title: '覆盖数据类型', render: (_, row) => <Space wrap>{row.datasetTypes.map((type) => <Tag key={type}>{txt(type)}</Tag>)}</Space> },
+                { title: '样例数据集', render: (_, row) => <Space direction="vertical" size={0}>{row.sampleDatasets.map((dataset) => <Typography.Text key={dataset.datasetId}>{dataset.name}</Typography.Text>)}</Space> },
+                { title: '最近更新', dataIndex: 'latestUpdatedAt', render: (value) => value ? new Date(value).toLocaleString('zh-CN') : '-' },
+                { title: '操作', render: (_, row) => <Space><a onClick={() => { setRenameTag(row); renameForm.setFieldsValue({ tagName: row.tag }); }}>重命名</a><a style={{ color: '#cf1322' }} onClick={() => deleteTag(row)}>删除</a></Space> },
+              ]}
+            />,
+          },
+          {
+            key: 'datasets',
+            label: '数据集标签',
+            children: <Table<DatasetSummary>
+              rowKey="datasetId"
+              dataSource={rows}
+              loading={datasets.isLoading}
+              pagination={{ pageSize: 8 }}
+              columns={[
+                { title: '数据集名称', dataIndex: 'name' },
+                { title: '类型', render: (_, dataset) => <Tag>{txt(dataset.datasetType)} / {txt(dataset.dataType)}</Tag> },
+                { title: '当前版本', dataIndex: 'currentVersionName', render: (value) => value ?? '-' },
+                { title: '标签', render: (_, dataset) => <Space wrap>{normalizeTags(dataset.tags).length ? normalizeTags(dataset.tags).map((tag) => <Tag key={tag}>{tag}</Tag>) : <Typography.Text type="secondary">未设置</Typography.Text>}</Space> },
+                { title: '操作', render: (_, dataset) => <a onClick={() => openDatasetEditor(dataset)}>编辑标签</a> },
+              ]}
+            />,
+          },
+          {
+            key: 'templates',
+            label: '标注标签模板',
+            children: <Table<AnnotationLabelTemplate>
+              rowKey="templateId"
+              dataSource={templates.data ?? []}
+              loading={templates.isLoading}
+              pagination={{ pageSize: 8 }}
+              columns={[
+                { title: '模板名称', dataIndex: 'name' },
+                { title: '场景', dataIndex: 'scene', render: (value) => <Tag>{txt(value)}</Tag> },
+                { title: '标注类型', dataIndex: 'labelType' },
+                { title: '标签项', render: (_, template) => annotationTemplateSummary(template) },
+                { title: '状态', dataIndex: 'status', render: (value) => <Tag color={color(value)}>{value}</Tag> },
+                { title: '操作', render: (_, template) => template.status !== 'ARCHIVED' ? <a onClick={() => archiveTemplate.mutate(template.templateId)}>归档</a> : '-' },
+              ]}
+            />,
+          },
+        ]}
+      />
+      <Modal title="＋ 新建标签" open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
+        <Form form={createForm} layout="vertical" onFinish={submitCreateTag}>
+          <Form.Item name="tagName" label="标签名称" rules={[{ required: true, message: '请输入标签名称' }]}><Input placeholder="如 焊缝缺陷、座舱视觉、训练候选" /></Form.Item>
+          <Form.Item name="datasetIds" label="关联数据集" rules={[{ required: true, message: '请选择至少一个数据集' }]}><Select mode="multiple" options={datasetOptions} placeholder="选择要打标签的数据集" /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={updateTags.isPending}>保存标签</Button>
+        </Form>
+      </Modal>
+      <Modal title={`重命名标签 · ${renameTag?.tag ?? ''}`} open={Boolean(renameTag)} onCancel={() => setRenameTag(null)} footer={null} destroyOnHidden>
+        <Form form={renameForm} layout="vertical" onFinish={submitRenameTag}>
+          <Form.Item name="tagName" label="新标签名称" rules={[{ required: true, message: '请输入新标签名称' }]}><Input /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={updateTags.isPending}>保存重命名</Button>
+        </Form>
+      </Modal>
+      <Drawer title={`编辑数据集标签 · ${editingDataset?.name ?? ''}`} open={Boolean(editingDataset)} onClose={() => setEditingDataset(null)} width={520}>
+        <Form form={datasetForm} layout="vertical" onFinish={submitDatasetTags}>
+          <Form.Item name="tags" label="标签"><Select mode="tags" tokenSeparators={[',', '，']} options={tagOptions} placeholder="输入或选择标签" /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={updateTags.isPending}>保存数据集标签</Button>
+        </Form>
+      </Drawer>
+      <Drawer title="新建标注标签模板" open={templateOpen} onClose={() => setTemplateOpen(false)} width={640} destroyOnHidden>
+        <Alert type="info" showIcon title="标注标签模板" description="用于标注任务创建与 Label Studio 配置生成，不会自动改写数据集 tags。" style={{ marginBottom: 16 }} />
+        <Form
+          form={templateForm}
+          layout="vertical"
+          initialValues={{ name: '焊缝图片打标模板', tenantId: currentTenantId, scene: 'IMAGE_TAGGING', labelType: 'BOUNDING_BOX', labelSchemaJson: defaultLabelSchema('IMAGE_TAGGING') }}
+          onFinish={(values) => createTemplate.mutate({ ...values, labelStudioConfigXml: labelStudioXmlForTemplate(values.scene, values.labelSchemaJson, values.labelStudioConfigXml) })}
+        >
+          <Form.Item name="name" label="模板名称" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="tenantId" label="BU"><Input /></Form.Item>
+          <Form.Item name="scene" label="场景"><Select options={annotationTemplateSceneOptions} onChange={(scene) => templateForm.setFieldsValue({ labelType: scene === 'TEXT_LABELING' ? 'TEXT_CLASSIFICATION' : scene === 'IMAGE_SEGMENTATION' ? 'POLYGON' : 'BOUNDING_BOX', labelSchemaJson: defaultLabelSchema(scene) })} /></Form.Item>
+          <Form.Item name="labelType" label="标注类型"><Select options={annotationLabelTypeOptions} /></Form.Item>
+          <Form.Item name="labelSchemaJson" label="标签 Schema" rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item>
+          <Form.Item name="labelStudioConfigXml" label="Label Studio XML（可选；留空自动生成）"><Input.TextArea rows={5} placeholder={labelStudioXmlForTemplate(templateScene, templateSchema)} /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={createTemplate.isPending}>创建并发布模板</Button>
+        </Form>
+      </Drawer>
+    </div>
+  );
+}
+
 function DatasetVersionList({ datasetId }: { datasetId?: string }) {
   const q = useQuery({ queryKey: ['dataset-detail', datasetId], queryFn: () => dataApi.datasetDetail(datasetId!), enabled: Boolean(datasetId) });
   return <Table<DatasetVersion> rowKey="versionId" dataSource={q.data?.versions ?? []} pagination={false} columns={[{ title: '版本', render: (_, r) => <Space><span>{r.versionName}</span>{r.isCurrent ? <Tag color="blue">当前</Tag> : null}</Space> }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '来源版本', dataIndex: 'sourceVersionId', render: (v) => v ?? '首版本' }, { title: '文件数', dataIndex: 'fileCount' }, { title: '安全', dataIndex: 'contentSafetyStatus' }, { title: '可删除', render: (_, r) => r.deletable ? '是' : r.deleteBlockedReason ?? '否' }, { title: '文件大小', render: (_, r) => fmtSize(r.sizeBytes) }]} />;

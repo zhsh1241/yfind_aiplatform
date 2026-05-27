@@ -157,7 +157,7 @@ vi.mock('./features/foundation/apiClient', () => ({
     post: vi.fn((url: string) => {
       if (url.includes('/auth/login')) {
         mockState.token = 'token-f006';
-        mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview'], sessionVersion: 1 };
+        mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview', 'tagmgmt'], sessionVersion: 1 };
         return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { accessToken: 'token-f006', refreshToken: 'refresh', tokenType: 'Bearer', expiresInSeconds: 3600, user: mockState.user } } });
       }
       if (url.includes('/auth/refresh')) {
@@ -207,7 +207,7 @@ function renderApp(initialEntries = ['/login']) {
 
 function seedWorkbenchSession() {
   mockState.token = 'token-f014';
-  mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
+  mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'tagmgmt', 'ds'], sessionVersion: 1 };
   useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
 }
 
@@ -284,7 +284,7 @@ describe('F006 platform identity frontend', () => {
 
   it('keeps usermgmt tabs, table, role cards and permission matrix API-driven', async () => {
     mockState.token = 'token-f006';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview', 'tagmgmt'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f006', user: mockState.user, initialized: true });
     renderApp(['/usermgmt']);
 
@@ -336,7 +336,7 @@ describe('F006 platform identity frontend', () => {
 
   it('keeps perm page title, tabs, request and approval workflow API-driven', async () => {
     mockState.token = 'token-f006';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview', 'tagmgmt'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f006', user: mockState.user, initialized: true });
     renderApp(['/perm']);
 
@@ -374,7 +374,7 @@ describe('F006 platform identity frontend', () => {
 
   it('renders org page with prototype tabs and real organization APIs', async () => {
     mockState.token = 'token-f007';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview', 'tagmgmt'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f007', user: mockState.user, initialized: true });
     renderApp(['/org']);
 
@@ -391,9 +391,21 @@ describe('F006 platform identity frontend', () => {
     expect(await screen.findByRole('heading', { name: '权限管理' })).toBeInTheDocument();
   });
 
+
+  it('renders tag management as first-class data menu and page', async () => {
+    mockState.token = 'token-tagmgmt';
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:tagmgmt', 'menu:ds'], menuPermissions: ['dash', 'tagmgmt', 'ds'], sessionVersion: 1 };
+    useSessionStore.setState({ token: 'token-tagmgmt', user: mockState.user, initialized: true });
+    renderApp(['/tagmgmt']);
+
+    expect(await screen.findByRole('heading', { name: '标签管理' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /标签管理/ })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '标签总览' })).toBeInTheDocument();
+  });
+
   it('renders sys page with config, notification and one-time API key paths', async () => {
     mockState.token = 'token-f007';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview', 'tagmgmt'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f007', user: mockState.user, initialized: true });
     renderApp(['/sys']);
 
@@ -413,7 +425,7 @@ describe('F006 platform identity frontend', () => {
   it('renders resource page with PAI unconfigured guidance and prototype tabs', async () => {
     // TASK-pai-resource-integration AC-01 AC-02 AC-05 AC-06
     mockState.token = 'token-f008';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview', 'tagmgmt'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f008', user: mockState.user, initialized: true });
     renderApp(['/resource']);
 
@@ -434,7 +446,7 @@ describe('F006 platform identity frontend', () => {
   it('renders F012 annotation task, workbench and review pages from APIs', async () => {
     // TASK-annotation-integration AC-01 AC-02 AC-03 AC-04 AC-05 AC-06 AC-07
     mockState.token = 'token-f012';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'tagmgmt', 'ds'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f012', user: mockState.user, initialized: true });
     const renderRoute = (initialEntries: string[]) => (
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -464,7 +476,7 @@ describe('F006 platform identity frontend', () => {
 
   it('allows entering annotation workbench from dataset detail existing tasks', async () => {
     mockState.token = 'token-f014';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'tagmgmt', 'ds'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
 
     renderApp(['/dsdetail']);
@@ -483,7 +495,7 @@ describe('F006 platform identity frontend', () => {
 
   it('filters dataset detail templates by selected annotation scene', async () => {
     mockState.token = 'token-f014';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'tagmgmt', 'ds'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
 
     renderApp(['/dsdetail']);
@@ -506,7 +518,7 @@ describe('F006 platform identity frontend', () => {
 
   it('defaults annotation task creation to inline labels on dataset detail page', async () => {
     mockState.token = 'token-f014';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'tagmgmt', 'ds'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
 
     renderApp(['/dsdetail']);
@@ -520,7 +532,7 @@ describe('F006 platform identity frontend', () => {
 
   it('requires explicit dataset selection when creating annotation task from annotation page', async () => {
     mockState.token = 'token-f014';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'tagmgmt', 'ds'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
 
     renderApp(['/ann']);
@@ -556,7 +568,7 @@ describe('F006 platform identity frontend', () => {
 
   it('uses authenticated blob preview instead of unauthorized direct file url in workbench', async () => {
     mockState.token = 'token-f014';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'tagmgmt', 'ds'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
 
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(['image-bytes'], { type: 'image/jpeg' }) });
@@ -880,7 +892,7 @@ describe('F006 platform identity frontend', () => {
 
   it('opens annotation task wizard with dataset preselected when jumping from dataset page', async () => {
     mockState.token = 'token-f014';
-    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'ds'], sessionVersion: 1 };
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'tagmgmt', 'ds'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f014', user: mockState.user, initialized: true });
 
     renderApp(['/ds']);
