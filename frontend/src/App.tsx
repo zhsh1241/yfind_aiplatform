@@ -47,7 +47,9 @@ export default function App() {
     return <LoginPage />;
   }
 
-  const canAccess = (key: string) => key === 'dash' || user.menuPermissions.includes(key);
+  const isSuperAdmin = user.roles.includes('SUPER_ADMIN');
+  const allowedMenuKeys = new Set(isSuperAdmin ? prototypePages.map((page) => page.key) : ['dash', ...user.menuPermissions]);
+  const canAccess = (key: string) => allowedMenuKeys.has(key);
   const userMenuItems: MenuProps['items'] = [
     {
       key: 'language-label',
@@ -78,7 +80,7 @@ export default function App() {
     <Layout className="app-shell">
       <Sider width={264} className="app-sider">
         <div className="brand">YFI SMP</div>
-        <AppNavigation language={language} allowedKeys={new Set(['dash', ...user.menuPermissions])} />
+        <AppNavigation language={language} allowedKeys={allowedMenuKeys} />
       </Sider>
       <Layout>
         <Header className="app-header">

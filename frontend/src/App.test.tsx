@@ -392,6 +392,17 @@ describe('F006 platform identity frontend', () => {
   });
 
 
+
+  it('keeps all prototype menus visible for super admin even when session lacks new menu grants', async () => {
+    mockState.token = 'token-super-admin-menu-fallback';
+    mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash'], menuPermissions: ['dash'], sessionVersion: 1 };
+    useSessionStore.setState({ token: 'token-super-admin-menu-fallback', user: mockState.user, initialized: true });
+    renderApp(['/dash']);
+
+    expect(await screen.findByRole('menuitem', { name: /标签管理/ })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /算子广场/ })).toBeInTheDocument();
+  });
+
   it('renders tag management as first-class data menu and page', async () => {
     mockState.token = 'token-tagmgmt';
     mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:tagmgmt', 'menu:ds'], menuPermissions: ['dash', 'tagmgmt', 'ds'], sessionVersion: 1 };
