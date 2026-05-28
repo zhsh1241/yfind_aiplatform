@@ -113,6 +113,7 @@ vi.mock('./features/foundation/apiClient', () => ({
       if (url.includes('/api/v1/annotation/tasks/ANN-WELD-SEG')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockSegmentationAnnotationDetail } });
       if (url.includes('/api/v1/annotation/tasks/')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationDetail } });
       if (url.includes('/api/v1/annotation/tasks')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { items: [mockAssignedAnnotationTask, mockAnnotationTask], total: 2, page: 1, pageSize: 20 } } });
+      if (url.includes('/api/v1/annotation/tags')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: [{ tagId: 'ATAG-CRACK', name: '裂纹', color: '#E02020', description: '独立标签', status: 'ACTIVE', tenantId: 'TENANT-CABIN', createdBy: 'USR-001', updatedAt: '2026-05-26T00:00:00Z' }, { tagId: 'ATAG-PORE', name: '气孔', color: '#F59E0B', description: '独立标签', status: 'ACTIVE', tenantId: 'TENANT-CABIN', createdBy: 'USR-001', updatedAt: '2026-05-26T00:00:00Z' }] } });
       if (url.includes('/api/v1/annotation/label-templates')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: [mockAnnotationTemplate, mockSegmentationTemplate] } });
       if (url.includes('/api/v1/data-sources')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockDataSources } });
       if (url.includes('/api/v1/data-source-sync-tasks')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockSyncTasks } });
@@ -181,6 +182,7 @@ vi.mock('./features/foundation/apiClient', () => ({
       if (url.includes('/api/v1/annotation/review-items/') && url.includes('/reject')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { ...mockAnnotationReviewItems[0], status: 'REJECTED', reviewComment: '需要补充' } } });
       if (url.includes('/api/v1/annotation/label-templates/') && url.includes('/publish')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationTemplate } });
       if (url.includes('/api/v1/annotation/label-templates')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { ...mockAnnotationTemplate, templateId: 'LT-NEW' } } });
+      if (url.includes('/api/v1/annotation/tags')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { tagId: 'ATAG-NEW', name: '独立存在标签', color: '#1677ff', description: '新增', status: 'ACTIVE', tenantId: 'TENANT-CABIN', createdBy: 'USR-001', updatedAt: '2026-05-26T00:00:00Z' } } });
       if (url.includes('/platform/files/init')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockUploadFile } });
       if (url.includes('/platform/files/') && url.includes('/content')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockUploadFile } });
       if (url.includes('/platform/files/') && url.includes('/complete')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockUploadedFile } });
@@ -411,7 +413,8 @@ describe('F006 platform identity frontend', () => {
 
     expect(await screen.findByRole('heading', { name: '标签管理' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /标签管理/ })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '标签总览' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '独立标签目录' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '数据集标签' })).toBeInTheDocument();
   });
 
   it('renders sys page with config, notification and one-time API key paths', async () => {
@@ -537,8 +540,9 @@ describe('F006 platform identity frontend', () => {
     expect(await screen.findByRole('heading', { name: '焊缝缺陷检测数据集' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '创建标注任务' }));
 
-    expect(await screen.findByText('直接输入标签并自动建模板')).toBeInTheDocument();
-    expect(screen.getByLabelText('标签列表')).toBeInTheDocument();
+    expect(await screen.findByText('选择标签并自动建模板')).toBeInTheDocument();
+    expect(screen.getByLabelText('选择标签')).toBeInTheDocument();
+    expect(screen.getByLabelText('补充标签')).toBeInTheDocument();
   }, 15000);
 
   it('requires explicit dataset selection when creating annotation task from annotation page', async () => {
@@ -554,8 +558,9 @@ describe('F006 platform identity frontend', () => {
     expect(await screen.findByText('数据集范围说明')).toBeInTheDocument();
     const createButton = screen.getByRole('button', { name: '创建任务' });
     expect(createButton).toBeEnabled();
-    expect(screen.getByText('直接输入标签并自动建模板')).toBeInTheDocument();
-    expect(screen.getByLabelText('标签列表')).toBeInTheDocument();
+    expect(screen.getByText('选择标签并自动建模板')).toBeInTheDocument();
+    expect(screen.getByLabelText('选择标签')).toBeInTheDocument();
+    expect(screen.getByLabelText('补充标签')).toBeInTheDocument();
 
     await userEvent.click(screen.getByLabelText('源数据集（仅 ACTIVE 且可标注图片数据集）'));
     expect((await screen.findAllByText(/焊缝缺陷检测数据集（DATASET-WELD-DEFECT）/)).length).toBeGreaterThan(0);
@@ -917,7 +922,8 @@ describe('F006 platform identity frontend', () => {
     await waitFor(() => {
       expect(screen.getByText(/焊缝缺陷检测数据集（DATASET-WELD-DEFECT）/)).toBeInTheDocument();
       expect(screen.getByDisplayValue('DVER-WELD-001')).toBeInTheDocument();
-      expect(screen.getByText('直接输入标签并自动建模板')).toBeInTheDocument();
+      expect(screen.getByText('选择标签并自动建模板')).toBeInTheDocument();
+      expect(screen.getByLabelText('选择标签')).toBeInTheDocument();
     });
   });
 

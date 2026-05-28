@@ -247,6 +247,10 @@ vi.mock('../platform/platformApi', async () => {
       createDataStandardTask: vi.fn().mockResolvedValue({}),
       runDataStandardTask: vi.fn().mockResolvedValue({ outputDatasetId: 'DATASET-STD' }),
       updateDataset: vi.fn().mockResolvedValue({}),
+      annotationTags: vi.fn().mockResolvedValue([{ tagId: 'ATAG-CRACK', name: '裂纹', color: '#E02020', description: '独立标签', status: 'ACTIVE', tenantId: 'TENANT-CABIN', createdBy: 'USR-001', updatedAt: '2026-05-26T00:00:00Z' }, { tagId: 'ATAG-PORE', name: '气孔', color: '#F59E0B', description: '独立标签', status: 'ACTIVE', tenantId: 'TENANT-CABIN', createdBy: 'USR-001', updatedAt: '2026-05-26T00:00:00Z' }]),
+      createAnnotationTag: vi.fn().mockResolvedValue({ tagId: 'ATAG-NEW', name: '新标签', color: '#1677ff', description: '新增', status: 'ACTIVE', tenantId: 'TENANT-CABIN', createdBy: 'USR-001', updatedAt: '2026-05-26T00:00:00Z' }),
+      updateAnnotationTag: vi.fn().mockResolvedValue({}),
+      archiveAnnotationTag: vi.fn().mockResolvedValue({}),
       labelTemplates: vi.fn().mockResolvedValue([{ templateId: 'LT-WELD-BBOX', name: '焊缝缺陷 BBox 模板', scene: 'IMAGE_TAGGING', labelType: 'BOUNDING_BOX', labelSchemaJson: '{"labels":["裂纹","气孔"]}', labelStudioConfigXml: '<View/>', status: 'PUBLISHED', tenantId: 'TENANT-CABIN', createdBy: 'USR-001', updatedAt: '2026-05-26T00:00:00Z' }]),
       createLabelTemplate: vi.fn().mockResolvedValue({ templateId: 'LT-NEW', name: '新模板', scene: 'IMAGE_TAGGING', labelType: 'BOUNDING_BOX', labelSchemaJson: '{"labels":["裂纹"]}', labelStudioConfigXml: '<View/>', status: 'DRAFT', tenantId: 'TENANT-CABIN', createdBy: 'USR-001', updatedAt: '2026-05-26T00:00:00Z' }),
       publishLabelTemplate: vi.fn().mockResolvedValue({}),
@@ -292,12 +296,18 @@ describe('TagManagementPage', () => {
   it('renders dataset tag catalog and supports dataset tag editing', async () => {
     renderTagManagementPage();
     expect(await screen.findByRole('heading', { name: '标签管理' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '标签总览' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '独立标签目录' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '数据集标签' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '标注标签模板' })).toBeInTheDocument();
-    expect(await screen.findByText('焊缝')).toBeInTheDocument();
+    expect(await screen.findByText('裂纹')).toBeInTheDocument();
 
     const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '＋ 新建标签' }));
+    await user.clear(screen.getByLabelText('标签名称'));
+    await user.type(screen.getByLabelText('标签名称'), '独立存在标签');
+    await user.click(screen.getByRole('button', { name: '保存标签' }));
+    await waitFor(() => expect(dataApi.createAnnotationTag).toHaveBeenCalledWith(expect.objectContaining({ name: '独立存在标签' }), expect.anything()));
+
     await user.click(screen.getByRole('tab', { name: '数据集标签' }));
     await user.click((await screen.findAllByText('编辑标签'))[0]);
     await user.click(screen.getByRole('button', { name: '保存数据集标签' }));

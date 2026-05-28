@@ -10,6 +10,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.OffsetDateTime;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -148,6 +149,51 @@ class AnnotationTaskRealImageBindingTest {
         String labelSchema = jdbc.queryForObject("SELECT label_schema_json FROM annotation_label_template WHERE template_id=?", String.class, templateId);
         assertThat(templateStatus).isEqualTo("PUBLISHED");
         assertThat(labelSchema).contains("裂纹").contains("气孔").contains("夹渣");
+    }
+
+    @Test
+    void independentAnnotationTagsCanBeManagedWithoutDatasetBinding() throws Exception {
+        String adminToken = login("admin", "YF");
+
+        JsonNode initial = getJson("/api/v1/annotation/tags?status=ACTIVE", "trace-ann-tags-list", adminToken);
+        assertThat(initial.at("/code").asInt()).isZero();
+        assertThat(initial.at("/data").findValuesAsText("name")).contains("裂纹", "气孔", "夹渣");
+
+        String tagName = "独立标签-" + UUID.randomUUID().toString().substring(0, 8);
+        JsonNode created = postJson("/api/v1/annotation/tags", "trace-ann-tags-create", """
+            {
+              "name":"%s",
+              "tenantId":"TENANT-CABIN",
+              "color":"#1677ff",
+              "description":"不绑定数据集，可在后续标注任务创建时选择",
+              "status":"ACTIVE"
+            }
+            """.formatted(tagName), adminToken);
+
+        assertThat(created.at("/code").asInt()).isZero();
+        String tagId = created.at("/data/tagId").asText();
+        assertThat(tagId).startsWith("ATAG-");
+        assertThat(created.at("/data/name").asText()).isEqualTo(tagName);
+
+        JsonNode filtered = getJson("/api/v1/annotation/tags?status=ACTIVE&keyword=" + tagName, "trace-ann-tags-filter", adminToken);
+        assertThat(filtered.at("/code").asInt()).isZero();
+        assertThat(filtered.at("/data").findValuesAsText("name")).contains(tagName);
+
+        JsonNode updated = putJson("/api/v1/annotation/tags/" + tagId, "trace-ann-tags-update", """
+            {
+              "name":"%s",
+              "tenantId":"TENANT-CABIN",
+              "color":"#52c41a",
+              "description":"已更新的独立标签",
+              "status":"ACTIVE"
+            }
+            """.formatted(tagName), adminToken);
+        assertThat(updated.at("/code").asInt()).isZero();
+        assertThat(updated.at("/data/color").asText()).isEqualTo("#52c41a");
+
+        JsonNode archived = postJson("/api/v1/annotation/tags/" + tagId + "/archive", "trace-ann-tags-archive", "{}", adminToken);
+        assertThat(archived.at("/code").asInt()).isZero();
+        assertThat(archived.at("/data/status").asText()).isEqualTo("ARCHIVED");
     }
 
     @Test
@@ -373,6 +419,17 @@ class AnnotationTaskRealImageBindingTest {
             .header(TraceIdFilter.TRACE_HEADER, traceId)
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(body));
+        if (token != null) {
+            builder.header("Authorization", "Bearer " + token);
+        }
+        return send(builder.build());
+    }
+
+    private JsonNode putJson(String path, String traceId, String body, String token) throws Exception {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+            .header(TraceIdFilter.TRACE_HEADER, traceId)
+            .header("Content-Type", "application/json")
+            .PUT(HttpRequest.BodyPublishers.ofString(body));
         if (token != null) {
             builder.header("Authorization", "Bearer " + token);
         }

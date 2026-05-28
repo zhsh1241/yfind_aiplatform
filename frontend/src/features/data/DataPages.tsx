@@ -8,6 +8,8 @@ import {
   platformApi,
   type AnnotationLabelTemplate,
   type AnnotationLabelTemplateInput,
+  type AnnotationTag as AnnotationTagSummary,
+  type AnnotationTagInput,
   type AnnotationSourceDataset,
   type AnnotationExternalBinding,
   type AnnotationReviewItem,
@@ -918,6 +920,7 @@ export function AnnotationTasksPage() {
     templateId?: string;
     templateMode?: 'EXISTING' | 'INLINE_CREATE';
     inlineLabels?: string;
+    selectedTagNames?: string[];
     inlineTemplateName?: string;
     scene: string;
     reviewEnabled: boolean;
@@ -935,10 +938,12 @@ export function AnnotationTasksPage() {
   const tasks = useQuery({ queryKey: ['annotation-tasks', status], queryFn: () => dataApi.annotationTasks({ status }) });
   const sourceDatasets = useQuery({ queryKey: ['annotation-source-datasets', taskScene], queryFn: () => dataApi.annotationSourceDatasets({ scene: taskScene, pageSize: 100 }) });
   const templates = useQuery({ queryKey: ['annotation-templates'], queryFn: () => dataApi.labelTemplates() });
+  const tagCatalog = useQuery({ queryKey: ['annotation-tags'], queryFn: () => dataApi.annotationTags({ status: 'ACTIVE' }) });
   const inv = useCallback(() => Promise.all([
     qc.invalidateQueries({ queryKey: ['annotation-overview'] }),
     qc.invalidateQueries({ queryKey: ['annotation-tasks'] }),
     qc.invalidateQueries({ queryKey: ['annotation-templates'] }),
+    qc.invalidateQueries({ queryKey: ['annotation-tags'] }),
   ]), [qc]);
   const createTask = useMutation({
     mutationFn: async (values: {
@@ -948,6 +953,7 @@ export function AnnotationTasksPage() {
       templateId?: string;
       templateMode?: 'EXISTING' | 'INLINE_CREATE';
       inlineLabels?: string;
+      selectedTagNames?: string[];
       inlineTemplateName?: string;
       scene: string;
       reviewEnabled: boolean;
@@ -959,7 +965,7 @@ export function AnnotationTasksPage() {
       let inlineLabels: string[] | undefined;
       let inlineTemplateName: string | undefined;
       if (values.templateMode === 'INLINE_CREATE' || !templateId) {
-        inlineLabels = parseInlineLabels(values.inlineLabels);
+        inlineLabels = uniqueStrings([...(values.selectedTagNames ?? []), ...parseInlineLabels(values.inlineLabels)]);
         if (inlineLabels.length === 0) {
           throw new Error('请至少输入一个标签。');
         }
@@ -1021,10 +1027,11 @@ export function AnnotationTasksPage() {
       sourceVersionId: selectedDataset?.currentVersionId ?? undefined,
       templateId: defaultTemplateId,
       templateMode: 'INLINE_CREATE',
-      inlineLabels: annotationClasses.join('，'),
+      selectedTagNames: (tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').slice(0, 3).map((tag) => tag.name),
+      inlineLabels: '',
       inlineTemplateName: `${selectedDataset?.name ?? '数据集'} ${txt(defaultScene)}模板`,
     });
-  }, [annotationDatasets, publishedTemplates, taskForm]);
+  }, [annotationDatasets, publishedTemplates, tagCatalog.data, taskForm]);
 
   useEffect(() => {
     if (!wizardOpen) return;
@@ -1125,9 +1132,9 @@ export function AnnotationTasksPage() {
           <Form.Item name="sourceVersionId" label="数据版本"><Input placeholder="选择数据集后自动带出 currentVersionId" /></Form.Item>
           <Form.Item name="name" label="任务名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="scene" label="标注场景"><Select options={annotationSceneOptions} onChange={(scene) => taskForm.setFieldsValue({ templateId: undefined, templateMode: 'INLINE_CREATE', inlineTemplateName: `${selectedTaskDataset?.name ?? '数据集'} ${txt(scene)}模板` })} /></Form.Item>
-          <Form.Item name="templateMode" label="标签来源"><Select options={[{ value: 'EXISTING', label: '选择已发布模板' }, { value: 'INLINE_CREATE', label: '直接输入标签并自动建模板' }]} /></Form.Item>
+          <Form.Item name="templateMode" label="标签来源"><Select options={[{ value: 'EXISTING', label: '选择已发布模板' }, { value: 'INLINE_CREATE', label: '选择标签并自动建模板' }]} /></Form.Item>
           {taskTemplateMode === 'EXISTING' ? (
-            <Form.Item name="templateId" label="标签模板（按场景过滤，必须 PUBLISHED）" rules={[{ required: true, message: '请选择标签模板，或切换为直接输入标签。' }]} extra={selectableTaskTemplates.length === 0 ? '当前场景无可用模板，可切换为“直接输入标签并自动建模板”。' : undefined}>
+            <Form.Item name="templateId" label="标签模板（按场景过滤，必须 PUBLISHED）" rules={[{ required: true, message: '请选择标签模板，或切换为选择标签。' }]} extra={selectableTaskTemplates.length === 0 ? '当前场景无可用模板，可切换为“选择标签并自动建模板”。' : undefined}>
               <Select
                 placeholder={selectableTaskTemplates.length ? '请选择标签模板' : '当前场景无可用模板'}
                 disabled={!selectableTaskTemplates.length}
@@ -1137,7 +1144,8 @@ export function AnnotationTasksPage() {
           ) : (
             <>
               <Form.Item name="inlineTemplateName" label="自动生成的模板名称"><Input /></Form.Item>
-              <Form.Item name="inlineLabels" label="标签列表" rules={[{ required: true, message: '请至少输入一个标签' }, { validator: async (_rule, value) => { if (parseInlineLabels(value).length === 0) throw new Error('请至少输入一个标签'); } }]} extra="支持逗号、顿号或换行分隔，例如：裂纹，气孔，夹渣"><Input.TextArea rows={4} placeholder="裂纹，气孔，夹渣" /></Form.Item>
+              <Form.Item name="selectedTagNames" label="选择标签" extra="来自标签管理的独立标签目录，不要求关联数据集。"><Select mode="multiple" options={(tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').map((tag) => ({ value: tag.name, label: tag.name }))} placeholder="请选择标签" /></Form.Item>
+              <Form.Item name="inlineLabels" label="补充标签" rules={[{ validator: async (_rule, value) => { if ([...(taskForm.getFieldValue('selectedTagNames') ?? []), ...parseInlineLabels(value)].length === 0) throw new Error('请至少选择或输入一个标签'); } }]} extra="可额外输入标签，支持逗号、顿号或换行分隔。"><Input.TextArea rows={3} placeholder="裂纹，气孔，夹渣" /></Form.Item>
             </>
           )}
           <Space wrap>
@@ -3031,16 +3039,11 @@ export function DatasetManagementPage() {
 }
 
 
-type TagCatalogRow = { tag: string; datasetCount: number; sampleDatasets: DatasetSummary[]; datasetTypes: string[]; latestUpdatedAt: string };
-type TagMaintenanceValues = { tagName: string; datasetIds?: string[] };
-
+type DatasetTagCatalogRow = { tag: string; datasetCount: number; sampleDatasets: DatasetSummary[]; datasetTypes: string[]; latestUpdatedAt: string };
 const uniqueStrings = (items: string[]) => Array.from(new Set(items.map((item) => item.trim()).filter(Boolean)));
 const normalizeTags = (tags?: string[]) => uniqueStrings(tags ?? []);
-const withTag = (dataset: DatasetSummary, tag: string) => normalizeTags([...dataset.tags, tag]);
-const renameTagForDataset = (dataset: DatasetSummary, from: string, to: string) => normalizeTags(dataset.tags.map((tag) => tag === from ? to : tag));
-const removeTagFromDataset = (dataset: DatasetSummary, tag: string) => normalizeTags(dataset.tags.filter((item) => item !== tag));
 
-function buildTagCatalog(datasets: DatasetSummary[]): TagCatalogRow[] {
+function buildDatasetTagCatalog(datasets: DatasetSummary[]): DatasetTagCatalogRow[] {
   const map = new Map<string, DatasetSummary[]>();
   datasets.forEach((dataset) => {
     normalizeTags(dataset.tags).forEach((tag) => {
@@ -3066,24 +3069,41 @@ export function TagManagementPage() {
   const currentTenantId = useSessionStore((state) => state.user?.tenantId);
   const [msg, holder] = message.useMessage();
   const [createOpen, setCreateOpen] = useState(false);
-  const [renameTag, setRenameTag] = useState<TagCatalogRow | null>(null);
+  const [editingTag, setEditingTag] = useState<AnnotationTagSummary | null>(null);
   const [editingDataset, setEditingDataset] = useState<DatasetSummary | null>(null);
   const [templateOpen, setTemplateOpen] = useState(false);
-  const [createForm] = Form.useForm<TagMaintenanceValues>();
-  const [renameForm] = Form.useForm<{ tagName: string }>();
+  const [createForm] = Form.useForm<AnnotationTagInput>();
+  const [editTagForm] = Form.useForm<AnnotationTagInput>();
   const [datasetForm] = Form.useForm<{ tags: string[] }>();
   const [templateForm] = Form.useForm<AnnotationLabelTemplateInput>();
   const templateScene = Form.useWatch('scene', templateForm) ?? 'IMAGE_TAGGING';
   const templateSchema = Form.useWatch('labelSchemaJson', templateForm) ?? defaultLabelSchema(templateScene);
   const datasets = useQuery({ queryKey: ['tag-management-datasets'], queryFn: () => dataApi.datasets({ pageSize: 100 }) });
+  const tagCatalog = useQuery({ queryKey: ['annotation-tags'], queryFn: () => dataApi.annotationTags() });
   const templates = useQuery({ queryKey: ['tag-management-label-templates'], queryFn: () => dataApi.labelTemplates() });
   const rows = useMemo(() => datasets.data?.items ?? [], [datasets.data?.items]);
-  const tagRows = useMemo(() => buildTagCatalog(rows), [rows]);
+  const datasetTagRows = useMemo(() => buildDatasetTagCatalog(rows), [rows]);
   const refresh = useCallback(() => Promise.all([
     qc.invalidateQueries({ queryKey: ['tag-management-datasets'] }),
     qc.invalidateQueries({ queryKey: ['datasets'] }),
     qc.invalidateQueries({ queryKey: ['dataset-detail'] }),
   ]), [qc]);
+  const refreshTagCatalog = useCallback(() => qc.invalidateQueries({ queryKey: ['annotation-tags'] }), [qc]);
+  const createCatalogTag = useMutation({
+    mutationFn: dataApi.createAnnotationTag,
+    onSuccess: async () => { await refreshTagCatalog(); setCreateOpen(false); createForm.resetFields(); msg.success('标签已创建'); },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const updateCatalogTag = useMutation({
+    mutationFn: ({ tagId, input }: { tagId: string; input: AnnotationTagInput }) => dataApi.updateAnnotationTag(tagId, input),
+    onSuccess: async () => { await refreshTagCatalog(); setEditingTag(null); msg.success('标签已更新'); },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const archiveCatalogTag = useMutation({
+    mutationFn: dataApi.archiveAnnotationTag,
+    onSuccess: async () => { await refreshTagCatalog(); msg.success('标签已归档'); },
+    onError: (e: Error) => msg.error(e.message),
+  });
   const updateTags = useMutation({
     mutationFn: async ({ updates }: { updates: Array<{ dataset: DatasetSummary; tags: string[] }> }) => Promise.all(updates.map(({ dataset, tags }) => dataApi.updateDataset(dataset.datasetId, { tags }))),
     onSuccess: async () => { await refresh(); msg.success('标签已更新'); },
@@ -3099,31 +3119,14 @@ export function TagManagementPage() {
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['tag-management-label-templates'] }); msg.success('模板已归档'); },
     onError: (e: Error) => msg.error(e.message),
   });
-  const datasetOptions = rows.map((dataset) => ({ value: dataset.datasetId, label: `${dataset.name} · ${txt(dataset.datasetType)} · ${dataset.currentVersionName ?? '无版本'}` }));
-  const tagOptions = tagRows.map((row) => ({ value: row.tag, label: row.tag }));
+  const tagOptions = (tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').map((tag) => ({ value: tag.name, label: tag.name }));
 
-  const submitCreateTag = (values: TagMaintenanceValues) => {
-    const tag = values.tagName.trim();
-    const targets = rows.filter((dataset) => values.datasetIds?.includes(dataset.datasetId));
-    if (!tag || targets.length === 0) return;
-    updateTags.mutate({ updates: targets.map((dataset) => ({ dataset, tags: withTag(dataset, tag) })) }, { onSuccess: () => { setCreateOpen(false); createForm.resetFields(); } });
+  const submitCreateTag = (values: AnnotationTagInput) => {
+    createCatalogTag.mutate({ ...values, name: values.name.trim(), tenantId: values.tenantId || currentTenantId, status: 'ACTIVE' });
   };
-  const submitRenameTag = (values: { tagName: string }) => {
-    if (!renameTag) return;
-    const nextTag = values.tagName.trim();
-    if (!nextTag || nextTag === renameTag.tag) return;
-    const targets = rows.filter((dataset) => dataset.tags.includes(renameTag.tag));
-    updateTags.mutate({ updates: targets.map((dataset) => ({ dataset, tags: renameTagForDataset(dataset, renameTag.tag, nextTag) })) }, { onSuccess: () => { setRenameTag(null); renameForm.resetFields(); } });
-  };
-  const deleteTag = (row: TagCatalogRow) => {
-    const targets = rows.filter((dataset) => dataset.tags.includes(row.tag));
-    Modal.confirm({
-      title: `删除标签「${row.tag}」？`,
-      content: `将从 ${targets.length} 个数据集中移除此标签，不删除数据集本身。`,
-      okText: '确认删除标签',
-      okButtonProps: { danger: true },
-      onOk: () => updateTags.mutateAsync({ updates: targets.map((dataset) => ({ dataset, tags: removeTagFromDataset(dataset, row.tag) })) }),
-    });
+  const openEditTag = (tag: AnnotationTagSummary) => {
+    setEditingTag(tag);
+    editTagForm.setFieldsValue({ name: tag.name, tenantId: tag.tenantId, color: tag.color ?? undefined, description: tag.description ?? undefined, status: tag.status });
   };
   const openDatasetEditor = (dataset: DatasetSummary) => {
     setEditingDataset(dataset);
@@ -3140,40 +3143,39 @@ export function TagManagementPage() {
       <div className="page-hero">
         <div>
           <Typography.Title level={3}>标签管理</Typography.Title>
-          <Typography.Text type="secondary">统一维护数据集标签与标注标签模板，当前标签目录从数据集元信息实时汇总。</Typography.Text>
+          <Typography.Text type="secondary">统一维护独立标注标签、数据集检索标签与 Label Studio 标签模板。</Typography.Text>
         </div>
         <Space wrap>
           <Button onClick={() => setTemplateOpen(true)}>＋ 新建标注模板</Button>
           <Button type="primary" onClick={() => setCreateOpen(true)}>＋ 新建标签</Button>
         </Space>
       </div>
-      <Alert type="info" showIcon title="标签来源说明" description="数据集标签沿用数据集元信息 tags 字段；新建、重命名、删除标签会批量更新关联数据集。标注标签模板继续复用 Annotation Label Template 与 Label Studio XML 生成能力。" style={{ marginBottom: 16 }} />
+      <Alert type="info" showIcon title="标签来源说明" description="标签目录可独立存在，不要求绑定数据集；标注任务创建时可直接选择这些标签并自动生成任务标签模板。数据集 tags 仍保留为资产检索标签，可在单独页签维护。" style={{ marginBottom: 16 }} />
       <div className="summary-grid">
-        {[{ n: tagRows.length, l: '数据集标签数' }, { n: rows.length, l: '纳入治理数据集' }, { n: rows.filter((dataset) => dataset.tags.length > 0).length, l: '已打标签数据集' }, { n: templates.data?.length ?? 0, l: '标注模板' }].map((item) => <Card key={item.l}><Typography.Title level={3}>{item.n}</Typography.Title><Typography.Text type="secondary">{item.l}</Typography.Text></Card>)}
+        {[{ n: tagCatalog.data?.filter((tag) => tag.status === 'ACTIVE').length ?? 0, l: '独立标签数' }, { n: datasetTagRows.length, l: '数据集标签数' }, { n: rows.filter((dataset) => dataset.tags.length > 0).length, l: '已打标签数据集' }, { n: templates.data?.length ?? 0, l: '标注模板' }].map((item) => <Card key={item.l}><Typography.Title level={3}>{item.n}</Typography.Title><Typography.Text type="secondary">{item.l}</Typography.Text></Card>)}
       </div>
       <Tabs
         items={[
           {
             key: 'catalog',
-            label: '标签总览',
-            children: <Table<TagCatalogRow>
-              rowKey="tag"
-              dataSource={tagRows}
-              loading={datasets.isLoading}
+            label: '独立标签目录',
+            children: <Table<AnnotationTagSummary>
+              rowKey="tagId"
+              dataSource={tagCatalog.data ?? []}
+              loading={tagCatalog.isLoading}
               pagination={{ pageSize: 8 }}
-              locale={{ emptyText: '暂无标签，请先新建标签或在数据集元信息中维护 tags。' }}
+              locale={{ emptyText: '暂无独立标签，请点击新建标签。' }}
               columns={[
-                { title: '标签名', dataIndex: 'tag', render: (tag) => <Tag color="blue">{tag}</Tag> },
-                { title: '使用数据集数', dataIndex: 'datasetCount', render: (value) => <Tag color="purple">{value}</Tag> },
-                { title: '覆盖数据类型', render: (_, row) => <Space wrap>{row.datasetTypes.map((type) => <Tag key={type}>{txt(type)}</Tag>)}</Space> },
-                { title: '样例数据集', render: (_, row) => <Space direction="vertical" size={0}>{row.sampleDatasets.map((dataset) => <Typography.Text key={dataset.datasetId}>{dataset.name}</Typography.Text>)}</Space> },
-                { title: '最近更新', dataIndex: 'latestUpdatedAt', render: (value) => value ? new Date(value).toLocaleString('zh-CN') : '-' },
-                { title: '操作', render: (_, row) => <Space><a onClick={() => { setRenameTag(row); renameForm.setFieldsValue({ tagName: row.tag }); }}>重命名</a><a style={{ color: '#cf1322' }} onClick={() => deleteTag(row)}>删除</a></Space> },
+                { title: '标签名', dataIndex: 'name', render: (name, tag) => <Tag color={tag.color || 'blue'}>{name}</Tag> },
+                { title: '说明', dataIndex: 'description', render: (value) => value || '-' },
+                { title: '状态', dataIndex: 'status', render: (value) => <Tag color={color(value)}>{value}</Tag> },
+                { title: '最近更新', dataIndex: 'updatedAt', render: (value) => value ? new Date(value).toLocaleString('zh-CN') : '-' },
+                { title: '操作', render: (_, tag) => <Space><a onClick={() => openEditTag(tag)}>编辑</a>{tag.status !== 'ARCHIVED' ? <a style={{ color: '#cf1322' }} onClick={() => archiveCatalogTag.mutate(tag.tagId)}>归档</a> : null}</Space> },
               ]}
             />,
           },
           {
-            key: 'datasets',
+            key: 'dataset-tags',
             label: '数据集标签',
             children: <Table<DatasetSummary>
               rowKey="datasetId"
@@ -3210,16 +3212,22 @@ export function TagManagementPage() {
         ]}
       />
       <Modal title="＋ 新建标签" open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
-        <Form form={createForm} layout="vertical" onFinish={submitCreateTag}>
-          <Form.Item name="tagName" label="标签名称" rules={[{ required: true, message: '请输入标签名称' }]}><Input placeholder="如 焊缝缺陷、座舱视觉、训练候选" /></Form.Item>
-          <Form.Item name="datasetIds" label="关联数据集" rules={[{ required: true, message: '请选择至少一个数据集' }]}><Select mode="multiple" options={datasetOptions} placeholder="选择要打标签的数据集" /></Form.Item>
-          <Button type="primary" htmlType="submit" loading={updateTags.isPending}>保存标签</Button>
+        <Form form={createForm} layout="vertical" onFinish={submitCreateTag} initialValues={{ tenantId: currentTenantId, color: '#1677ff', status: 'ACTIVE' }}>
+          <Form.Item name="name" label="标签名称" rules={[{ required: true, message: '请输入标签名称' }]}><Input placeholder="如 裂纹、气孔、夹渣" /></Form.Item>
+          <Form.Item name="tenantId" label="BU"><Input /></Form.Item>
+          <Form.Item name="color" label="颜色"><Input placeholder="#1677ff" /></Form.Item>
+          <Form.Item name="description" label="说明"><Input.TextArea rows={3} /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={createCatalogTag.isPending}>保存标签</Button>
         </Form>
       </Modal>
-      <Modal title={`重命名标签 · ${renameTag?.tag ?? ''}`} open={Boolean(renameTag)} onCancel={() => setRenameTag(null)} footer={null} destroyOnHidden>
-        <Form form={renameForm} layout="vertical" onFinish={submitRenameTag}>
-          <Form.Item name="tagName" label="新标签名称" rules={[{ required: true, message: '请输入新标签名称' }]}><Input /></Form.Item>
-          <Button type="primary" htmlType="submit" loading={updateTags.isPending}>保存重命名</Button>
+      <Modal title={`编辑标签 · ${editingTag?.name ?? ''}`} open={Boolean(editingTag)} onCancel={() => setEditingTag(null)} footer={null} destroyOnHidden>
+        <Form form={editTagForm} layout="vertical" onFinish={(values) => editingTag && updateCatalogTag.mutate({ tagId: editingTag.tagId, input: values })}>
+          <Form.Item name="name" label="标签名称" rules={[{ required: true, message: '请输入标签名称' }]}><Input /></Form.Item>
+          <Form.Item name="tenantId" label="BU"><Input disabled /></Form.Item>
+          <Form.Item name="color" label="颜色"><Input /></Form.Item>
+          <Form.Item name="description" label="说明"><Input.TextArea rows={3} /></Form.Item>
+          <Form.Item name="status" label="状态"><Select options={[{ value: 'ACTIVE', label: 'ACTIVE' }, { value: 'ARCHIVED', label: 'ARCHIVED' }]} /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={updateCatalogTag.isPending}>保存标签</Button>
         </Form>
       </Modal>
       <Drawer title={`编辑数据集标签 · ${editingDataset?.name ?? ''}`} open={Boolean(editingDataset)} onClose={() => setEditingDataset(null)} width={520}>
@@ -3835,9 +3843,10 @@ export function DatasetDetailPage() {
   const detail = useQuery({ queryKey: ['dataset-detail', datasetId, selectedVersionId], queryFn: () => dataApi.datasetDetail(datasetId, selectedVersionId) });
   const candidate = useQuery({ queryKey: ['dataset-annotation-candidate', datasetId], queryFn: () => dataApi.datasetAnnotationCandidate(datasetId) });
   const annTasks = useQuery({ queryKey: ['dataset-annotation-tasks', datasetId], queryFn: () => dataApi.datasetAnnotationTasks(datasetId) });
+  const tagCatalog = useQuery({ queryKey: ['annotation-tags'], queryFn: () => dataApi.annotationTags({ status: 'ACTIVE' }) });
   const ref = useMutation({ mutationFn: () => dataApi.reference(datasetId), onError: () => undefined });
   const [msg, holder] = message.useMessage();
-  const [taskForm] = Form.useForm<{ name: string; scene: string; templateId?: string; templateMode?: 'EXISTING' | 'INLINE_CREATE'; inlineLabels?: string; inlineTemplateName?: string }>();
+  const [taskForm] = Form.useForm<{ name: string; scene: string; templateId?: string; templateMode?: 'EXISTING' | 'INLINE_CREATE'; selectedTagNames?: string[]; inlineLabels?: string; inlineTemplateName?: string }>();
   const [taskOpen, setTaskOpen] = useState(false);
   const [exportTask, setExportTask] = useState<DatasetAnnotationTask | null>(null);
   const [previewFile, setPreviewFile] = useState<{ fileId: string; name: string } | null>(null);
@@ -3929,12 +3938,12 @@ export function DatasetDetailPage() {
     onError: (e: Error) => msg.error(e.message),
   });
   const createTask = useMutation({
-    mutationFn: async (values: { name: string; templateId?: string; scene: string; templateMode?: 'EXISTING' | 'INLINE_CREATE'; inlineLabels?: string; inlineTemplateName?: string }) => {
+    mutationFn: async (values: { name: string; templateId?: string; scene: string; templateMode?: 'EXISTING' | 'INLINE_CREATE'; selectedTagNames?: string[]; inlineLabels?: string; inlineTemplateName?: string }) => {
       let templateId = values.templateId;
       let inlineLabels: string[] | undefined;
       let inlineTemplateName: string | undefined;
       if (values.templateMode === 'INLINE_CREATE' || !templateId) {
-        inlineLabels = parseInlineLabels(values.inlineLabels);
+        inlineLabels = uniqueStrings([...(values.selectedTagNames ?? []), ...parseInlineLabels(values.inlineLabels)]);
         if (inlineLabels.length === 0) {
           throw new Error('请至少输入一个标签。');
         }
@@ -4031,10 +4040,11 @@ export function DatasetDetailPage() {
       scene: defaultScene,
       templateId: defaultTemplateId,
       templateMode: 'INLINE_CREATE',
-      inlineLabels: annotationClasses.join('，'),
+      selectedTagNames: (tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').slice(0, 3).map((tag) => tag.name),
+      inlineLabels: '',
       inlineTemplateName: `${d?.dataset.name ?? '数据集'} ${txt(defaultScene)}模板`,
     });
-  }, [candidate.data?.templates, d?.dataset.name, taskForm, taskOpen]);
+  }, [candidate.data?.templates, d?.dataset.name, tagCatalog.data, taskForm, taskOpen]);
   return (
     <div className="content-page">
       {holder}
@@ -4192,16 +4202,17 @@ export function DatasetDetailPage() {
         <Form form={taskForm} layout="vertical" onFinish={(v) => createTask.mutate(v)}>
           <Form.Item name="name" label="任务名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="scene" label="标注场景"><Select options={[{ value: 'IMAGE_TAGGING', label: '图片打标' }, { value: 'IMAGE_SEGMENTATION', label: '图片分割' }]} onChange={(scene) => taskForm.setFieldsValue({ templateId: undefined, templateMode: 'INLINE_CREATE', inlineTemplateName: `${d?.dataset.name ?? '数据集'} ${txt(scene)}模板` })} /></Form.Item>
-          <Form.Item name="templateMode" label="标签来源"><Select options={[{ value: 'EXISTING', label: '选择已发布模板' }, { value: 'INLINE_CREATE', label: '直接输入标签并自动建模板' }]} /></Form.Item>
+          <Form.Item name="templateMode" label="标签来源"><Select options={[{ value: 'EXISTING', label: '选择已发布模板' }, { value: 'INLINE_CREATE', label: '选择标签并自动建模板' }]} /></Form.Item>
           {taskTemplateMode === 'EXISTING' ? (
-            <Form.Item name="templateId" label="标签模板" rules={[{ required: true, message: '请选择标签模板，或切换为直接输入标签。' }]} extra={sceneTemplates.length === 0 ? '当前场景暂无已发布模板，可切换为“直接输入标签并自动建模板”。' : undefined}><Select options={sceneTemplates.map((t) => ({ value: t.templateId, label: t.name }))} placeholder={sceneTemplates.length === 0 ? '当前场景暂无已发布模板' : '请选择标签模板'} /></Form.Item>
+            <Form.Item name="templateId" label="标签模板" rules={[{ required: true, message: '请选择标签模板，或切换为选择标签。' }]} extra={sceneTemplates.length === 0 ? '当前场景暂无已发布模板，可切换为“选择标签并自动建模板”。' : undefined}><Select options={sceneTemplates.map((t) => ({ value: t.templateId, label: t.name }))} placeholder={sceneTemplates.length === 0 ? '当前场景暂无已发布模板' : '请选择标签模板'} /></Form.Item>
           ) : (
             <>
               <Form.Item name="inlineTemplateName" label="自动生成的模板名称"><Input /></Form.Item>
-              <Form.Item name="inlineLabels" label="标签列表" rules={[{ required: true, message: '请至少输入一个标签' }, { validator: async (_rule, value) => { if (parseInlineLabels(value).length === 0) throw new Error('请至少输入一个标签'); } }]} extra="支持逗号、顿号或换行分隔，例如：裂纹，气孔，夹渣"><Input.TextArea rows={4} placeholder="裂纹，气孔，夹渣" /></Form.Item>
+              <Form.Item name="selectedTagNames" label="选择标签" extra="来自标签管理的独立标签目录，不要求关联数据集。"><Select mode="multiple" options={(tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').map((tag) => ({ value: tag.name, label: tag.name }))} placeholder="请选择标签" /></Form.Item>
+              <Form.Item name="inlineLabels" label="补充标签" rules={[{ validator: async (_rule, value) => { if ([...(taskForm.getFieldValue('selectedTagNames') ?? []), ...parseInlineLabels(value)].length === 0) throw new Error('请至少选择或输入一个标签'); } }]} extra="可额外输入标签，支持逗号、顿号或换行分隔。"><Input.TextArea rows={3} placeholder="裂纹，气孔，夹渣" /></Form.Item>
             </>
           )}
-          <Alert type="info" showIcon style={{ marginBottom: 12 }} title="任务创建说明" description="如果选择“直接输入标签”，系统会在后端自动生成并发布模板，再创建标注任务；你也可以直接复用已发布模板。" />
+          <Alert type="info" showIcon style={{ marginBottom: 12 }} title="任务创建说明" description="如果选择“选择标签”，系统会用独立标签目录和补充标签自动生成并发布模板，再创建标注任务；你也可以直接复用已发布模板。" />
           <Button type="primary" htmlType="submit" loading={createTask.isPending}>创建任务</Button>
         </Form>
       </Modal>

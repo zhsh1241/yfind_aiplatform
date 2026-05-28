@@ -293,6 +293,56 @@ public class AnnotationService {
         return transitionTask(principal, taskId, "data:annotation:admin", "CANCELLED", "ANNOTATION_TASK_CANCELLED", List.of("DRAFT", "ASSIGNED", "IN_PROGRESS", "PAUSED"));
     }
 
+
+    public List<AnnotationTagResponse> tags(PlatformPrincipal principal, String status, String keyword) {
+        identityService.requirePermission(principal, "data:tag:read");
+        return jdbc.query("SELECT * FROM annotation_tag ORDER BY updated_at DESC", (rs, n) -> tagResponse(rs))
+            .stream()
+            .filter(item -> canSeeTenant(principal, item.tenantId()))
+            .filter(item -> blank(status) || item.status().equalsIgnoreCase(status))
+            .filter(item -> blank(keyword) || contains(item.name(), keyword) || contains(item.description(), keyword))
+            .toList();
+    }
+
+    @Transactional
+    public AnnotationTagResponse createTag(PlatformPrincipal principal, AnnotationTagRequest request) {
+        identityService.requirePermission(principal, "data:tag:write");
+        String tenantId = blank(request.tenantId(), principal.user().tenantId());
+        ensureCanSeeTenant(principal, tenantId, true);
+        String name = require(request.name(), "标签名称不能为空");
+        if (exists("SELECT COUNT(*) FROM annotation_tag WHERE tenant_id=? AND name=?", tenantId, name)) {
+            throw new PlatformException(PlatformError.CONFLICT, "标签名称已存在");
+        }
+        String id = "ATAG-" + randomHex(10).toUpperCase(Locale.ROOT);
+        OffsetDateTime at = now();
+        jdbc.update("INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", id, tenantId, name, nullIfBlank(request.color()), nullIfBlank(request.description()), upper(request.status(), "ACTIVE"), principal.user().id(), at, at);
+        audit(principal, tenantId, "ANNOTATION_TAG_CREATED", "AnnotationTag", id, "SUCCESS", "INFO", null, name, TRACE_TAG + ";TAG_CATALOG");
+        return tag(id);
+    }
+
+    @Transactional
+    public AnnotationTagResponse updateTag(PlatformPrincipal principal, String tagId, AnnotationTagRequest request) {
+        identityService.requirePermission(principal, "data:tag:write");
+        AnnotationTagRecord current = tagVisible(principal, tagId, true);
+        String name = require(blank(request.name(), current.name()), "标签名称不能为空");
+        List<String> conflicts = jdbc.queryForList("SELECT tag_id FROM annotation_tag WHERE tenant_id=? AND name=? AND tag_id<>?", String.class, current.tenantId(), name, tagId);
+        if (!conflicts.isEmpty()) {
+            throw new PlatformException(PlatformError.CONFLICT, "标签名称已存在");
+        }
+        jdbc.update("UPDATE annotation_tag SET name=?, color=?, description=?, status=?, updated_at=? WHERE tag_id=?", name, nullIfBlank(request.color()), nullIfBlank(request.description()), upper(request.status(), current.status()), now(), tagId);
+        audit(principal, current.tenantId(), "ANNOTATION_TAG_UPDATED", "AnnotationTag", tagId, "SUCCESS", "INFO", current.name(), name, TRACE_TAG + ";TAG_CATALOG");
+        return tag(tagId);
+    }
+
+    @Transactional
+    public AnnotationTagResponse archiveTag(PlatformPrincipal principal, String tagId) {
+        identityService.requirePermission(principal, "data:tag:write");
+        AnnotationTagRecord current = tagVisible(principal, tagId, true);
+        jdbc.update("UPDATE annotation_tag SET status='ARCHIVED', updated_at=? WHERE tag_id=?", now(), tagId);
+        audit(principal, current.tenantId(), "ANNOTATION_TAG_ARCHIVED", "AnnotationTag", tagId, "SUCCESS", "INFO", current.status(), "ARCHIVED", TRACE_TAG + ";TAG_CATALOG");
+        return tag(tagId);
+    }
+
     public List<AnnotationLabelTemplateResponse> labelTemplates(PlatformPrincipal principal, String status, String scene) {
         identityService.requirePermission(principal, "data:label-template:read");
         return jdbc.query("SELECT * FROM annotation_label_template ORDER BY updated_at DESC", (rs, n) -> templateResponse(rs))
@@ -1066,6 +1116,28 @@ public class AnnotationService {
         return reviewItemResponses(review.taskId()).stream().filter(item -> item.reviewItemId().equals(id)).findFirst().orElseThrow();
     }
 
+
+    private AnnotationTagResponse tag(String id) {
+        AnnotationTagRecord tag = tagRecord(id);
+        return new AnnotationTagResponse(tag.tagId(), tag.name(), tag.color(), tag.description(), tag.status(), tag.tenantId(), tag.createdBy(), tag.updatedAt());
+    }
+
+    private AnnotationTagResponse tagResponse(ResultSet rs) throws SQLException {
+        return new AnnotationTagResponse(rs.getString("tag_id"), rs.getString("name"), rs.getString("color"), rs.getString("description"), rs.getString("status"), rs.getString("tenant_id"), rs.getString("created_by"), rs.getObject("updated_at", OffsetDateTime.class));
+    }
+
+    private AnnotationTagRecord tagRecord(String id) {
+        List<AnnotationTagRecord> rows = jdbc.query("SELECT * FROM annotation_tag WHERE tag_id=?", (rs, n) -> new AnnotationTagRecord(rs.getString("tag_id"), rs.getString("tenant_id"), rs.getString("name"), rs.getString("color"), rs.getString("description"), rs.getString("status"), rs.getString("created_by"), rs.getObject("updated_at", OffsetDateTime.class)), id);
+        if (rows.isEmpty()) throw new PlatformException(PlatformError.NOT_FOUND, "标签不存在");
+        return rows.getFirst();
+    }
+
+    private AnnotationTagRecord tagVisible(PlatformPrincipal principal, String tagId, boolean write) {
+        AnnotationTagRecord tag = tagRecord(tagId);
+        ensureCanSeeTenant(principal, tag.tenantId(), write);
+        return tag;
+    }
+
     private AnnotationLabelTemplateResponse template(String id) {
         AnnotationLabelTemplateRecord template = templateRecord(id);
         return new AnnotationLabelTemplateResponse(template.templateId(), template.name(), template.scene(), template.labelType(), template.labelSchemaJson(), template.labelStudioConfigXml(), template.status(), template.tenantId(), template.createdBy(), template.updatedAt());
@@ -1263,6 +1335,7 @@ public class AnnotationService {
 
 record AnnotationTaskRecord(String taskId, String tenantId, String projectId, String sourceDatasetId, String sourceVersionId, String templateId, String name, String scene, String status, boolean reviewEnabled, boolean prelabelEnabled, boolean labelStudioEnabled, String prelabelModelSource, Double prelabelConfidence, long totalCount, long annotatedCount, long reviewedCount, Integer qualityScore, OffsetDateTime deadline, String note, String createdBy, OffsetDateTime updatedAt) {}
 record AnnotationLabelTemplateRecord(String templateId, String tenantId, String name, String scene, String labelType, String labelSchemaJson, String labelStudioConfigXml, String status, String createdBy, OffsetDateTime updatedAt) {}
+record AnnotationTagRecord(String tagId, String tenantId, String name, String color, String description, String status, String createdBy, OffsetDateTime updatedAt) {}
 record AnnotationWorkItemRecord(String workItemId, String taskId, String sampleFileId, String sampleKey, String annotatorId, String status, String predictionJson, String annotationJson) {}
 record ReviewRecord(String reviewItemId, String workItemId, String taskId, String annotatorId, String reviewerId, String status) {}
 record AnnotationExternalBindingRecord(String bindingId, String taskId, String provider, String externalProjectId, String externalUrl, String configStatus, String lastSyncStatus, String diagnosticCode, String diagnosticMessage, String launchUrl, OffsetDateTime lastSyncAt) {}

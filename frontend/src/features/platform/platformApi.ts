@@ -735,6 +735,7 @@ export type AnnotationStats = { total: number; inProgress: number; pendingReview
 export type AnnotationTaskSummary = { taskId: string; name: string; scene: string; sceneLabel: string; sourceDatasetId: string; sourceDatasetName: string; templateId: string; templateName: string; tenantId: string; status: string; reviewEnabled: boolean; prelabelEnabled: boolean; labelStudioEnabled: boolean; totalCount: number; annotatedCount: number; reviewedCount: number; qualityScore: number | null; assignees: AnnotationUser[]; deadline: string | null; updatedAt: string };
 export type AnnotationAssignment = { assignmentId: string; taskId: string; assigneeId: string; assigneeName: string; role: string; status: string; assignedBy: string; assignedAt: string };
 export type AnnotationLabelTemplate = { templateId: string; name: string; scene: string; labelType: string; labelSchemaJson: string; labelStudioConfigXml: string; status: string; tenantId: string; createdBy: string; updatedAt: string };
+export type AnnotationTag = { tagId: string; name: string; color?: string | null; description?: string | null; status: string; tenantId: string; createdBy: string; updatedAt: string };
 export type AnnotationWorkItem = { workItemId: string; taskId: string; sampleKey: string; sampleFileId: string | null; sampleImageUrl?: string | null; annotatorId: string | null; annotatorName: string | null; status: string; predictionJson: string | null; annotationJson: string | null; submittedAt: string | null; updatedAt: string };
 export type AnnotationReviewItem = { reviewItemId: string; workItemId: string; taskId: string; taskName: string; annotatorId: string; annotatorName: string; reviewerId: string | null; reviewerName: string | null; status: string; reviewComment: string | null; reviewedAt: string | null };
 export type AnnotationPublication = { publicationId: string; taskId: string; qualityStatus: string; coverageRate: number; formatStatus: string; diagnosticCode: string; diagnosticMessage: string; annotationArtifactFileId?: string | null; outputDatasetId: string | null; outputVersionId: string | null; publishedAt: string | null };
@@ -763,6 +764,7 @@ export type AnnotationSourceDataset = { datasetId: string; name: string; dataset
 export type AnnotationSourceDatasetList = { items: AnnotationSourceDataset[]; total: number; page: number; pageSize: number };
 export type AnnotationTaskCreateInput = { name: string; sourceDatasetId: string; sourceVersionId?: string | null; templateId?: string; inlineLabels?: string[]; inlineTemplateName?: string; scene: string; reviewEnabled?: boolean; prelabelEnabled?: boolean; labelStudioEnabled?: boolean; prelabelModelSource?: string; prelabelConfidence?: number; assigneeIds?: string[]; reviewerIds?: string[]; deadline?: string | null; note?: string };
 export type AnnotationLabelTemplateInput = { name: string; tenantId?: string; scene: string; labelType: string; labelSchemaJson: string; labelStudioConfigXml?: string };
+export type AnnotationTagInput = { name: string; tenantId?: string; color?: string; description?: string; status?: string };
 
 export const dataApi = {
   async dataSources() { return unwrap<DataSourceSummary[]>(apiClient.get('/api/v1/data-sources')); },
@@ -842,6 +844,10 @@ export const dataApi = {
   async createAnnotationTask(input: AnnotationTaskCreateInput) { return unwrap<AnnotationTaskDetail>(apiClient.post('/api/v1/annotation/tasks', input)); },
   async assignAnnotationTask(taskId: string, input: { assigneeIds: string[]; reviewerIds: string[] }) { return unwrap<AnnotationTaskDetail>(apiClient.post(`/api/v1/annotation/tasks/${taskId}/assign`, input)); },
   async startAnnotationTask(taskId: string) { return unwrap<AnnotationTaskDetail>(apiClient.post(`/api/v1/annotation/tasks/${taskId}/start`)); },
+  async annotationTags(params: { status?: string; keyword?: string } = {}) { return unwrap<AnnotationTag[]>(apiClient.get('/api/v1/annotation/tags', { params })); },
+  async createAnnotationTag(input: AnnotationTagInput) { return unwrap<AnnotationTag>(apiClient.post('/api/v1/annotation/tags', input)); },
+  async updateAnnotationTag(tagId: string, input: AnnotationTagInput) { return unwrap<AnnotationTag>(apiClient.put(`/api/v1/annotation/tags/${tagId}`, input)); },
+  async archiveAnnotationTag(tagId: string) { return unwrap<AnnotationTag>(apiClient.post(`/api/v1/annotation/tags/${tagId}/archive`)); },
   async labelTemplates(params: { status?: string; scene?: string } = {}) { return unwrap<AnnotationLabelTemplate[]>(apiClient.get('/api/v1/annotation/label-templates', { params })); },
   async createLabelTemplate(input: AnnotationLabelTemplateInput) { return unwrap<AnnotationLabelTemplate>(apiClient.post('/api/v1/annotation/label-templates', input)); },
   async updateLabelTemplate(templateId: string, input: AnnotationLabelTemplateInput) { return unwrap<AnnotationLabelTemplate>(apiClient.put(`/api/v1/annotation/label-templates/${templateId}`, input)); },

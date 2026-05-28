@@ -103,6 +103,27 @@ public class AnnotationController {
         return PlatformResponses.ok(service.cancel(principal(authorization), taskId));
     }
 
+
+    @GetMapping("/tags")
+    ResponseEntity<ApiResponse<List<AnnotationTagResponse>>> tags(@RequestHeader(name = "Authorization", required = false) String authorization, @RequestParam(required = false) String status, @RequestParam(required = false) String keyword) {
+        return PlatformResponses.ok(service.tags(principal(authorization), status, keyword));
+    }
+
+    @PostMapping("/tags")
+    ResponseEntity<ApiResponse<AnnotationTagResponse>> createTag(@RequestHeader(name = "Authorization", required = false) String authorization, @RequestBody AnnotationTagRequest request) {
+        return PlatformResponses.ok(service.createTag(principal(authorization), request));
+    }
+
+    @PutMapping("/tags/{tagId}")
+    ResponseEntity<ApiResponse<AnnotationTagResponse>> updateTag(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String tagId, @RequestBody AnnotationTagRequest request) {
+        return PlatformResponses.ok(service.updateTag(principal(authorization), tagId, request));
+    }
+
+    @PostMapping("/tags/{tagId}/archive")
+    ResponseEntity<ApiResponse<AnnotationTagResponse>> archiveTag(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String tagId) {
+        return PlatformResponses.ok(service.archiveTag(principal(authorization), tagId));
+    }
+
     @GetMapping("/label-templates")
     ResponseEntity<ApiResponse<List<AnnotationLabelTemplateResponse>>> labelTemplates(@RequestHeader(name = "Authorization", required = false) String authorization, @RequestParam(required = false) String status, @RequestParam(required = false) String scene) {
         return PlatformResponses.ok(service.labelTemplates(principal(authorization), status, scene));

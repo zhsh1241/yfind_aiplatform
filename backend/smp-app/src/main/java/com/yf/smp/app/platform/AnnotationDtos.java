@@ -42,6 +42,8 @@ record AnnotationAssignmentResponse(String assignmentId, String taskId, String a
 record AnnotationLabelTemplateResponse(String templateId, String name, String scene, String labelType, String labelSchemaJson, String labelStudioConfigXml, String status, String tenantId, String createdBy, OffsetDateTime updatedAt) {}
 record AnnotationLabelTemplateRequest(String name, String tenantId, String scene, String labelType, String labelSchemaJson, String labelStudioConfigXml) {}
 record AnnotationLabelStudioConfigResponse(String templateId, String configXml, String diagnosticCode, String diagnosticMessage) {}
+record AnnotationTagResponse(String tagId, String name, String color, String description, String status, String tenantId, String createdBy, OffsetDateTime updatedAt) {}
+record AnnotationTagRequest(String name, String tenantId, String color, String description, String status) {}
 record AnnotationTaskCreateRequest(
     String name,
     String sourceDatasetId,
