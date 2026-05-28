@@ -2141,6 +2141,7 @@ export function DataPipelineStandardPage() {
   const [operatorKeyword, setOperatorKeyword] = useState('');
   const [configOpen, setConfigOpen] = useState(false);
   const [latestRun, setLatestRun] = useState<PipelineRunDetail | null>(null);
+  const [debugMode, setDebugMode] = useState(false);
   const [editorOpen, setEditorOpen] = useState(Boolean(loc.state?.pipelineId));
   const [createOpen, setCreateOpen] = useState(Boolean(loc.state?.openRunTask));
   const [createTaskForm] = Form.useForm<{ pipelineId: string; sourceDatasetId: string }>();
@@ -2213,7 +2214,7 @@ export function DataPipelineStandardPage() {
     onError: (e: Error) => msg.error(e.message),
   });
   const runPipeline = useMutation({
-    mutationFn: () => dataApi.runPipeline(pipelineId!, { triggerMode: 'MANUAL', sampleDatasetId: effectivePipelineDatasetId ?? undefined }),
+    mutationFn: () => dataApi.runPipeline(pipelineId!, { triggerMode: debugMode ? 'DEBUG' : 'MANUAL', sampleDatasetId: effectivePipelineDatasetId ?? undefined }),
     onSuccess: async (result) => {
       await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
       await qc.invalidateQueries({ queryKey: ['pipeline-processing-tasks'] });
@@ -2221,7 +2222,7 @@ export function DataPipelineStandardPage() {
       await qc.invalidateQueries({ queryKey: ['annotation-source-datasets'] });
       setLatestRun(result);
       setRunOpen(true);
-      msg.success('加工任务运行完成，已生成一条加工记录和待确认预处理数据集。');
+      msg.success(debugMode ? '调试运行完成，已记录每个中间步骤并生成待确认图片数据集。' : '加工任务运行完成，已生成一条加工记录和待确认预处理数据集。');
     },
     onError: (e: Error) => msg.error(e.message),
   });
@@ -2312,6 +2313,8 @@ export function DataPipelineStandardPage() {
   const activation = latestRun?.activation;
   const previewProcessParams = parseObjectConfig(latestRun?.preview?.processParamsJson);
   const previewOperatorChainJson = latestRun?.preview?.operatorChainJson ?? null;
+  const latestRunNodeRuns = latestRun?.nodeRuns ?? [];
+  const latestRunDebugMode = Boolean(latestRun?.debugMode);
   const previewOperatorChain = useMemo(() => {
     const parsed = parseObjectConfig(previewOperatorChainJson);
     if (Array.isArray(parsed)) return parsed.map(String);
@@ -2437,7 +2440,14 @@ export function DataPipelineStandardPage() {
           <Button type={hasDraftChanges ? 'primary' : 'default'} onClick={() => savePipeline.mutate()} loading={savePipeline.isPending}>💾 保存模板</Button>
           <Button onClick={() => setEditorOpen(false)}>返回加工任务列表</Button>
           <Button type="primary" onClick={() => setCreateOpen(true)}>＋ 新建加工任务</Button>
-          <Button onClick={() => runPipeline.mutate()} loading={runPipeline.isPending} disabled={!effectivePipelineDatasetId || !pipeline.data.validation.valid || nodes.length === 0}>运行当前数据集</Button>
+          <Select
+            aria-label="运行模式"
+            value={debugMode ? 'DEBUG' : 'MANUAL'}
+            style={{ width: 140 }}
+            onChange={(value) => setDebugMode(value === 'DEBUG')}
+            options={[{ value: 'MANUAL', label: '普通运行' }, { value: 'DEBUG', label: '调试模式' }]}
+          />
+          <Button onClick={() => runPipeline.mutate()} loading={runPipeline.isPending} disabled={!effectivePipelineDatasetId || !pipeline.data.validation.valid || nodes.length === 0}>{debugMode ? '调试运行' : '运行当前数据集'}</Button>
         </Space>
       </div>
       <Card
@@ -2472,7 +2482,7 @@ export function DataPipelineStandardPage() {
           </Descriptions>
         </Space>
       </Card>
-      <Alert type="info" showIcon title="F017 视觉预处理闭环" description="固定图片传统增强、视频抽帧输出图片型 PREPROCESSED 数据集；运行成功后不会自动激活，必须先预览确认再人工激活。" style={{ marginBottom: 16 }} />
+      <Alert type="info" showIcon title="F017 视觉预处理闭环" description="固定图片传统增强、视频抽帧输出图片型 PREPROCESSED 数据集；调试模式会记录每个中间步骤的输入/输出与状态；运行成功后不会自动激活，必须先预览确认再人工激活。" style={{ marginBottom: 16 }} />
       <div className="pipeline-summary-grid">
         <Card size="small" title="编辑状态">
           <Space wrap>
@@ -2552,6 +2562,7 @@ export function DataPipelineStandardPage() {
             { title: '输出数据集', dataIndex: 'outputDatasetId', render: (v) => v ?? '-' },
             { title: '结果计数', render: (_, r) => r.totalCount != null ? `${r.successCount ?? 0}/${r.totalCount} 成功 · 跳过 ${r.skippedCount ?? 0} · 失败 ${r.failedCount ?? 0}` : '-' },
             { title: '诊断', dataIndex: 'diagnosticMessage' },
+            { title: '调试', render: (_, r) => <Button size="small" onClick={async () => { const detail = await dataApi.pipelineRunDetail(r.runId); setLatestRun(detail); setRunOpen(true); }}>查看步骤</Button> },
           ]} />
         </Card>
         <Card title="版本快照">
@@ -2645,6 +2656,27 @@ export function DataPipelineStandardPage() {
         <Alert type="success" showIcon title={latestRun?.run.diagnosticMessage ?? 'VISUAL_PREPROCESS_RUN_SUCCEEDED'} description="已生成待确认预处理数据集；请先预览样例和失败摘要，再执行确认与激活。" />
         {latestRun ? (
           <Space direction="vertical" className="full-width" style={{ marginTop: 16 }}>
+            <Card title={latestRunDebugMode ? '调试模式 · 中间步骤监控' : '中间步骤监控'} size="small">
+              <Alert
+                type={latestRunNodeRuns.every((item) => item.status === 'SUCCEEDED') ? 'success' : 'warning'}
+                showIcon
+                style={{ marginBottom: 12 }}
+                title={latestRunDebugMode ? '调试模式已启用：每个节点的执行状态、耗时和输入/输出摘要已记录' : '本次运行记录了节点级执行状态'}
+                description="若某个中间步骤失败，可在下表按节点定位失败原因；视频抽帧输出以 image/* 文件绑定到 PREPROCESSED 数据集，不再打包成 zip。"
+              />
+              <Table
+                size="small"
+                rowKey="nodeRunId"
+                dataSource={latestRunNodeRuns}
+                pagination={false}
+                columns={[
+                  { title: '节点', render: (_, r) => <Space direction="vertical" size={0}><Typography.Text>{r.operatorName}</Typography.Text><Typography.Text type="secondary" className="mono">{r.nodeId}</Typography.Text></Space> },
+                  { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> },
+                  { title: '耗时', dataIndex: 'durationMs', render: (v) => v ? `${v}ms` : '-' },
+                  { title: '摘要', dataIndex: 'logSummary' },
+                ]}
+              />
+            </Card>
             <Card title="结果处置工作台" size="small">
               <Steps
                 size="small"
@@ -2682,7 +2714,7 @@ export function DataPipelineStandardPage() {
                     <Typography.Text type="secondary">失败样本</Typography.Text>
                   </Card>
                   <Card size="small">
-                    <Typography.Title level={4}>{previewOperatorChain.length || latestRun.nodeRuns.length}</Typography.Title>
+                    <Typography.Title level={4}>{previewOperatorChain.length || latestRunNodeRuns.length}</Typography.Title>
                     <Typography.Text type="secondary">算子链节点</Typography.Text>
                   </Card>
                 </div>

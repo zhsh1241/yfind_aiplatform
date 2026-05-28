@@ -19,7 +19,7 @@ record PipelineValidationResponse(boolean valid, String diagnosticCode, String d
 record PipelineValidationIssue(String code, String message, String nodeId, String edgeId) {}
 record PipelineRunRequest(String triggerMode, String sampleDatasetId) {}
 record PipelineRunSummaryResponse(String runId, String pipelineId, String versionId, String status, String triggerMode, String diagnosticCode, String diagnosticMessage, String outputDatasetId, String resultDatasetStatus, Long durationMs, Long totalCount, Long successCount, Long skippedCount, Long failedCount, OffsetDateTime startedAt, OffsetDateTime endedAt) {}
-record PipelineRunDetailResponse(PipelineRunSummaryResponse run, List<PipelineRunNodeResponse> nodeRuns, PreprocessedDatasetPreviewResponse preview, PreprocessedDatasetActivationStateResponse activation) {}
+record PipelineRunDetailResponse(PipelineRunSummaryResponse run, List<PipelineRunNodeResponse> nodeRuns, PreprocessedDatasetPreviewResponse preview, PreprocessedDatasetActivationStateResponse activation, boolean debugMode) {}
 record PipelineRunNodeResponse(String nodeRunId, String runId, String nodeId, String operatorName, String status, Long durationMs, String logSummary, String errorCode) {}
 record PipelineProcessingTaskCreateRequest(String pipelineId, String sourceDatasetId) {}
 record PipelineProcessingTaskListResponse(List<PipelineProcessingTaskSummaryResponse> items, long total, int page, int pageSize) {}

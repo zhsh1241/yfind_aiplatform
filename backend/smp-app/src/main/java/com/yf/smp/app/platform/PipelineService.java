@@ -163,6 +163,7 @@ public class PipelineService {
         if (visualPreprocess) {
             audit(principal, summary.tenantId(), "PIPELINE_PREPROCESS_RUN_STARTED", "PipelineRun", runId, "SUCCESS", "INFO", null, "RUNNING", TRACE_TAG);
         }
+        boolean debugMode = "DEBUG".equalsIgnoreCase(blank(request.triggerMode(), "MANUAL"));
         String outputDatasetId = createOutputDataset(principal, summary, sample, runId, start);
         OffsetDateTime end = start.plusSeconds(Math.max(1, nodes(pipelineId).size()) * 12L);
         long durationMs = java.time.Duration.between(start, end).toMillis();
@@ -172,9 +173,10 @@ public class PipelineService {
             VALUES (?, ?, ?, 'SUCCEEDED', ?, ?, ?, 'OK', ?, ?, ?, ?, ?)
             """, runId, pipelineId, summary.currentVersionId(), upper(request.triggerMode(), "MANUAL"), sampleDatasetId, outputDatasetId, diagnosticMessage, durationMs, principal.user().id(), start, end);
         int index = 0;
-        for (PipelineNodeResponse node : nodes(pipelineId)) {
+        List<PipelineNodeResponse> runNodes = nodes(pipelineId);
+        for (PipelineNodeResponse node : runNodes) {
             long nodeDuration = 800L + index * 350L;
-            jdbc.update("INSERT INTO pipeline_run_node (node_run_id, run_id, node_id, operator_name, status, duration_ms, log_summary, error_code, created_at) VALUES (?, ?, ?, ?, 'SUCCEEDED', ?, ?, NULL, ?)", "PNRUN-" + randomHex(10).toUpperCase(Locale.ROOT), runId, node.nodeId(), node.operatorName(), nodeDuration, "SANDBOX 节点 " + node.label() + " 处理完成，输出记录 " + sample.recordCount(), start.plusSeconds(index + 1L));
+            jdbc.update("INSERT INTO pipeline_run_node (node_run_id, run_id, node_id, operator_name, status, duration_ms, log_summary, error_code, created_at) VALUES (?, ?, ?, ?, 'SUCCEEDED', ?, ?, NULL, ?)", "PNRUN-" + randomHex(10).toUpperCase(Locale.ROOT), runId, node.nodeId(), node.operatorName(), nodeDuration, nodeLogSummary(node, index, runNodes.size(), sample.recordCount(), debugMode), start.plusSeconds(index + 1L));
             index++;
         }
         jdbc.update("UPDATE operator_catalog SET usage_count=usage_count + 1, pipeline_count=GREATEST(pipeline_count, 1), updated_at=? WHERE operator_id IN (SELECT operator_id FROM pipeline_node WHERE pipeline_id=?)", now(), pipelineId);
@@ -226,7 +228,8 @@ public class PipelineService {
         List<PipelineRunNodeResponse> nodeRuns = jdbc.query("SELECT * FROM pipeline_run_node WHERE run_id=? ORDER BY created_at", (rs, n) -> new PipelineRunNodeResponse(rs.getString("node_run_id"), rs.getString("run_id"), rs.getString("node_id"), rs.getString("operator_name"), rs.getString("status"), nullableLong(rs, "duration_ms"), rs.getString("log_summary"), rs.getString("error_code")), runId);
         PreprocessedDatasetPreviewResponse preview = blank(run.outputDatasetId()) ? null : preview(run.outputDatasetId());
         PreprocessedDatasetActivationStateResponse activation = blank(run.outputDatasetId()) ? null : activationState(run.outputDatasetId());
-        return new PipelineRunDetailResponse(run, nodeRuns, preview, activation);
+        boolean debugMode = "DEBUG".equalsIgnoreCase(blank(run.triggerMode(), "MANUAL"));
+        return new PipelineRunDetailResponse(run, nodeRuns, preview, activation, debugMode);
     }
 
     public OperatorListResponse operators(PlatformPrincipal principal, String keyword, String category, String categoryGroup, String dataType, String stage, String status, Boolean supportsPreview) {
@@ -496,9 +499,9 @@ public class PipelineService {
         long outputRecords = videoFrameMode ? Math.max(6, sample.recordCount() * 4L) : Math.max(1, sample.recordCount());
         long outputSize = Math.max(1024, sample.sizeBytes());
         String outputBucket = objectStorageService.datasetBucket(pipeline.tenantId());
-        String outputObjectKey = pipeline.tenantId() + "/pipeline/" + runId + "/output." + (videoFrameMode ? "zip" : "parquet");
+        String outputObjectKey = pipeline.tenantId() + "/pipeline/" + runId + (videoFrameMode ? "/frames/frame-0001.jpg" : "/output.parquet");
         String outputPayload = "pipeline=" + pipeline.pipelineId() + "\nrun=" + runId + "\nsampleDataset=" + sample.datasetId();
-        objectStorageService.uploadObjectIfConfigured(outputBucket, outputObjectKey, outputPayload.getBytes(StandardCharsets.UTF_8), videoFrameMode ? "application/zip" : "application/x-parquet");
+        objectStorageService.uploadObjectIfConfigured(outputBucket, outputObjectKey, outputPayload.getBytes(StandardCharsets.UTF_8), videoFrameMode ? "image/jpeg" : "application/x-parquet");
         String datasetDataType = videoFrameMode ? "IMAGE" : sample.dataType();
         String processParams = preprocessParamsJson(pipeline, sample, runId);
         String previewManifest = previewManifestJson(pipeline, sample, runId, outputRecords, videoFrameMode);
@@ -508,7 +511,7 @@ public class PipelineService {
         jdbc.update("INSERT INTO dataset (dataset_id, name, dataset_type, data_type, tenant_id, project_id, current_version_id, status, access_level, tags, record_count, size_bytes, owner_id, description, created_at, updated_at) VALUES (?, ?, 'PREPROCESSED', ?, ?, ?, NULL, 'PENDING_CONFIRMATION', 'TEAM', ?, ?, ?, ?, ?, ?, ?)", datasetId, outputDatasetName(pipeline, sample, videoFrameMode), datasetDataType, pipeline.tenantId(), pipeline.projectId(), "pipeline,F017,PREPROCESSED,VISUAL_PREPROCESS", outputRecords, outputSize, principal.user().id(), description, at, at);
         jdbc.update("INSERT INTO dataset_version (version_id, dataset_id, version_name, status, record_count, size_bytes, content_safety_status, diagnostic_code, diagnostic_message, created_by, created_at, published_at) VALUES (?, ?, 'v1.0.0', 'READY', ?, ?, 'PASSED', 'OK', 'VISUAL_PREPROCESS_READY_FOR_CONFIRM', ?, ?, NULL)", versionId, datasetId, outputRecords, outputSize, principal.user().id(), at);
         jdbc.update("UPDATE dataset SET current_version_id=?, updated_at=? WHERE dataset_id=?", versionId, at, datasetId);
-        jdbc.update("INSERT INTO platform_file_object (file_id, asset_type, tenant_id, project_id, bucket, object_key, expected_sha256, sha256, expected_size_bytes, size_bytes, content_type, storage_tier, status, owner_id, created_at, updated_at) VALUES (?, 'DATASET', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'STANDARD', 'AVAILABLE', ?, ?, ?)", fileId, pipeline.tenantId(), pipeline.projectId(), outputBucket, outputObjectKey, "sha256-" + fileId.toLowerCase(Locale.ROOT), "sha256-" + fileId.toLowerCase(Locale.ROOT), outputSize, outputSize, videoFrameMode ? "application/zip" : "application/x-parquet", principal.user().id(), at, at);
+        jdbc.update("INSERT INTO platform_file_object (file_id, asset_type, tenant_id, project_id, bucket, object_key, expected_sha256, sha256, expected_size_bytes, size_bytes, content_type, storage_tier, status, owner_id, created_at, updated_at) VALUES (?, 'DATASET', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'STANDARD', 'AVAILABLE', ?, ?, ?)", fileId, pipeline.tenantId(), pipeline.projectId(), outputBucket, outputObjectKey, "sha256-" + fileId.toLowerCase(Locale.ROOT), "sha256-" + fileId.toLowerCase(Locale.ROOT), outputSize, outputSize, videoFrameMode ? "image/jpeg" : "application/x-parquet", principal.user().id(), at, at);
         jdbc.update("INSERT INTO dataset_file (id, dataset_id, version_id, file_id, file_role, status, created_at) VALUES (?, ?, ?, ?, 'PIPELINE_OUTPUT', 'BOUND', ?)", datasetFileId, datasetId, versionId, fileId, at);
         jdbc.update("INSERT INTO data_lineage (lineage_id, source_type, source_id, target_type, target_id, transform_type, created_at) VALUES (?, 'PIPELINE', ?, 'DATASET_VERSION', ?, 'PIPELINE', ?)", "LIN-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT), pipeline.pipelineId(), versionId, at);
         if (!blank(sample.versionId())) {
@@ -516,6 +519,16 @@ public class PipelineService {
         }
         audit(principal, pipeline.tenantId(), "PREPROCESSED_DATASET_CREATED", "Dataset", datasetId, "SUCCESS", "INFO", null, "PENDING_CONFIRMATION", TRACE_TAG + ";DAT-007");
         return datasetId;
+    }
+
+    private String nodeLogSummary(PipelineNodeResponse node, int index, int totalNodes, long inputRecords, boolean debugMode) {
+        long outputRecords = Math.max(1L, inputRecords - (isFrameExtractionOperator(node.operatorId()) ? 0L : index));
+        String base = "SANDBOX 节点 " + node.label() + " 处理完成，输出记录 " + outputRecords;
+        if (!debugMode) {
+            return base;
+        }
+        return "调试模式 · 步骤 " + (index + 1) + "/" + totalNodes + " · " + node.operatorName()
+            + " · 输入 " + inputRecords + " 条 · 输出 " + outputRecords + " 条 · 状态 SUCCEEDED · 调试采样已记录";
     }
 
     private String outputDatasetName(PipelineSummaryResponse pipeline, DatasetInfo sample, boolean videoFrameMode) {

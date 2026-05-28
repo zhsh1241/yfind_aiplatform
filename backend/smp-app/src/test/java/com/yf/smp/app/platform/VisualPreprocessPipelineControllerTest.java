@@ -148,6 +148,33 @@ class VisualPreprocessPipelineControllerTest {
         assertThat(list.at("/data/items").toString()).contains("焊缝视频巡检数据集");
     }
 
+
+
+    @Test
+    void debugRunShowsNodeProgressAndCreatesUsableImageFilesInsteadOfZip() throws Exception {
+        // BUG-20260528-pipeline-debug-preprocessed-output: 调试模式需暴露中间步骤，抽帧产物必须是可用图片文件而不是 zip 包。
+        String buAdmin = login("buadmin", "CABIN");
+
+        JsonNode run = postJson("/api/v1/pipelines/PIPE-VIDEO-PREP/runs", "trace-bug-debug-output-run", """
+            {"triggerMode":"DEBUG","sampleDatasetId":"DATASET-WELD-VIDEO-001"}
+            """, buAdmin);
+        assertThat(run.at("/code").asInt()).isZero();
+        assertThat(run.at("/data/run/triggerMode").asText()).isEqualTo("DEBUG");
+        assertThat(run.at("/data/debugMode").asBoolean()).isTrue();
+        assertThat(run.at("/data/preview/datasetDataType").asText()).isEqualTo("IMAGE");
+        assertThat(run.at("/data/nodeRuns").size()).isGreaterThanOrEqualTo(2);
+        assertThat(run.at("/data/nodeRuns").toString()).contains("步骤 1/", "输入", "输出", "调试采样");
+        String outputDatasetId = run.at("/data/run/outputDatasetId").asText();
+
+        JsonNode outputDetail = getJson("/api/v1/datasets/" + outputDatasetId, "trace-bug-debug-output-detail", buAdmin);
+        assertThat(outputDetail.at("/code").asInt()).isZero();
+        assertThat(outputDetail.at("/data/previewStatus").asText()).isEqualTo("PREVIEWABLE");
+        assertThat(outputDetail.at("/data/files").findValuesAsText("contentType"))
+            .allMatch(contentType -> contentType.startsWith("image/"));
+        assertThat(outputDetail.at("/data/files").findValuesAsText("objectKey"))
+            .allMatch(objectKey -> !objectKey.endsWith(".zip"));
+    }
+
     @Test
     void videoPipelineRunFallsBackToReadableOutputDatasetNameWhenPipelineNameIsMojibake() throws Exception {
         // BUG-20260527-video-frame-dataset-name-mojibake

@@ -10,7 +10,12 @@ import { useSessionStore } from '../platform/sessionStore';
 vi.mock('../platform/platformApi', async () => {
   const actual = await vi.importActual<typeof import('../platform/platformApi')>('../platform/platformApi');
   const mockRunResult = {
-    run: { outputDatasetId: 'DATASET-OUT', diagnosticMessage: 'VISUAL_PREPROCESS_RUN_SUCCEEDED' },
+    run: { runId: 'RUN-001', pipelineId: 'PIPE-VIDEO-PREP', versionId: 'PV-1', status: 'SUCCEEDED', triggerMode: 'MANUAL', diagnosticCode: 'OK', outputDatasetId: 'DATASET-OUT', diagnosticMessage: 'VISUAL_PREPROCESS_RUN_SUCCEEDED' },
+    debugMode: false,
+    nodeRuns: [
+      { nodeRunId: 'PNRUN-READ', runId: 'RUN-001', nodeId: 'read-video', operatorName: '读取数据集', status: 'SUCCEEDED', durationMs: 800, logSummary: 'SANDBOX 节点 读取数据集 处理完成，输出记录 12', errorCode: null },
+      { nodeRunId: 'PNRUN-EXTRACT', runId: 'RUN-001', nodeId: 'extract', operatorName: '固定间隔抽帧', status: 'SUCCEEDED', durationMs: 1150, logSummary: '调试模式 · 步骤 2/4 · 固定间隔抽帧 · 输入 12 条 · 输出 12 条 · 状态 SUCCEEDED · 调试采样已记录', errorCode: null },
+    ],
     preview: {
       datasetId: 'DATASET-OUT',
       runId: 'RUN-001',
@@ -241,6 +246,7 @@ vi.mock('../platform/platformApi', async () => {
       updatePipeline: vi.fn().mockResolvedValue(pipelineDetail),
       savePipelineVersion: vi.fn().mockResolvedValue({}),
       restorePipelineVersion: vi.fn().mockResolvedValue(pipelineDetail),
+      pipelineRunDetail: vi.fn().mockResolvedValue(mockRunResult),
       runPipeline: vi.fn().mockResolvedValue(mockRunResult),
       confirmPreprocessedDataset: vi.fn().mockResolvedValue({ ...mockRunResult.activation, confirmed: true, status: 'CONFIRMED', annotationEligible: true, confirmedAt: '2026-05-26T10:00:00Z', blockReason: null }),
       activatePreprocessedDataset: vi.fn().mockResolvedValue({ ...mockRunResult.activation, confirmed: true, status: 'ACTIVE', annotationEligible: true, confirmedAt: '2026-05-26T10:00:00Z', activatedAt: '2026-05-26T10:05:00Z', blockReason: null }),
@@ -431,6 +437,8 @@ describe('DataPipelineStandardPage operator config panel', () => {
     });
     expect(await screen.findByText('结果处置工作台')).toBeInTheDocument();
     expect(screen.getByText('样例预览工作台')).toBeInTheDocument();
+    expect(screen.getByText('中间步骤监控')).toBeInTheDocument();
+    expect(screen.getAllByText('固定间隔抽帧').length).toBeGreaterThan(0);
     expect(screen.getByText('下一步请先人工确认结果，再执行激活')).toBeInTheDocument();
     expect(screen.getByText('失败 / 跳过摘要')).toBeInTheDocument();
     expect(screen.getByText('OP-VIDEO-FRAME-EXTRACT')).toBeInTheDocument();
