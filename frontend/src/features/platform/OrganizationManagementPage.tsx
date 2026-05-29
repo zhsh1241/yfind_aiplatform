@@ -119,7 +119,7 @@ export function OrganizationManagementPage() {
     },
   });
   const updateConfig = useMutation({
-    mutationFn: ({ key, value }: { key: string; value: string }) => platformApi.updateConfig(key, { scopeType: 'BU', scopeId: selectedOrg?.id ?? 'TENANT-CABIN', value, reason: 'F007 org 页面 BU 个性化配置' }),
+    mutationFn: ({ key, value }: { key: string; value: string }) => platformApi.updateConfig(key, { scopeType: 'BU', scopeId: selectedOrg?.id ?? 'TENANT-CABIN', value, reason: '组织页面 BU 个性化配置' }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['platform-configs'] });
       messageApi.success('BU 个性化配置已保存');

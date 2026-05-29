@@ -3,8 +3,8 @@ import type { MenuProps } from 'antd';
 import { GlobalOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
 import { useEffect } from 'react';
-import { AppNavigation, prototypePages } from './components/AppNavigation';
-import { PrototypePage } from './components/PrototypePage';
+import { AppNavigation, appPages } from './components/AppNavigation';
+import { ModuleOverviewPage } from './components/ModuleOverviewPage';
 import { LoginPage } from './features/platform/LoginPage';
 import { PermissionManagementPage } from './features/platform/PermissionManagementPage';
 import { ResourceManagementPage } from './features/platform/ResourceManagementPage';
@@ -48,7 +48,7 @@ export default function App() {
   }
 
   const isSuperAdmin = user.roles.includes('SUPER_ADMIN');
-  const allowedMenuKeys = new Set(isSuperAdmin ? prototypePages.map((page) => page.key) : ['dash', ...user.menuPermissions]);
+  const allowedMenuKeys = new Set(isSuperAdmin ? appPages.map((page) => page.key) : ['dash', ...user.menuPermissions]);
   const canAccess = (key: string) => allowedMenuKeys.has(key);
   const userMenuItems: MenuProps['items'] = [
     {
@@ -115,8 +115,8 @@ export default function App() {
             <Route path="/annreview" element={canAccess('annreview') ? <AnnotationReviewPage /> : <NoPermission language={language} />} />
             <Route path="/pipeline" element={canAccess('pipeline') ? <DataPipelineStandardPage /> : <NoPermission language={language} />} />
             <Route path="/opmarket" element={canAccess('opmarket') ? <OperatorMarketplacePage /> : <NoPermission language={language} />} />
-            {prototypePages.map((page) => (
-              <Route key={page.key} path={`/${page.key}`} element={canAccess(page.key) ? <PrototypePage page={page} /> : <NoPermission language={language} />} />
+            {appPages.map((page) => (
+              <Route key={page.key} path={`/${page.key}`} element={canAccess(page.key) ? <ModuleOverviewPage page={page} language={language} /> : <NoPermission language={language} />} />
             ))}
           </Routes>
         </Content>

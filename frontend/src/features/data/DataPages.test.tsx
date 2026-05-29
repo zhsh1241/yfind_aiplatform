@@ -10,14 +10,14 @@ import { useSessionStore } from '../platform/sessionStore';
 vi.mock('../platform/platformApi', async () => {
   const actual = await vi.importActual<typeof import('../platform/platformApi')>('../platform/platformApi');
   const mockRunResult = {
-    run: { runId: 'RUN-001', pipelineId: 'PIPE-VIDEO-PREP', versionId: 'PV-1', status: 'SUCCEEDED', triggerMode: 'MANUAL', diagnosticCode: 'OK', outputDatasetId: 'DATASET-OUT', diagnosticMessage: 'VISUAL_PREPROCESS_RUN_SUCCEEDED' },
+    run: { runId: 'RUN-001', pipelineId: 'PIPE-VIDEO-PREP', versionId: 'PV-1', status: 'SUCCEEDED', triggerMode: 'MANUAL', diagnosticCode: 'OK', outputDatasetId: 'DATASET-PREP-OUT-001', diagnosticMessage: 'VISUAL_PREPROCESS_RUN_SUCCEEDED' },
     debugMode: false,
     nodeRuns: [
       { nodeRunId: 'PNRUN-READ', runId: 'RUN-001', nodeId: 'read-video', operatorName: '读取数据集', status: 'SUCCEEDED', durationMs: 800, logSummary: 'SANDBOX 节点 读取数据集 处理完成，输出记录 12', errorCode: null },
       { nodeRunId: 'PNRUN-EXTRACT', runId: 'RUN-001', nodeId: 'extract', operatorName: '固定间隔抽帧', status: 'SUCCEEDED', durationMs: 1150, logSummary: '调试模式 · 步骤 2/4 · 固定间隔抽帧 · 输入 12 条 · 输出 12 条 · 状态 SUCCEEDED · 调试采样已记录', errorCode: null },
     ],
     preview: {
-      datasetId: 'DATASET-OUT',
+      datasetId: 'DATASET-PREP-OUT-001',
       runId: 'RUN-001',
       pipelineId: 'PIPE-VIDEO-PREP',
       sourceDatasetId: 'DATASET-WELD-VIDEO-001',
@@ -44,12 +44,12 @@ vi.mock('../platform/platformApi', async () => {
       operatorChainJson: JSON.stringify(['OP-READ-DATASET', 'OP-VIDEO-FRAME-EXTRACT', 'OP-IMG-WATERMARK']),
     },
     activation: {
-      datasetId: 'DATASET-OUT',
+      datasetId: 'DATASET-PREP-OUT-001',
       status: 'PENDING_CONFIRMATION',
       confirmed: false,
       annotationEligible: false,
       blockReason: '尚未人工确认',
-      targetVersionId: 'DVER-OUT-001',
+      targetVersionId: 'DVER-PREP-OUT-001',
       confirmedAt: null,
       activatedAt: null,
     },
@@ -103,7 +103,7 @@ vi.mock('../platform/platformApi', async () => {
         triggerMode: 'MANUAL',
         diagnosticCode: 'OK',
         diagnosticMessage: 'VISUAL_PREPROCESS_RUN_SUCCEEDED',
-        outputDatasetId: 'DATASET-OUT',
+        outputDatasetId: 'DATASET-PREP-OUT-001',
         resultDatasetStatus: 'PENDING_CONFIRMATION',
         durationMs: 3200,
         totalCount: 12,
@@ -222,7 +222,10 @@ vi.mock('../platform/platformApi', async () => {
             sourceDatasetId: 'DATASET-WELD-VIDEO-001',
             sourceDatasetName: '焊缝视频巡检数据集',
             sourceVersionId: 'DVER-WELD-VIDEO-001',
-            outputDatasetId: 'DATASET-OUT',
+            outputDatasetId: 'DATASET-PREP-OUT-001',
+            outputDatasetName: '预处理导出图片数据集',
+            outputDatasetType: 'PREPROCESSED',
+            outputDatasetDataType: 'IMAGE',
             status: 'SUCCEEDED',
             resultDatasetStatus: 'PENDING_CONFIRMATION',
             diagnosticCode: 'OK',
@@ -327,7 +330,10 @@ describe('DataPipelineStandardPage operator config panel', () => {
     renderPage();
     expect(await screen.findByRole('heading', { name: 'Pipeline加工任务' })).toBeInTheDocument();
     expect(screen.getByText('加工任务列表')).toBeInTheDocument();
+    expect(screen.getAllByText('原始数据集（输入）').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('预处理数据集（输出）').length).toBeGreaterThan(0);
     expect(await screen.findByText('焊缝视频巡检数据集')).toBeInTheDocument();
+    expect(await screen.findByText('预处理导出图片数据集')).toBeInTheDocument();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: '进入编辑器' }));
@@ -350,6 +356,7 @@ describe('DataPipelineStandardPage operator config panel', () => {
       expect(dataApi.createPipelineProcessingTask).toHaveBeenCalledWith({
         pipelineId: 'PIPE-VIDEO-PREP',
         sourceDatasetId: 'DATASET-NEW-VIDEO-002',
+        outputDatasetName: '新一批车间视频数据集 抽帧结果',
       });
     });
     expect(await screen.findByRole('heading', { name: 'Pipeline编辑器' })).toBeInTheDocument();
@@ -365,7 +372,7 @@ describe('DataPipelineStandardPage operator config panel', () => {
 
     await user.click(screen.getByRole('button', { name: '配置算子参数' }));
     await user.click(await screen.findByLabelText('读取数据集算子输入数据集'));
-    await user.click(await screen.findByText(/预处理导出图片数据集/));
+    await user.click((await screen.findAllByText(/预处理导出图片数据集/)).at(-1)!);
     expect(await screen.findByText('预处理导出图片数据集 · 预处理后 / 图片 · 待确认')).toBeInTheDocument();
     expect(screen.getByDisplayValue(/"datasetId": "DATASET-PREP-OUT-001"/)).toBeInTheDocument();
     expect(screen.getByDisplayValue(/"versionId": "DVER-PREP-OUT-001"/)).toBeInTheDocument();
@@ -383,7 +390,7 @@ describe('DataPipelineStandardPage operator config panel', () => {
     await user.click(await screen.findByRole('button', { name: '进入编辑器' }));
     expect(await screen.findByText('点击画布节点后从右侧抽屉配置参数')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '配置算子参数' }));
-    expect(await screen.findByText('数据源节点用于保存模板默认输入')).toBeInTheDocument();
+    expect(await screen.findByText('数据源节点用于保存流程默认输入')).toBeInTheDocument();
     expect(screen.getByDisplayValue(/"datasetId": "DATASET-WELD-VIDEO-001"/)).toBeInTheDocument();
 
     await user.click(screen.getAllByRole('button', { name: '下一节点' }).at(-1)!);
@@ -428,11 +435,15 @@ describe('DataPipelineStandardPage operator config panel', () => {
     renderPage();
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: '进入编辑器' }));
-    await user.click(await screen.findByRole('button', { name: /运行当前数据集/ }));
+    await user.click(await screen.findByRole('button', { name: /配置并运行/ }));
+    expect(await screen.findByText('运行前确认输出数据集名称')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('焊缝视频巡检数据集 抽帧结果')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '确认运行并生成数据集' }));
     await waitFor(() => {
       expect(dataApi.runPipeline).toHaveBeenCalledWith('PIPE-VIDEO-PREP', {
         triggerMode: 'MANUAL',
         sampleDatasetId: 'DATASET-WELD-VIDEO-001',
+        outputDatasetName: '焊缝视频巡检数据集 抽帧结果',
       });
     });
     expect(await screen.findByText('结果处置工作台')).toBeInTheDocument();
@@ -451,21 +462,28 @@ describe('DataPipelineStandardPage operator config panel', () => {
 
     expect(await screen.findByText('① 选择本次要加工的数据集')).toBeInTheDocument();
     expect(screen.getByText('Pipeline 是可复用的算子组合；每次点击运行都会生成一条独立加工记录')).toBeInTheDocument();
-    expect(screen.getByText('这里是每次加工任务的运行记录，不是 Pipeline 模板本身')).toBeInTheDocument();
+    expect(screen.getByText('这里按每次运行展示加工任务记录')).toBeInTheDocument();
     expect(screen.getByText('加工任务记录')).toBeInTheDocument();
+    expect(screen.getAllByText('原始数据集（输入）').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('预处理数据集（输出）').length).toBeGreaterThan(0);
     expect(screen.getAllByText('运行状态').length).toBeGreaterThan(0);
     expect(screen.getAllByText('处置状态').length).toBeGreaterThan(0);
     expect(screen.getByText('运行成功')).toBeInTheDocument();
-    expect(screen.getByText('算子组合可保存为版本快照并反复复用')).toBeInTheDocument();
+    expect(screen.getByText('算子流程可保存为版本快照并反复复用')).toBeInTheDocument();
+    expect(screen.queryByText('Pipeline模板')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('combobox', { name: '本次要加工的数据集' }));
     await user.click(await screen.findByText(/新一批车间视频数据集/));
-    await user.click(screen.getByRole('button', { name: /运行当前数据集/ }));
+    await user.click(screen.getByRole('button', { name: /配置并运行/ }));
+    await user.clear(screen.getByRole('textbox', { name: '输出预处理数据集名称' }));
+    await user.type(screen.getByRole('textbox', { name: '输出预处理数据集名称' }), '自定义抽帧结果集');
+    await user.click(screen.getByRole('button', { name: '确认运行并生成数据集' }));
 
     await waitFor(() => {
       expect(dataApi.runPipeline).toHaveBeenCalledWith('PIPE-VIDEO-PREP', {
         triggerMode: 'MANUAL',
         sampleDatasetId: 'DATASET-NEW-VIDEO-002',
+        outputDatasetName: '自定义抽帧结果集',
       });
     });
   });
@@ -497,7 +515,7 @@ describe('DataPipelineStandardPage operator config panel', () => {
     });
     expect(screen.getByText(/当前节点 3 个/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /💾 保存模板/i }));
+    await user.click(screen.getByRole('button', { name: /💾 保存流程/i }));
 
     await waitFor(() => {
       expect(dataApi.updatePipeline).toHaveBeenCalled();

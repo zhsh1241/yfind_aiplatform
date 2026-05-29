@@ -23,6 +23,11 @@ function formatDate(value: string | null) {
   return value ? new Date(value).toLocaleString('zh-CN') : '—';
 }
 
+function displayText(value?: string | null, fallback = '待配置') {
+  if (!value) return fallback;
+  return value.replace(/TODO_CONFIRM_[A-Z0-9_]+/g, fallback);
+}
+
 function ConfigForm({ items, onSave, loading }: { items: ConfigItem[]; onSave: (key: string, value: string) => void; loading?: boolean }) {
   return (
     <Space orientation="vertical" className="full-width">
@@ -60,14 +65,14 @@ function StoragePanel({ configs, files, onSave, loading }: { configs: ConfigItem
   return (
     <Space orientation="vertical" className="full-width" size={16}>
       <Row gutter={[16, 16]}>
-        <Col xs={24} md={8}><Card title="对象存储状态"><Tag color="orange">UNCONFIGURED</Tag><p className="muted">TODO_CONFIRM_MINIO_ENDPOINT</p></Card></Col>
+        <Col xs={24} md={8}><Card title="对象存储状态"><Tag color="orange">待配置</Tag><p className="muted">对象存储连接待配置</p></Card></Col>
         <Col xs={24} md={8}><Card title="文件元数据"><Typography.Title level={4}>{files.length}</Typography.Title><span className="muted">已登记 object key</span></Card></Col>
         <Col xs={24} md={8}><Card title="已登记容量"><Typography.Title level={4}>{(totalBytes / 1024 / 1024).toFixed(1)} MB</Typography.Title><span className="muted">来自 platform_file_object</span></Card></Col>
       </Row>
       <Card title="存储路径配置" extra={<Button>清理缓存</Button>}>
         <ConfigForm items={configs} onSave={onSave} loading={loading} />
       </Card>
-      <Card title="文件元数据 seam">
+      <Card title="文件元数据">
         <Table<FileObjectSummary>
           rowKey="fileId"
           size="small"
@@ -88,16 +93,16 @@ function StoragePanel({ configs, files, onSave, loading }: { configs: ConfigItem
 
 function NotificationPanel({ channels, onTest, onUpdate, testing }: { channels: NotificationChannel[]; onTest: (channelId: string) => void; onUpdate: (channel: NotificationChannel) => void; testing?: boolean }) {
   return (
-    <Card title="通知渠道" extra={<Tag color="orange">未配置外部参数时不伪造成功</Tag>}>
+    <Card title="通知渠道" extra={<Tag color="orange">连接状态可诊断</Tag>}>
       <Table<NotificationChannel>
         rowKey="channelId"
         dataSource={channels}
         pagination={false}
         columns={[
           { title: '渠道', dataIndex: 'name', render: (_: string, row) => <strong>{row.name}<br /><span className="muted">{row.channelType}</span></strong> },
-          { title: '配置', dataIndex: 'configMasked', render: (value: string | null) => <span className="mono">{value ?? 'TODO_CONFIRM_NOTIFICATION_CHANNEL'}</span> },
+          { title: '配置', dataIndex: 'configMasked', render: (value: string | null) => <span className="mono">{displayText(value, '通知渠道待配置')}</span> },
           { title: '状态', dataIndex: 'status', render: (value: string) => <Tag color={statusColor(value)}>{value}</Tag> },
-          { title: '诊断', dataIndex: 'diagnostic', render: (value: string | null) => value ?? 'TODO_CONFIRM_NOTIFICATION_CHANNEL' },
+          { title: '诊断', dataIndex: 'diagnostic', render: (value: string | null) => displayText(value, '通知渠道待配置') },
           { title: '最近测试', dataIndex: 'lastTestAt', render: formatDate },
           { title: '操作', render: (_: unknown, row) => <Space><Button size="small" onClick={() => onUpdate(row)}>保存配置</Button><Button size="small" loading={testing} onClick={() => onTest(row.channelId)}>测试</Button></Space> },
         ]}
@@ -173,7 +178,7 @@ export function SystemConfigPage() {
   const byGroup = useMemo(() => Map.groupBy(configs.data ?? [], (item) => item.groupName), [configs.data]);
 
   const updateConfig = useMutation({
-    mutationFn: ({ key, value }: { key: string; value: string }) => platformApi.updateConfig(key, { scopeType: 'GLOBAL', scopeId: 'TENANT-YF', value, reason: 'F007 sys 页面配置保存' }),
+    mutationFn: ({ key, value }: { key: string; value: string }) => platformApi.updateConfig(key, { scopeType: 'GLOBAL', scopeId: 'TENANT-YF', value, reason: '系统配置页面保存' }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['platform-configs'] });
       messageApi.success('系统配置已保存并生成版本记录');
@@ -183,7 +188,7 @@ export function SystemConfigPage() {
     mutationFn: platformApi.testNotificationChannel,
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ['platform-notification-channels'] });
-      messageApi.warning(`通知测试返回 ${result.result}: ${result.diagnostic}`);
+      messageApi.warning(`通知测试返回 ${result.result}: ${displayText(result.diagnostic, '通知渠道待配置')}`);
     },
   });
   const updateChannel = useMutation({
@@ -228,8 +233,8 @@ export function SystemConfigPage() {
           { key: 'storage', label: '存储配置', children: <StoragePanel configs={byGroup.get('storage') ?? []} files={files.data?.items ?? []} onSave={saveConfig} loading={updateConfig.isPending} /> },
           { key: 'notification', label: '通知设置', children: <NotificationPanel channels={channels.data ?? []} onUpdate={(channel) => updateChannel.mutate(channel)} onTest={(channelId) => testChannel.mutate(channelId)} testing={testChannel.isPending} /> },
           { key: 'apikey', label: 'API 密钥', children: <ApiKeyPanel keys={apiKeys.data ?? []} onCreate={(values) => createApiKey.mutate({ ...values, permissions: ['INFERENCE_READ'] })} onRevoke={(id) => revokeApiKey.mutate(id)} createdKey={createdKey} loading={createApiKey.isPending || revokeApiKey.isPending} /> },
-          { key: 'security', label: '数据安全', children: <Card title={groupLabels.security}><ConfigForm items={byGroup.get('security') ?? []} onSave={saveConfig} loading={updateConfig.isPending} /><Card size="small" title="脱敏规则 seam"><Tag color="green">手机号</Tag><Tag color="green">身份证号</Tag><Tag color="green">邮箱地址</Tag><Tag>IP 地址</Tag></Card></Card> },
-          { key: 'auth', label: '认证集成', children: <Card title={groupLabels.auth} extra={<Tag color="orange">TODO_CONFIRM_IDP_METADATA_URL</Tag>}><ConfigForm items={byGroup.get('auth') ?? []} onSave={saveConfig} loading={updateConfig.isPending} /><Typography.Paragraph type="secondary">LDAP / SSO / SAML / OAuth2 参数待外部系统确认，F007 仅保留未配置真实状态。</Typography.Paragraph></Card> },
+          { key: 'security', label: '数据安全', children: <Card title={groupLabels.security}><ConfigForm items={byGroup.get('security') ?? []} onSave={saveConfig} loading={updateConfig.isPending} /><Card size="small" title="脱敏规则"><Tag color="green">手机号</Tag><Tag color="green">身份证号</Tag><Tag color="green">邮箱地址</Tag><Tag>IP 地址</Tag></Card></Card> },
+          { key: 'auth', label: '认证集成', children: <Card title={groupLabels.auth} extra={<Tag color="orange">认证参数待配置</Tag>}><ConfigForm items={byGroup.get('auth') ?? []} onSave={saveConfig} loading={updateConfig.isPending} /><Typography.Paragraph type="secondary">LDAP / SSO / SAML / OAuth2 参数可在外部系统确认后由管理员维护。</Typography.Paragraph></Card> },
           { key: 'tag', label: '标签管理', children: <TagPanel configs={byGroup.get('tag') ?? []} onSave={saveConfig} loading={updateConfig.isPending} /> },
         ]}
       />

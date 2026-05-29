@@ -13,15 +13,15 @@ import type { ReactNode } from 'react';
 import { domainLabel, pageLabel } from '../features/platform/i18n';
 import type { AppLanguage } from '../features/platform/localeStore';
 
-export type PrototypeDomain = '工作台' | '数据管理' | '模型开发' | '运营中心' | '平台管理';
+export type AppDomain = '工作台' | '数据管理' | '模型开发' | '运营中心' | '平台管理';
 
-export type PrototypePage = {
+export type ModuleOverviewPage = {
   key: string;
   label: string;
-  domain: PrototypeDomain;
+  domain: AppDomain;
 };
 
-export const prototypePages: PrototypePage[] = [
+export const appPages: ModuleOverviewPage[] = [
   { key: 'dash', label: '工作台', domain: '工作台' },
   { key: 'ds', label: '数据集管理', domain: '数据管理' },
   { key: 'tagmgmt', label: '标签管理', domain: '数据管理' },
@@ -51,9 +51,9 @@ export const prototypePages: PrototypePage[] = [
   { key: 'sys', label: '系统配置', domain: '平台管理' },
 ];
 
-const domainOrder: PrototypeDomain[] = ['工作台', '数据管理', '模型开发', '运营中心', '平台管理'];
+const domainOrder: AppDomain[] = ['工作台', '数据管理', '模型开发', '运营中心', '平台管理'];
 
-const iconByDomain: Record<PrototypeDomain, ReactNode> = {
+const iconByDomain: Record<AppDomain, ReactNode> = {
   工作台: <DashboardOutlined />,
   数据管理: <DatabaseOutlined />,
   模型开发: <ExperimentOutlined />,
@@ -65,7 +65,7 @@ export function AppNavigation({ allowedKeys, language }: { allowedKeys?: Set<str
   const navigate = useNavigate();
   const location = useLocation();
   const pagesByDomain = Map.groupBy(
-    allowedKeys ? prototypePages.filter((page) => allowedKeys.has(page.key)) : prototypePages,
+    allowedKeys ? appPages.filter((page) => allowedKeys.has(page.key)) : appPages,
     (page) => page.domain,
   );
   const items: MenuProps['items'] = domainOrder

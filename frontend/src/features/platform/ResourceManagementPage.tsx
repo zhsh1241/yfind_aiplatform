@@ -1,4 +1,4 @@
-﻿import { Alert, Button, Card, Col, Form, Input, Modal, Progress, Row, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Col, Form, Input, Modal, Progress, Row, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import {
@@ -22,6 +22,11 @@ function statusColor(status?: string) {
 
 function formatDate(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString('zh-CN') : '尚未同步';
+}
+
+function displayText(value?: string | null, fallback = '待配置') {
+  if (!value) return fallback;
+  return value.replace(/TODO_CONFIRM_[A-Z0-9_]+/g, fallback);
 }
 
 function UsageCard({ card }: { card: PaiResourceUsageCard }) {
@@ -65,7 +70,7 @@ function BindingModal({ binding, open, onCancel, onSave, loading }: { binding: P
         <Form.Item name="resourceGroupId" label="PAI Resource Group ID" rules={[{ required: true }]}><Input /></Form.Item>
         <Form.Item name="status" label="映射状态" rules={[{ required: true }]}><Input placeholder="ACTIVE / DISABLED" /></Form.Item>
         <Form.Item name="diagnosticMessage" label="诊断说明"><Input /></Form.Item>
-        <Alert type="warning" showIcon title="不得填写明文 AccessKey / Secret；真实 RAM Role、Region、Endpoint 保留 TODO_CONFIRM_PAI_*。" style={{ marginBottom: 16 }} />
+        <Alert type="warning" showIcon title="不得填写明文 AccessKey / Secret" description="请使用 RAM Role 或 Secret Ref 管理凭据，页面仅展示脱敏引用。" style={{ marginBottom: 16 }} />
         <Button type="primary" htmlType="submit" loading={loading}>保存映射并写审计</Button>
       </Form>
     </Modal>
@@ -105,7 +110,7 @@ export function ResourceManagementPage() {
       if (result.result === 'SUCCESS') {
         messageApi.success(`PAI 同步成功：${result.paiRequestId}`);
       } else {
-        messageApi.warning(`PAI 同步返回 ${result.status}: ${result.diagnosticMessage}`);
+        messageApi.warning(`PAI 同步返回 ${result.status}: ${displayText(result.diagnosticMessage)}`);
       }
     },
     onError: (error: Error) => messageApi.error(error.message),
@@ -153,20 +158,20 @@ export function ResourceManagementPage() {
           type="warning"
           showIcon
           title="PAI 连接尚未配置"
-          description={<span>请确认 <span className="mono">{status.data?.diagnosticMessage ?? 'TODO_CONFIRM_PAI_REGION;TODO_CONFIRM_PAI_WORKSPACE_ID;TODO_CONFIRM_PAI_QUOTA_ID'}</span>。SMP 当前只展示映射和同步诊断，不伪造 PAI 调用成功。</span>}
+          description={<span>请补充 Region、Workspace、Resource Quota 与凭据信息。当前页面会保留连接诊断，便于管理员排查。</span>}
           style={{ marginBottom: 16 }}
         />
       ) : null}
-      {stale ? <Alert type="error" showIcon title="当前展示的是最近一次成功快照，最新同步失败或已过期" description={overview.data?.diagnosticMessage ?? status.data?.diagnosticMessage} style={{ marginBottom: 16 }} /> : null}
+      {stale ? <Alert type="error" showIcon title="当前展示的是最近一次成功快照，最新同步失败或已过期" description={displayText(overview.data?.diagnosticMessage ?? status.data?.diagnosticMessage)} style={{ marginBottom: 16 }} /> : null}
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} lg={8}>
           <Card title="PAI 连接状态" loading={status.isLoading}>
             <Space orientation="vertical" className="full-width">
               <Space><Tag color={statusColor(status.data?.status)}>{status.data?.status}</Tag><Tag>{status.data?.credentialMode}</Tag></Space>
-              <Typography.Text className="mono">Region: {status.data?.regionId}</Typography.Text>
-              <Typography.Text className="mono">Endpoint: {status.data?.endpoint}</Typography.Text>
-              <Typography.Text className="mono">Credential: {status.data?.credentialRefMasked}</Typography.Text>
+              <Typography.Text className="mono">Region: {displayText(status.data?.regionId)}</Typography.Text>
+              <Typography.Text className="mono">Endpoint: {displayText(status.data?.endpoint)}</Typography.Text>
+              <Typography.Text className="mono">Credential: {displayText(status.data?.credentialRefMasked, '凭据待配置')}</Typography.Text>
               <Typography.Text type="secondary">最近同步：{formatDate(status.data?.lastSyncAt)}</Typography.Text>
             </Space>
           </Card>
@@ -187,7 +192,7 @@ export function ResourceManagementPage() {
             <Space orientation="vertical" className="full-width">
               <Typography.Text>数据来源：{overview.data?.updatedFrom ?? 'PAI_SNAPSHOT'}</Typography.Text>
               <Typography.Text>Trace / PAI requestId 由后端同步日志记录。</Typography.Text>
-              <Typography.Text type="secondary">{overview.data?.diagnosticMessage ?? status.data?.diagnosticMessage}</Typography.Text>
+              <Typography.Text type="secondary">{displayText(overview.data?.diagnosticMessage ?? status.data?.diagnosticMessage)}</Typography.Text>
             </Space>
           </Card>
         </Col>
@@ -305,7 +310,7 @@ export function ResourceManagementPage() {
             key: 'storage',
             label: '存储',
             children: (
-              <Card title="PAI / OSS 存储摘要" extra={<Tag color="orange">不替代 F007 文件元数据服务</Tag>}>
+              <Card title="PAI / OSS 存储摘要" extra={<Tag color="orange">独立于文件元数据服务</Tag>}>
                 <Table<PaiResourceStorage>
                   rowKey="storageId"
                   loading={storage.isLoading}

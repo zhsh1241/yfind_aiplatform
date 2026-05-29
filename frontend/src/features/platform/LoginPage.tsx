@@ -64,7 +64,7 @@ export function LoginPage() {
           />
         </Space>
       </Card>
-      <div className="login-version">YFI SMP · v0.1.0 · TODO_CONFIRM_YF_LDAP_URL</div>
+      <div className="login-version">YFI SMP · v0.1.0</div>
     </div>
   );
 }

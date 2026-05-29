@@ -560,11 +560,11 @@ export const platformApi = {
     }));
     return {
       approvals: approvals.length > 0 ? approvals : [{ title: '暂无待审批事项', time: '实时', risk: '低' }],
-      grants: logs.items.length === 0 ? [{ user: '暂无授权记录', role: '审计主体', scope: 'AuditLog', expire: 'TODO_CONFIRM_PERMISSION_GRANT_EXPIRE' }] : logs.items.slice(0, 3).map((item) => ({
+      grants: logs.items.length === 0 ? [{ user: '暂无授权记录', role: '审计主体', scope: 'AuditLog', expire: '未设置' }] : logs.items.slice(0, 3).map((item) => ({
         user: item.operatorName,
         role: item.operatorRole || '审计主体',
         scope: item.resourceType,
-        expire: 'TODO_CONFIRM_PERMISSION_GRANT_EXPIRE',
+        expire: '未设置',
       })),
     };
   },
@@ -614,12 +614,14 @@ export const platformApi = {
   async downloadFileContent(fileId: string): Promise<FileContentDownload> {
     const response = await apiClient.get<Blob>(`/api/v1/platform/files/${fileId}/content`, { responseType: 'blob' });
     const disposition = response.headers['content-disposition'];
-    const filenameMatch = typeof disposition === 'string' ? disposition.match(/filename="?([^"]+)"?/i) : null;
+    const filenameMatch = typeof disposition === 'string'
+      ? (disposition.match(/filename\*=UTF-8''([^;]+)/i) ?? disposition.match(/filename="?([^";]+)"?/i))
+      : null;
     const responseContentType = response.headers['content-type'];
     return {
       blob: response.data,
       contentType: typeof responseContentType === 'string' ? responseContentType : 'application/octet-stream',
-      filename: filenameMatch?.[1],
+      filename: filenameMatch?.[1] ? decodeURIComponent(filenameMatch[1]) : undefined,
     };
   },
   fileContentUrl(fileId: string) {
@@ -696,7 +698,7 @@ export type PipelineRunDetail = { run: PipelineRunSummary; nodeRuns: PipelineRun
 export type PipelineDetail = { pipeline: PipelineSummary; nodes: PipelineNode[]; edges: PipelineEdge[]; variables: PipelineVariable[]; versions: PipelineVersion[]; runs: PipelineRunSummary[]; validation: PipelineValidation };
 export type PipelineList = { items: PipelineSummary[]; total: number; page: number; pageSize: number };
 export type PipelineSaveInput = { name: string; tenantId?: string; projectId?: string | null; description?: string | null; templateCode?: string | null; sourceDatasetId?: string | null; sourceVersionId?: string | null; resultDatasetConfig?: { datasetName?: string | null; datasetType?: string | null; datasetDataType?: string | null; autoActivate?: boolean | null } | null; nodes: PipelineNode[]; edges: PipelineEdge[]; variables: PipelineVariable[] };
-export type PipelineProcessingTaskSummary = { taskId: string; pipelineId: string; pipelineName: string; sourceDatasetId: string | null; sourceDatasetName: string | null; sourceVersionId: string | null; outputDatasetId: string | null; status: string; resultDatasetStatus: string | null; diagnosticCode: string | null; diagnosticMessage: string | null; durationMs: number | null; totalCount: number | null; successCount: number | null; skippedCount: number | null; failedCount: number | null; createdAt: string; endedAt: string | null };
+export type PipelineProcessingTaskSummary = { taskId: string; pipelineId: string; pipelineName: string; sourceDatasetId: string | null; sourceDatasetName: string | null; sourceVersionId: string | null; outputDatasetId: string | null; outputDatasetName: string | null; outputDatasetType: string | null; outputDatasetDataType: string | null; status: string; resultDatasetStatus: string | null; diagnosticCode: string | null; diagnosticMessage: string | null; durationMs: number | null; totalCount: number | null; successCount: number | null; skippedCount: number | null; failedCount: number | null; createdAt: string; endedAt: string | null };
 export type PipelineProcessingTaskList = { items: PipelineProcessingTaskSummary[]; total: number; page: number; pageSize: number };
 
 export type OperatorSummary = { operatorId: string; name: string; categoryGroup: string | null; category: string; subCategory: string | null; dataType: string | null; stage: string; kind: string; status: string; supportsPreview: boolean; enhancementMode: string | null; defaultOutputDatasetDataType: string | null; annotationRiskLevel: string | null; description: string | null; beforeExample: string | null; afterExample: string | null; usageCount: number; pipelineCount: number; errorRate: number };
@@ -818,9 +820,9 @@ export const dataApi = {
   async validatePipeline(pipelineId: string) { return unwrap<PipelineValidation>(apiClient.post(`/api/v1/pipelines/${pipelineId}/validate`)); },
   async savePipelineVersion(pipelineId: string, input: { versionName?: string; note?: string }) { return unwrap<PipelineVersion>(apiClient.post(`/api/v1/pipelines/${pipelineId}/versions`, input)); },
   async restorePipelineVersion(pipelineId: string, versionId: string) { return unwrap<PipelineDetail>(apiClient.post(`/api/v1/pipelines/${pipelineId}/versions/${versionId}/restore`)); },
-  async runPipeline(pipelineId: string, input: { triggerMode?: string; sampleDatasetId?: string } = {}) { return unwrap<PipelineRunDetail>(apiClient.post(`/api/v1/pipelines/${pipelineId}/runs`, input)); },
+  async runPipeline(pipelineId: string, input: { triggerMode?: string; sampleDatasetId?: string; outputDatasetName?: string } = {}) { return unwrap<PipelineRunDetail>(apiClient.post(`/api/v1/pipelines/${pipelineId}/runs`, input)); },
   async pipelineProcessingTasks(params: { keyword?: string; status?: string; page?: number; pageSize?: number } = {}) { return unwrap<PipelineProcessingTaskList>(apiClient.get('/api/v1/pipeline-processing-tasks', { params })); },
-  async createPipelineProcessingTask(input: { pipelineId: string; sourceDatasetId: string }) { return unwrap<PipelineRunDetail>(apiClient.post('/api/v1/pipeline-processing-tasks', input)); },
+  async createPipelineProcessingTask(input: { pipelineId: string; sourceDatasetId: string; outputDatasetName?: string }) { return unwrap<PipelineRunDetail>(apiClient.post('/api/v1/pipeline-processing-tasks', input)); },
   async pipelineRuns(pipelineId: string) { return unwrap<PipelineRunSummary[]>(apiClient.get(`/api/v1/pipelines/${pipelineId}/runs`)); },
   async pipelineRunDetail(runId: string) { return unwrap<PipelineRunDetail>(apiClient.get(`/api/v1/pipeline-runs/${runId}`)); },
   async operators(params: { keyword?: string; category?: string; categoryGroup?: string; dataType?: string; stage?: string; status?: string; supportsPreview?: boolean } = {}) { return unwrap<OperatorList>(apiClient.get('/api/v1/operators', { params })); },

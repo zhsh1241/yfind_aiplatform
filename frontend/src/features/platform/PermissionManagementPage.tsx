@@ -88,7 +88,7 @@ export function PermissionManagementPage() {
             label: '当前权限概览',
             children: (
               <Space orientation="vertical" size={16} className="full-width">
-                <Alert type="info" showIcon title="数据集访问授权" description="权限申请、审批工作台与授权记录均保留原型路径；待处理记录请进入审批工作台处理。" /><Typography.Text>待审批</Typography.Text>
+                <Alert type="info" showIcon title="数据集访问授权" description="权限申请、审批工作台与授权记录已接入平台权限体系；待处理记录请进入审批工作台处理。" /><Typography.Text>待审批</Typography.Text>
                 <PermissionMatrixTable
                   matrix={matrix.data}
                   loading={matrix.isLoading}

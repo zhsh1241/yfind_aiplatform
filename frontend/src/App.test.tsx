@@ -270,7 +270,7 @@ describe('F006 platform identity frontend', () => {
     expect(useSessionStore.getState().token).toBeNull();
   });
 
-  it('renders prototype-consistent login and navigates after API login', async () => {
+  it('renders navigation-consistent login and navigates after API login', async () => {
     renderApp(['/login']);
 
     expect(screen.getByText('⚙ SMP')).toBeInTheDocument();
@@ -374,7 +374,7 @@ describe('F006 platform identity frontend', () => {
     expect((await screen.findAllByText('待审批')).length).toBeGreaterThan(0);
   });
 
-  it('renders org page with prototype tabs and real organization APIs', async () => {
+  it('renders org page with module tabs and real organization APIs', async () => {
     mockState.token = 'token-f007';
     mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview', 'tagmgmt'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-f007', user: mockState.user, initialized: true });
@@ -395,7 +395,7 @@ describe('F006 platform identity frontend', () => {
 
 
 
-  it('keeps all prototype menus visible for super admin even when session lacks new menu grants', async () => {
+  it('keeps all module menus visible for super admin even when session lacks new menu grants', async () => {
     mockState.token = 'token-super-admin-menu-fallback';
     mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash'], menuPermissions: ['dash'], sessionVersion: 1 };
     useSessionStore.setState({ token: 'token-super-admin-menu-fallback', user: mockState.user, initialized: true });
@@ -428,7 +428,7 @@ describe('F006 platform identity frontend', () => {
     expect(screen.getByRole('tab', { name: '通知设置' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'API 密钥' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('tab', { name: '通知设置' }));
-    expect(await screen.findByText('TODO_CONFIRM_SMTP_HOST')).toBeInTheDocument();
+    expect(await screen.findByText('host=通知渠道待配置;sender=通知渠道待配置')).toBeInTheDocument();
     expect(screen.getByText('UNCONFIGURED')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('tab', { name: 'API 密钥' }));
     expect(await screen.findByText('CI/CD 集成 Key')).toBeInTheDocument();
@@ -436,7 +436,7 @@ describe('F006 platform identity frontend', () => {
     expect(await screen.findByText('新建 API Key')).toBeInTheDocument();
   });
 
-  it('renders resource page with PAI unconfigured guidance and prototype tabs', async () => {
+  it('renders resource page with PAI unconfigured guidance and module tabs', async () => {
     // TASK-pai-resource-integration AC-01 AC-02 AC-05 AC-06
     mockState.token = 'token-f008';
     mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt'], menuPermissions: ['dash', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'ann', 'annwork', 'annreview', 'tagmgmt'], sessionVersion: 1 };
@@ -450,7 +450,7 @@ describe('F006 platform identity frontend', () => {
     expect(screen.getByRole('tab', { name: '资源池' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '存储' })).toBeInTheDocument();
     expect(await screen.findByText('PAI 连接尚未配置')).toBeInTheDocument();
-    expect(screen.getAllByText(/TODO_CONFIRM_PAI_REGION/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/待配置/).length).toBeGreaterThan(0);
     expect(screen.getByText('GPU 总量')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '手动同步 PAI' }));
     expect(await screen.findByText(/PAI 同步返回 UNCONFIGURED/)).toBeInTheDocument();

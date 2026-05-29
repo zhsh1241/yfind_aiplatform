@@ -7,6 +7,12 @@ import { useSessionStore } from '../platform/sessionStore';
 
 const fmtSize = (n?: number | null) => !n ? '0 B' : n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : n > 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${n} B`;
 const txt = (v?: string | null) => ({ RAW: '原始数据', PREPROCESSED: '预处理后', ANNOTATED: '已标注', IMAGE: '图片', AUDIO_VIDEO: '影音', TEXT: '文本', OBJECT_STORAGE: '对象存储', RELATIONAL_DB: '关系型数据库', STREAM: '流数据', TIME_SERIES: '时序库', INDUSTRIAL_PROTOCOL: '工业协议', EXTERNAL_API: '外部接口', IMPORT: '导入', API: '接口', IMAGE_TAGGING: '图片打标', IMAGE_SEGMENTATION: '图片分割', TEXT_LABELING: '文本分类', ANNOTATION_RESULT: '标注文件' } as Record<string, string>)[v ?? ''] ?? v ?? '-';
+const tagSelectSearchProps = {
+  showSearch: true,
+  optionFilterProp: 'label',
+  filterOption: (input: string, option?: { label?: unknown; value?: unknown }) =>
+    String(option?.label ?? option?.value ?? '').toLowerCase().includes(input.trim().toLowerCase()),
+};
 
 type DatasetUploadStage = 'queued' | 'hashing' | 'registering' | 'uploading' | 'completing' | 'binding' | 'done' | 'error';
 
@@ -78,6 +84,8 @@ export function DatasetUploadPage() {
   const [fileRole, setFileRole] = useState('RAW');
   const qc = useQueryClient();
   const sources = useQuery({ queryKey: ['data-sources'], queryFn: dataApi.dataSources });
+  const tagCatalog = useQuery({ queryKey: ['annotation-tags'], queryFn: () => dataApi.annotationTags({ status: 'ACTIVE' }) });
+  const tagOptions = (tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').map((tag) => ({ value: tag.name, label: tag.name }));
   const uploadConfigs = useQuery({ queryKey: ['upload-configs', currentTenantId], queryFn: () => platformApi.configs('GLOBAL', currentTenantId ?? 'TENANT-YF') });
   const create = useMutation({
     mutationFn: dataApi.createDataset,
@@ -160,7 +168,7 @@ export function DatasetUploadPage() {
         const sha256 = await digestSha256(item.file);
 
         updateQueueItem(item.uid, { sha256, status: 'registering', progress: 24 });
-        setUploadPhase(`登记 ${item.name} 到 F007 文件对象`);
+        setUploadPhase(`登记 ${item.name} 到平台文件对象`);
         const initialized = await platformApi.initFile({
           assetType: 'DATASET',
           tenantId: draft.dataset.tenantId || currentTenantId || 'TENANT-YF',
@@ -255,7 +263,7 @@ export function DatasetUploadPage() {
       <div className="page-hero">
         <div>
           <Typography.Title level={3}>新建数据集 / 上传向导</Typography.Title>
-          <Typography.Text type="secondary">三步向导 · Ant Design Upload.Dragger · 真实 multipart 上传 · hash/size 校验</Typography.Text>
+          <Typography.Text type="secondary">三步向导 · 拖拽上传 · 文件登记 · hash/size 校验</Typography.Text>
         </div>
       </div>
       <Card>
@@ -267,10 +275,10 @@ export function DatasetUploadPage() {
               ...v,
               tenantId: currentTenantId ?? 'TENANT-YF',
               datasetType: 'RAW',
-              tags: String(v.tags ?? '').split(/[,，]/).filter(Boolean),
+              tags: Array.isArray(v.tags) ? v.tags : [],
               recordCount: Number(v.recordCount ?? 0),
             })}
-            initialValues={{ name: '新建视觉数据集', dataType: 'IMAGE', accessLevel: 'TEAM', tags: '质检,工业视觉' }}
+            initialValues={{ name: '新建视觉数据集', dataType: 'IMAGE', accessLevel: 'TEAM', tags: [] }}
           >
             <Form.Item name="name" label="数据集名称" rules={[{ required: true, message: '请输入数据集名称' }]}>
               <Input placeholder="例如：焊缝缺陷检测数据集 V2" />
@@ -293,8 +301,16 @@ export function DatasetUploadPage() {
                 </Form.Item>
               </Space>
             </Space>
-            <Form.Item name="tags" label="标签">
-              <Input placeholder="使用逗号分隔，如：质检,工业视觉" />
+            <Form.Item name="tags" label="标签" extra="只能从标签管理的已启用标签中选择；如需新增标签，请先到标签管理维护。">
+              <Select
+                mode="multiple"
+                {...tagSelectSearchProps}
+                allowClear
+                loading={tagCatalog.isLoading}
+                options={tagOptions}
+                placeholder={tagOptions.length ? '请选择标签' : '暂无可用标签，请先到标签管理维护'}
+                disabled={tagCatalog.isLoading || tagOptions.length === 0}
+              />
             </Form.Item>
             <Form.Item name="description" label="数据集描述">
               <Input.TextArea rows={3} placeholder="描述数据集用途、采集方式、业务场景和质量要求" />
@@ -338,7 +354,7 @@ export function DatasetUploadPage() {
                 </Upload.Dragger>
                 <Space wrap style={{ marginTop: 16 }}>
                   <Tag color="green">自动计算 SHA-256</Tag>
-                  <Tag color="blue">自动登记 F007 文件对象</Tag>
+                  <Tag color="blue">自动登记平台文件对象</Tag>
                   <Tag color="gold">自动绑定当前数据集版本</Tag>
                   <Tag color="default">支持多文件 / 目录上传</Tag>
                 </Space>
@@ -353,7 +369,7 @@ export function DatasetUploadPage() {
                   <Space>
                     <Button onClick={clearQueue} disabled={uploading || uploadQueue.length === 0}>清空队列</Button>
                     <Button type="primary" loading={uploading} disabled={!canStartUpload} onClick={() => void handleUpload()}>
-                      开始真实上传并绑定版本
+                      开始上传并绑定版本
                     </Button>
                   </Space>
                 </Space>
