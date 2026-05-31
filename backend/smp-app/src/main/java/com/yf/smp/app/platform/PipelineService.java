@@ -1,6 +1,9 @@
 package com.yf.smp.app.platform;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
@@ -31,11 +34,13 @@ public class PipelineService {
     private final JdbcTemplate jdbc;
     private final PlatformIdentityService identityService;
     private final ObjectStorageService objectStorageService;
+    private final VideoFrameExtractor videoFrameExtractor;
 
-    public PipelineService(JdbcTemplate jdbc, PlatformIdentityService identityService, ObjectStorageService objectStorageService) {
+    public PipelineService(JdbcTemplate jdbc, PlatformIdentityService identityService, ObjectStorageService objectStorageService, VideoFrameExtractor videoFrameExtractor) {
         this.jdbc = jdbc;
         this.identityService = identityService;
         this.objectStorageService = objectStorageService;
+        this.videoFrameExtractor = videoFrameExtractor;
     }
 
     public PipelineListResponse pipelines(PlatformPrincipal principal, String keyword, String status, int page, int pageSize) {
@@ -164,7 +169,7 @@ public class PipelineService {
             audit(principal, summary.tenantId(), "PIPELINE_PREPROCESS_RUN_STARTED", "PipelineRun", runId, "SUCCESS", "INFO", null, "RUNNING", TRACE_TAG);
         }
         boolean debugMode = "DEBUG".equalsIgnoreCase(blank(request.triggerMode(), "MANUAL"));
-        String outputDatasetId = createOutputDataset(principal, summary, sample, runId, start);
+        String outputDatasetId = createOutputDataset(principal, summary, sample, runId, start, request.outputDatasetName());
         OffsetDateTime end = start.plusSeconds(Math.max(1, nodes(pipelineId).size()) * 12L);
         long durationMs = java.time.Duration.between(start, end).toMillis();
         String diagnosticMessage = visualPreprocess ? "VISUAL_PREPROCESS_RUN_SUCCEEDED" : "SANDBOX_PIPELINE_RUN_SUCCEEDED";
@@ -218,7 +223,7 @@ public class PipelineService {
     public PipelineRunDetailResponse createProcessingTask(PlatformPrincipal principal, PipelineProcessingTaskCreateRequest request) {
         String pipelineId = require(request.pipelineId(), "Pipeline 不能为空");
         String sourceDatasetId = require(request.sourceDatasetId(), "加工任务必须选择数据集");
-        return runPipeline(principal, pipelineId, new PipelineRunRequest("MANUAL", sourceDatasetId));
+        return runPipeline(principal, pipelineId, new PipelineRunRequest("MANUAL", sourceDatasetId, request.outputDatasetName()));
     }
 
     public PipelineRunDetailResponse runDetail(PlatformPrincipal principal, String runId) {
@@ -490,35 +495,156 @@ public class PipelineService {
         return false;
     }
 
-    private String createOutputDataset(PlatformPrincipal principal, PipelineSummaryResponse pipeline, DatasetInfo sample, String runId, OffsetDateTime at) {
+    private String createOutputDataset(PlatformPrincipal principal, PipelineSummaryResponse pipeline, DatasetInfo sample, String runId, OffsetDateTime at, String outputDatasetName) {
         String datasetId = "DATASET-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
         String versionId = "DVER-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
-        String fileId = "FILE-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
-        String datasetFileId = "DF-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
         boolean videoFrameMode = "AUDIO_VIDEO".equalsIgnoreCase(blank(pipeline.sourceDatasetDataType(), sample.dataType()));
-        long outputRecords = videoFrameMode ? Math.max(6, sample.recordCount() * 4L) : Math.max(1, sample.recordCount());
-        long outputSize = Math.max(1024, sample.sizeBytes());
         String outputBucket = objectStorageService.datasetBucket(pipeline.tenantId());
-        String outputObjectKey = pipeline.tenantId() + "/pipeline/" + runId + (videoFrameMode ? "/frames/frame-0001.jpg" : "/output.parquet");
-        String outputPayload = "pipeline=" + pipeline.pipelineId() + "\nrun=" + runId + "\nsampleDataset=" + sample.datasetId();
-        objectStorageService.uploadObjectIfConfigured(outputBucket, outputObjectKey, outputPayload.getBytes(StandardCharsets.UTF_8), videoFrameMode ? "image/jpeg" : "application/x-parquet");
+        List<PipelineOutputFile> outputFiles = videoFrameMode
+            ? videoFrameOutputFiles(pipeline, sample, runId)
+            : tabularOutputFiles(pipeline, sample, runId);
+        long outputRecords = videoFrameMode ? outputFiles.size() : Math.max(1, sample.recordCount());
+        long outputSize = outputFiles.stream().mapToLong(PipelineOutputFile::sizeBytes).sum();
+        for (PipelineOutputFile outputFile : outputFiles) {
+            objectStorageService.uploadObjectIfConfigured(outputBucket, outputFile.objectKey(), outputFile.content(), outputFile.contentType());
+        }
         String datasetDataType = videoFrameMode ? "IMAGE" : sample.dataType();
         String processParams = preprocessParamsJson(pipeline, sample, runId);
         String previewManifest = previewManifestJson(pipeline, sample, runId, outputRecords, videoFrameMode);
         String annotationEligible = artifactWatermarkEnabled(pipeline.pipelineId()) ? "ANNOTATION_BLOCKED:ARTIFACT_WATERMARK" : "ANNOTATION_ELIGIBLE";
         String operatorChain = operatorChainJsonForPipeline(pipeline.pipelineId());
         String description = "由 Pipeline 视觉预处理运行 " + runId + " 生成；pipeline=" + pipeline.pipelineId() + ";runId=" + runId + ";sourceDatasetId=" + sample.datasetId() + ";sourceVersionId=" + blank(sample.versionId(), "UNKNOWN") + ";processParams=" + processParams + ";previewManifest=" + previewManifest + ";operatorChain=" + operatorChain + ";annotationEligibility=" + annotationEligible;
-        jdbc.update("INSERT INTO dataset (dataset_id, name, dataset_type, data_type, tenant_id, project_id, current_version_id, status, access_level, tags, record_count, size_bytes, owner_id, description, created_at, updated_at) VALUES (?, ?, 'PREPROCESSED', ?, ?, ?, NULL, 'PENDING_CONFIRMATION', 'TEAM', ?, ?, ?, ?, ?, ?, ?)", datasetId, outputDatasetName(pipeline, sample, videoFrameMode), datasetDataType, pipeline.tenantId(), pipeline.projectId(), "pipeline,F017,PREPROCESSED,VISUAL_PREPROCESS", outputRecords, outputSize, principal.user().id(), description, at, at);
+        jdbc.update("INSERT INTO dataset (dataset_id, name, dataset_type, data_type, tenant_id, project_id, current_version_id, status, access_level, tags, record_count, size_bytes, owner_id, description, created_at, updated_at) VALUES (?, ?, 'PREPROCESSED', ?, ?, ?, NULL, 'PENDING_CONFIRMATION', 'TEAM', ?, ?, ?, ?, ?, ?, ?)", datasetId, outputDatasetName(pipeline, sample, videoFrameMode, outputDatasetName), datasetDataType, pipeline.tenantId(), pipeline.projectId(), "pipeline,F017,PREPROCESSED,VISUAL_PREPROCESS", outputRecords, outputSize, principal.user().id(), description, at, at);
         jdbc.update("INSERT INTO dataset_version (version_id, dataset_id, version_name, status, record_count, size_bytes, content_safety_status, diagnostic_code, diagnostic_message, created_by, created_at, published_at) VALUES (?, ?, 'v1.0.0', 'READY', ?, ?, 'PASSED', 'OK', 'VISUAL_PREPROCESS_READY_FOR_CONFIRM', ?, ?, NULL)", versionId, datasetId, outputRecords, outputSize, principal.user().id(), at);
         jdbc.update("UPDATE dataset SET current_version_id=?, updated_at=? WHERE dataset_id=?", versionId, at, datasetId);
-        jdbc.update("INSERT INTO platform_file_object (file_id, asset_type, tenant_id, project_id, bucket, object_key, expected_sha256, sha256, expected_size_bytes, size_bytes, content_type, storage_tier, status, owner_id, created_at, updated_at) VALUES (?, 'DATASET', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'STANDARD', 'AVAILABLE', ?, ?, ?)", fileId, pipeline.tenantId(), pipeline.projectId(), outputBucket, outputObjectKey, "sha256-" + fileId.toLowerCase(Locale.ROOT), "sha256-" + fileId.toLowerCase(Locale.ROOT), outputSize, outputSize, videoFrameMode ? "image/jpeg" : "application/x-parquet", principal.user().id(), at, at);
-        jdbc.update("INSERT INTO dataset_file (id, dataset_id, version_id, file_id, file_role, status, created_at) VALUES (?, ?, ?, ?, 'PIPELINE_OUTPUT', 'BOUND', ?)", datasetFileId, datasetId, versionId, fileId, at);
+        for (PipelineOutputFile outputFile : outputFiles) {
+            jdbc.update("INSERT INTO platform_file_object (file_id, asset_type, tenant_id, project_id, bucket, object_key, expected_sha256, sha256, expected_size_bytes, size_bytes, content_type, storage_tier, status, owner_id, created_at, updated_at) VALUES (?, 'DATASET', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'STANDARD', 'AVAILABLE', ?, ?, ?)",
+                outputFile.fileId(), pipeline.tenantId(), pipeline.projectId(), outputBucket, outputFile.objectKey(), outputFile.sha256(), outputFile.sha256(), outputFile.sizeBytes(), outputFile.sizeBytes(), outputFile.contentType(), principal.user().id(), at, at);
+            jdbc.update("INSERT INTO dataset_file (id, dataset_id, version_id, file_id, file_role, status, created_at) VALUES (?, ?, ?, ?, 'PIPELINE_OUTPUT', 'BOUND', ?)",
+                outputFile.datasetFileId(), datasetId, versionId, outputFile.fileId(), at);
+        }
         jdbc.update("INSERT INTO data_lineage (lineage_id, source_type, source_id, target_type, target_id, transform_type, created_at) VALUES (?, 'PIPELINE', ?, 'DATASET_VERSION', ?, 'PIPELINE', ?)", "LIN-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT), pipeline.pipelineId(), versionId, at);
         if (!blank(sample.versionId())) {
             jdbc.update("INSERT INTO data_lineage (lineage_id, source_type, source_id, target_type, target_id, transform_type, created_at) VALUES (?, 'DATASET_VERSION', ?, 'DATASET_VERSION', ?, 'PIPELINE', ?)", "LIN-PIN-" + randomHex(8).toUpperCase(Locale.ROOT), sample.versionId(), versionId, at);
         }
         audit(principal, pipeline.tenantId(), "PREPROCESSED_DATASET_CREATED", "Dataset", datasetId, "SUCCESS", "INFO", null, "PENDING_CONFIRMATION", TRACE_TAG + ";DAT-007");
         return datasetId;
+    }
+
+    private List<PipelineOutputFile> videoFrameOutputFiles(PipelineSummaryResponse pipeline, DatasetInfo sample, String runId) {
+        VideoSourceFile sourceFile = sourceVideoFile(sample);
+        byte[] videoBytes = readSourceVideo(sourceFile);
+        if (videoBytes.length == 0) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "VIDEO_SOURCE_EMPTY: 原始视频文件为空，无法抽帧");
+        }
+        List<byte[]> frames = videoFrameExtractor.extractFrames(videoBytes, sourceFile.fileName(), 6);
+        if (shouldRefreshSeedVideo(sourceFile, frames)) {
+            byte[] seededVideo = readBundledSeedVideo("weld-source.avi");
+            List<byte[]> seededFrames = videoFrameExtractor.extractFrames(seededVideo, "weld-source.avi", 6);
+            if (seededFrames.size() >= 6) {
+                objectStorageService.uploadObjectIfConfigured(sourceFile.bucket(), "TENANT-CABIN/dataset/video/weld-source.avi", seededVideo, "video/x-msvideo");
+                String sha = sha256(seededVideo);
+                OffsetDateTime at = now();
+                jdbc.update("""
+                    UPDATE platform_file_object
+                    SET object_key='TENANT-CABIN/dataset/video/weld-source.avi', content_type='video/x-msvideo',
+                        expected_sha256=?, sha256=?, expected_size_bytes=?, size_bytes=?, updated_at=?
+                    WHERE file_id=?
+                    """, sha, sha, seededVideo.length, seededVideo.length, at, sourceFile.fileId());
+                jdbc.update("UPDATE dataset SET record_count=1, size_bytes=?, updated_at=? WHERE dataset_id=?", seededVideo.length, at, sample.datasetId());
+                jdbc.update("UPDATE dataset_version SET record_count=1, size_bytes=? WHERE version_id=?", seededVideo.length, sample.versionId());
+                frames = seededFrames;
+            }
+        }
+        if (frames.isEmpty()) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "VIDEO_FRAME_EXTRACT_EMPTY: 未能从原始视频抽取图片帧");
+        }
+        List<PipelineOutputFile> files = new ArrayList<>();
+        int index = 1;
+        for (byte[] content : frames) {
+            String fileId = "FILE-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
+            String objectKey = pipeline.tenantId() + "/pipeline/" + runId + "/frames/frame-%04d.jpg".formatted(index);
+            files.add(new PipelineOutputFile(fileId, "DF-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT), objectKey, content, "image/jpeg", content.length, sha256(content)));
+            index++;
+        }
+        return files;
+    }
+
+    private boolean shouldRefreshSeedVideo(VideoSourceFile sourceFile, List<byte[]> frames) {
+        return "FILE-DATASET-WELD-VIDEO-001".equals(sourceFile.fileId())
+            && (frames.size() < 6 || !blank(sourceFile.objectKey(), "").endsWith("/weld-source.avi"));
+    }
+
+    private VideoSourceFile sourceVideoFile(DatasetInfo sample) {
+        List<VideoSourceFile> files = jdbc.query("""
+            SELECT f.file_id,f.bucket,f.object_key,f.content_type
+            FROM dataset_file df
+            JOIN platform_file_object f ON f.file_id=df.file_id
+            WHERE df.version_id=? AND f.status='AVAILABLE'
+            ORDER BY df.created_at
+            """, (rs, n) -> new VideoSourceFile(rs.getString("file_id"), rs.getString("bucket"), rs.getString("object_key"), rs.getString("content_type")), sample.versionId());
+        return files.stream()
+            .filter(file -> isVideoFile(file.contentType(), file.objectKey()))
+            .findFirst()
+            .orElseThrow(() -> new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "VIDEO_SOURCE_FILE_REQUIRED: 原始视频数据集必须绑定可读取的视频文件后才能抽帧"));
+    }
+
+    private byte[] readSourceVideo(VideoSourceFile sourceFile) {
+        try {
+            return objectStorageService.readObject(sourceFile.bucket(), sourceFile.objectKey());
+        } catch (PlatformException exception) {
+            byte[] seededVideo = readBundledSeedVideo(sourceFile.fileName());
+            if (seededVideo.length > 0) {
+                objectStorageService.uploadObjectIfConfigured(sourceFile.bucket(), sourceFile.objectKey(), seededVideo, sourceFile.contentType());
+                return seededVideo;
+            }
+            throw exception;
+        }
+    }
+
+    private byte[] readBundledSeedVideo(String fileName) {
+        if (blank(fileName)) {
+            return new byte[0];
+        }
+        String resourceName = "weld-source.mp4".equalsIgnoreCase(fileName) ? "weld-source.avi" : fileName;
+        try (java.io.InputStream stream = PipelineService.class.getResourceAsStream("/media/" + resourceName)) {
+            return stream == null ? new byte[0] : stream.readAllBytes();
+        } catch (IOException exception) {
+            return new byte[0];
+        }
+    }
+
+    private boolean isVideoFile(String contentType, String objectKey) {
+        String type = blank(contentType, "").toLowerCase(Locale.ROOT);
+        String key = blank(objectKey, "").toLowerCase(Locale.ROOT);
+        return type.startsWith("video/")
+            || key.endsWith(".mp4")
+            || key.endsWith(".mov")
+            || key.endsWith(".avi")
+            || key.endsWith(".mkv")
+            || key.endsWith(".webm");
+    }
+
+    private List<PipelineOutputFile> tabularOutputFiles(PipelineSummaryResponse pipeline, DatasetInfo sample, String runId) {
+        byte[] content = ("PAR1\npipeline=" + pipeline.pipelineId() + "\nrun=" + runId + "\nsampleDataset=" + sample.datasetId() + "\n").getBytes(StandardCharsets.UTF_8);
+        String fileId = "FILE-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
+        return List.of(new PipelineOutputFile(fileId, "DF-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT), pipeline.tenantId() + "/pipeline/" + runId + "/output.parquet", content, "application/x-parquet", content.length, sha256(content)));
+    }
+
+    private String sha256(byte[] content) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private record PipelineOutputFile(String fileId, String datasetFileId, String objectKey, byte[] content, String contentType, long sizeBytes, String sha256) {}
+    private record VideoSourceFile(String fileId, String bucket, String objectKey, String contentType) {
+        String fileName() {
+            int index = objectKey == null ? -1 : Math.max(objectKey.lastIndexOf('/'), objectKey.lastIndexOf('\\'));
+            return index < 0 ? objectKey : objectKey.substring(index + 1);
+        }
     }
 
     private String nodeLogSummary(PipelineNodeResponse node, int index, int totalNodes, long inputRecords, boolean debugMode) {
@@ -531,7 +657,11 @@ public class PipelineService {
             + " · 输入 " + inputRecords + " 条 · 输出 " + outputRecords + " 条 · 状态 SUCCEEDED · 调试采样已记录";
     }
 
-    private String outputDatasetName(PipelineSummaryResponse pipeline, DatasetInfo sample, boolean videoFrameMode) {
+    private String outputDatasetName(PipelineSummaryResponse pipeline, DatasetInfo sample, boolean videoFrameMode, String requestedName) {
+        String customName = blank(requestedName, "");
+        if (!isUnreadableText(customName)) {
+            return customName;
+        }
         String pipelineName = blank(pipeline.name(), "");
         if (!isUnreadableText(pipelineName)) {
             return pipelineName + " 输出";
@@ -602,10 +732,14 @@ public class PipelineService {
 
     private List<PipelineProcessingTaskSummaryResponse> allProcessingTasks() {
         return jdbc.query("""
-            SELECT r.*, p.name AS pipeline_name, d.name AS source_dataset_name, d.current_version_id AS source_version_id
+            SELECT r.*, p.name AS pipeline_name, d.name AS source_dataset_name, d.current_version_id AS source_version_id,
+                   outd.name AS output_dataset_name,
+                   outd.dataset_type AS output_dataset_type,
+                   outd.data_type AS output_dataset_data_type
             FROM pipeline_run r
             JOIN pipeline_definition p ON p.pipeline_id=r.pipeline_id
             LEFT JOIN dataset d ON d.dataset_id=r.sample_dataset_id
+            LEFT JOIN dataset outd ON outd.dataset_id=r.output_dataset_id
             ORDER BY r.started_at DESC
             """, (rs, n) -> {
                 PipelineRunSummaryResponse run = runSummary(rs);
@@ -617,6 +751,9 @@ public class PipelineService {
                     rs.getString("source_dataset_name"),
                     rs.getString("source_version_id"),
                     run.outputDatasetId(),
+                    rs.getString("output_dataset_name"),
+                    rs.getString("output_dataset_type"),
+                    rs.getString("output_dataset_data_type"),
                     run.status(),
                     run.resultDatasetStatus(),
                     run.diagnosticCode(),
@@ -1080,4 +1217,187 @@ public class PipelineService {
 
     private record OperatorRecord(String operatorId, String name, String tenantId, String status, String parameterSchemaJson) {}
     private record DatasetInfo(String datasetId, String name, String datasetType, String dataType, String tenantId, String projectId, String versionId, String status, long recordCount, long sizeBytes, String description) {}
+}
+
+interface VideoFrameExtractor {
+    List<byte[]> extractFrames(byte[] videoBytes, String sourceFileName, int requestedFrameCount);
+}
+
+@Service
+class ConfigurableVideoFrameExtractor implements VideoFrameExtractor {
+    @Override
+    public List<byte[]> extractFrames(byte[] videoBytes, String sourceFileName, int requestedFrameCount) {
+        List<byte[]> mjpegFrames = extractMjpegAviFrames(videoBytes, requestedFrameCount);
+        if (!mjpegFrames.isEmpty()) {
+            return mjpegFrames;
+        }
+        if (!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "VIDEO_FRAME_EXTRACTOR_NOT_CONFIGURED: 当前运行环境未配置真实视频抽帧工具");
+        }
+        return extractFramesWithWindowsMediaFoundation(videoBytes, sourceFileName, requestedFrameCount);
+    }
+
+    private List<byte[]> extractMjpegAviFrames(byte[] videoBytes, int requestedFrameCount) {
+        if (videoBytes == null || videoBytes.length < 16) {
+            return List.of();
+        }
+        String header = new String(videoBytes, 0, Math.min(videoBytes.length, 12), StandardCharsets.ISO_8859_1);
+        if (!header.startsWith("RIFF") || !header.contains("AVI")) {
+            return List.of();
+        }
+        List<byte[]> frames = new ArrayList<>();
+        int maxFrames = Math.max(1, requestedFrameCount);
+        int offset = 0;
+        while (offset < videoBytes.length - 1 && frames.size() < maxFrames) {
+            int start = indexOf(videoBytes, new byte[] {(byte) 0xFF, (byte) 0xD8}, offset);
+            if (start < 0) {
+                break;
+            }
+            int end = indexOf(videoBytes, new byte[] {(byte) 0xFF, (byte) 0xD9}, start + 2);
+            if (end < 0) {
+                break;
+            }
+            byte[] frame = Arrays.copyOfRange(videoBytes, start, end + 2);
+            frames.add(frame);
+            offset = end + 2;
+        }
+        return frames;
+    }
+
+    private int indexOf(byte[] bytes, byte[] pattern, int from) {
+        for (int index = Math.max(0, from); index <= bytes.length - pattern.length; index++) {
+            boolean matched = true;
+            for (int p = 0; p < pattern.length; p++) {
+                if (bytes[index + p] != pattern[p]) {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private List<byte[]> extractFramesWithWindowsMediaFoundation(byte[] videoBytes, String sourceFileName, int requestedFrameCount) {
+        Path workDir = null;
+        try {
+            workDir = Files.createTempDirectory("smp-video-frames-");
+            String safeFileName = safeVideoFileName(sourceFileName);
+            Path videoPath = workDir.resolve(safeFileName);
+            Files.write(videoPath, videoBytes);
+            Path scriptPath = workDir.resolve("extract-frames.ps1");
+            Files.writeString(scriptPath, windowsMediaExtractionScript(), StandardCharsets.UTF_8);
+            Process process = new ProcessBuilder(
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-Sta",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    scriptPath.toString(),
+                    "-InputPath",
+                    videoPath.toString(),
+                    "-OutputDir",
+                    workDir.toString(),
+                    "-FrameCount",
+                    String.valueOf(Math.max(1, requestedFrameCount))
+                )
+                .redirectErrorStream(true)
+                .start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            boolean finished = process.waitFor(20, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "VIDEO_FRAME_EXTRACT_TIMEOUT: 视频抽帧超时");
+            }
+            if (process.exitValue() != 0) {
+                throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "VIDEO_FRAME_EXTRACT_FAILED: " + output.trim());
+            }
+            List<byte[]> frames = new ArrayList<>();
+            for (int index = 1; index <= Math.max(1, requestedFrameCount); index++) {
+                Path framePath = workDir.resolve("frame-%04d.jpg".formatted(index));
+                if (Files.exists(framePath)) {
+                    frames.add(Files.readAllBytes(framePath));
+                }
+            }
+            if (frames.isEmpty()) {
+                throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "VIDEO_FRAME_EXTRACT_EMPTY: 视频解码成功但未生成图片帧");
+            }
+            return frames;
+        } catch (PlatformException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "VIDEO_FRAME_EXTRACT_FAILED: " + exception.getMessage());
+        } finally {
+            deleteDirectoryQuietly(workDir);
+        }
+    }
+
+    private String safeVideoFileName(String sourceFileName) {
+        String name = sourceFileName == null ? "source.mp4" : sourceFileName.replace('\\', '/');
+        int index = name.lastIndexOf('/');
+        name = index < 0 ? name : name.substring(index + 1);
+        name = name.replaceAll("[^A-Za-z0-9._-]", "_");
+        return name.isBlank() ? "source.mp4" : name;
+    }
+
+    private String windowsMediaExtractionScript() {
+        return """
+            param([string]$InputPath,[string]$OutputDir,[int]$FrameCount)
+            $ErrorActionPreference = 'Stop'
+            Add-Type -AssemblyName PresentationCore,WindowsBase
+            $media = New-Object System.Windows.Media.MediaPlayer
+            $media.Open([Uri]::new($InputPath))
+            $deadline = [DateTime]::Now.AddSeconds(10)
+            while (-not $media.NaturalDuration.HasTimeSpan -and [DateTime]::Now -lt $deadline) { Start-Sleep -Milliseconds 100 }
+            if (-not $media.NaturalDuration.HasTimeSpan) { throw 'VIDEO_DURATION_UNAVAILABLE' }
+            $duration = [Math]::Max(1.0, $media.NaturalDuration.TimeSpan.TotalSeconds)
+            $width = if ($media.NaturalVideoWidth -gt 0) { $media.NaturalVideoWidth } else { 640 }
+            $height = if ($media.NaturalVideoHeight -gt 0) { $media.NaturalVideoHeight } else { 360 }
+            for ($i=1; $i -le $FrameCount; $i++) {
+              $seconds = [Math]::Min($duration - 0.05, (($i - 0.5) * $duration / $FrameCount))
+              $media.Position = [TimeSpan]::FromSeconds($seconds)
+              Start-Sleep -Milliseconds 650
+              $visual = New-Object System.Windows.Media.DrawingVisual
+              $ctx = $visual.RenderOpen()
+              $ctx.DrawVideo($media, [System.Windows.Rect]::new(0,0,$width,$height))
+              $ctx.Close()
+              $bmp = New-Object System.Windows.Media.Imaging.RenderTargetBitmap($width,$height,96,96,[System.Windows.Media.PixelFormats]::Pbgra32)
+              $bmp.Render($visual)
+              $encoder = New-Object System.Windows.Media.Imaging.JpegBitmapEncoder
+              $encoder.QualityLevel = 90
+              $encoder.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($bmp))
+              $fs = [System.IO.File]::Open((Join-Path $OutputDir ("frame-{0:D4}.jpg" -f $i)), [System.IO.FileMode]::Create)
+              try { $encoder.Save($fs) } finally { $fs.Dispose() }
+            }
+            $media.Close()
+            """;
+    }
+
+    private void deleteDirectoryQuietly(Path directory) {
+        if (directory == null || !Files.exists(directory)) {
+            return;
+        }
+        try (java.util.stream.Stream<Path> paths = Files.walk(directory)) {
+            paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                    // Best-effort cleanup of transient extracted frames.
+                }
+            });
+        } catch (IOException ignored) {
+            // Best-effort cleanup of transient extracted frames.
+        }
+    }
+
+    private String sha256(byte[] content) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
 }

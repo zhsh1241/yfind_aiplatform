@@ -158,7 +158,7 @@ class AnnotationTaskRealImageBindingTest {
         JsonNode initial = getJson("/api/v1/annotation/tags?status=ACTIVE", "trace-ann-tags-list", adminToken);
         assertThat(initial.at("/code").asInt()).isZero();
         assertThat(initial.at("/data").findValuesAsText("name"))
-            .contains("裂纹", "气孔", "夹渣", "未熔合", "咬边", "划痕", "污渍", "形变");
+            .contains("裂纹", "气孔", "夹渣", "未熔合", "咬边", "划痕", "污渍", "形变", "毛刺", "气泡", "报修", "投诉", "CPK偏低", "返工");
 
         String tagName = "独立标签-" + UUID.randomUUID().toString().substring(0, 8);
         JsonNode created = postJson("/api/v1/annotation/tags", "trace-ann-tags-create", """

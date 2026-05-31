@@ -3226,29 +3226,22 @@ export function DatasetManagementPage() {
 }
 
 
-type DatasetTagCatalogRow = { tag: string; datasetCount: number; sampleDatasets: DatasetSummary[]; datasetTypes: string[]; latestUpdatedAt: string };
 const uniqueStrings = (items: string[]) => Array.from(new Set(items.map((item) => item.trim()).filter(Boolean)));
-const normalizeTags = (tags?: string[]) => uniqueStrings(tags ?? []);
-
-function buildDatasetTagCatalog(datasets: DatasetSummary[]): DatasetTagCatalogRow[] {
-  const map = new Map<string, DatasetSummary[]>();
-  datasets.forEach((dataset) => {
-    normalizeTags(dataset.tags).forEach((tag) => {
-      map.set(tag, [...(map.get(tag) ?? []), dataset]);
-    });
-  });
-  return Array.from(map.entries()).map(([tag, taggedDatasets]) => ({
-    tag,
-    datasetCount: taggedDatasets.length,
-    sampleDatasets: taggedDatasets.slice(0, 3),
-    datasetTypes: uniqueStrings(taggedDatasets.map((dataset) => dataset.datasetType)),
-    latestUpdatedAt: taggedDatasets.map((dataset) => dataset.updatedAt).sort().at(-1) ?? '',
-  })).sort((a, b) => b.datasetCount - a.datasetCount || a.tag.localeCompare(b.tag));
-}
-
 function annotationTemplateSummary(template: AnnotationLabelTemplate) {
   const labels = parseTemplateLabels(template.labelSchemaJson);
   return labels.length ? labels.join('，') : '暂未解析到标签项';
+}
+
+function tagUsageType(tag: AnnotationTagSummary) {
+  const text = `${tag.name} ${tag.description ?? ''}`;
+  if (/(报修|保养|咨询|投诉|质量反馈|工单|文本)/.test(text)) return '文本/工单';
+  if (/(尺寸|CPK|抽检|返工|工艺|异常点|质量工程|测量|时序)/.test(text) || tag.tenantId === 'TENANT-QE') return '质量数据';
+  if (/(裂纹|气孔|夹渣|焊|熔合|咬边|飞溅|烧穿)/.test(text)) return '焊缝缺陷';
+  return '外观缺陷';
+}
+
+function tagScopeName(tenantId?: string | null) {
+  return ({ 'TENANT-YF': '集团通用', 'TENANT-CABIN': '座舱BU', 'TENANT-QE': '质量工程部' } as Record<string, string>)[tenantId ?? ''] ?? tenantId ?? '-';
 }
 
 export function TagManagementPage() {
@@ -3257,27 +3250,16 @@ export function TagManagementPage() {
   const [msg, holder] = message.useMessage();
   const [tagKeyword, setTagKeyword] = useState('');
   const [tagStatusFilter, setTagStatusFilter] = useState<string>();
-  const [datasetTagKeyword, setDatasetTagKeyword] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [editingTag, setEditingTag] = useState<AnnotationTagSummary | null>(null);
-  const [editingDataset, setEditingDataset] = useState<DatasetSummary | null>(null);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [createForm] = Form.useForm<AnnotationTagInput>();
   const [editTagForm] = Form.useForm<AnnotationTagInput>();
-  const [datasetForm] = Form.useForm<{ tags: string[] }>();
   const [templateForm] = Form.useForm<AnnotationLabelTemplateInput>();
   const templateScene = Form.useWatch('scene', templateForm) ?? 'IMAGE_TAGGING';
   const templateSchema = Form.useWatch('labelSchemaJson', templateForm) ?? defaultLabelSchema(templateScene);
-  const datasets = useQuery({ queryKey: ['tag-management-datasets'], queryFn: () => dataApi.datasets({ pageSize: 100 }) });
   const tagCatalog = useQuery({ queryKey: ['annotation-tags'], queryFn: () => dataApi.annotationTags() });
   const templates = useQuery({ queryKey: ['tag-management-label-templates'], queryFn: () => dataApi.labelTemplates() });
-  const rows = useMemo(() => datasets.data?.items ?? [], [datasets.data?.items]);
-  const datasetTagRows = useMemo(() => buildDatasetTagCatalog(rows), [rows]);
-  const refresh = useCallback(() => Promise.all([
-    qc.invalidateQueries({ queryKey: ['tag-management-datasets'] }),
-    qc.invalidateQueries({ queryKey: ['datasets'] }),
-    qc.invalidateQueries({ queryKey: ['dataset-detail'] }),
-  ]), [qc]);
   const refreshTagCatalog = useCallback(() => qc.invalidateQueries({ queryKey: ['annotation-tags'] }), [qc]);
   const createCatalogTag = useMutation({
     mutationFn: dataApi.createAnnotationTag,
@@ -3294,11 +3276,6 @@ export function TagManagementPage() {
     onSuccess: async () => { await refreshTagCatalog(); msg.success('标签已归档'); },
     onError: (e: Error) => msg.error(e.message),
   });
-  const updateTags = useMutation({
-    mutationFn: async ({ updates }: { updates: Array<{ dataset: DatasetSummary; tags: string[] }> }) => Promise.all(updates.map(({ dataset, tags }) => dataApi.updateDataset(dataset.datasetId, { tags }))),
-    onSuccess: async () => { await refresh(); msg.success('标签已更新'); },
-    onError: (e: Error) => msg.error(e.message),
-  });
   const createTemplate = useMutation({
     mutationFn: dataApi.createLabelTemplate,
     onSuccess: async (created) => { await dataApi.publishLabelTemplate(created.templateId); await qc.invalidateQueries({ queryKey: ['tag-management-label-templates'] }); setTemplateOpen(false); msg.success('标注标签模板已创建并发布'); },
@@ -3309,24 +3286,12 @@ export function TagManagementPage() {
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['tag-management-label-templates'] }); msg.success('模板已归档'); },
     onError: (e: Error) => msg.error(e.message),
   });
-  const tagOptions = (tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').map((tag) => ({ value: tag.name, label: tag.name }));
   const filteredTagCatalog = useMemo(() => {
     const keyword = tagKeyword.trim().toLowerCase();
     return (tagCatalog.data ?? [])
       .filter((tag) => !tagStatusFilter || tag.status === tagStatusFilter)
-      .filter((tag) => !keyword || [tag.name, tag.description, tag.tenantId, tag.status].some((value) => String(value ?? '').toLowerCase().includes(keyword)));
+      .filter((tag) => !keyword || [tag.name, tag.description, tag.tenantId, tag.status, tagUsageType(tag), tagScopeName(tag.tenantId)].some((value) => String(value ?? '').toLowerCase().includes(keyword)));
   }, [tagCatalog.data, tagKeyword, tagStatusFilter]);
-  const filteredDatasetsByTag = useMemo(() => {
-    const keyword = datasetTagKeyword.trim().toLowerCase();
-    if (!keyword) return rows;
-    return rows.filter((dataset) => [
-      dataset.name,
-      dataset.datasetType,
-      dataset.dataType,
-      dataset.currentVersionName,
-      ...normalizeTags(dataset.tags),
-    ].some((value) => String(value ?? '').toLowerCase().includes(keyword)));
-  }, [datasetTagKeyword, rows]);
 
   const tagColorPresets = useMemo(() => [{ label: '常用颜色', colors: annotationTagPresetColors }], []);
 
@@ -3337,31 +3302,34 @@ export function TagManagementPage() {
     setEditingTag(tag);
     editTagForm.setFieldsValue({ name: tag.name, tenantId: tag.tenantId, color: tag.color ?? undefined, description: tag.description ?? undefined, status: tag.status });
   };
-  const openDatasetEditor = (dataset: DatasetSummary) => {
-    setEditingDataset(dataset);
-    datasetForm.setFieldsValue({ tags: normalizeTags(dataset.tags) });
-  };
-  const submitDatasetTags = (values: { tags: string[] }) => {
-    if (!editingDataset) return;
-    updateTags.mutate({ updates: [{ dataset: editingDataset, tags: normalizeTags(values.tags) }] }, { onSuccess: () => setEditingDataset(null) });
-  };
 
   return (
     <div className="content-page tag-management-page">
       {holder}
       <div className="page-hero">
         <div>
-          <Typography.Title level={3}>标签管理</Typography.Title>
-          <Typography.Text type="secondary">统一维护独立标注标签、数据集检索标签与 Label Studio 标签模板。</Typography.Text>
+          <Typography.Title level={3}>标签字典</Typography.Title>
+          <Typography.Text type="secondary">这里维护的是平台可选标签库。新建/编辑数据集时，只能从“已启用”的标签里选择。</Typography.Text>
         </div>
         <Space wrap>
           <Button onClick={() => setTemplateOpen(true)}>＋ 新建标注模板</Button>
           <Button type="primary" onClick={() => setCreateOpen(true)}>＋ 新建标签</Button>
         </Space>
       </div>
-      <Alert type="info" showIcon title="标签来源说明" description="标签目录可独立存在，不要求绑定数据集；标注任务创建时可直接选择这些标签并自动生成任务标签模板。数据集 tags 仍保留为资产检索标签，可在单独页签维护。" style={{ marginBottom: 16 }} />
+      <Alert
+        type="info"
+        showIcon
+        title="怎么看这张表"
+        description="一行就是一个可选标签：标签名是用户选择时看到的名称；标签类型说明它大致用于焊缝、外观、文本还是质量数据；适用范围表示哪个组织可使用；已归档标签不会再出现在数据集标签下拉里。"
+        style={{ marginBottom: 16 }}
+      />
       <div className="summary-grid">
-        {[{ n: tagCatalog.data?.filter((tag) => tag.status === 'ACTIVE').length ?? 0, l: '独立标签数' }, { n: datasetTagRows.length, l: '数据集标签数' }, { n: rows.filter((dataset) => dataset.tags.length > 0).length, l: '已打标签数据集' }, { n: templates.data?.length ?? 0, l: '标注模板' }].map((item) => <Card key={item.l}><Typography.Title level={3}>{item.n}</Typography.Title><Typography.Text type="secondary">{item.l}</Typography.Text></Card>)}
+        {[
+          { n: tagCatalog.data?.filter((tag) => tag.status === 'ACTIVE').length ?? 0, l: '当前可选标签' },
+          { n: new Set((tagCatalog.data ?? []).map((tag) => tagUsageType(tag))).size, l: '标签类型' },
+          { n: tagCatalog.data?.filter((tag) => tag.status === 'ARCHIVED').length ?? 0, l: '已停用标签' },
+          { n: templates.data?.length ?? 0, l: '标注模板' },
+        ].map((item) => <Card key={item.l}><Typography.Title level={3}>{item.n}</Typography.Title><Typography.Text type="secondary">{item.l}</Typography.Text></Card>)}
       </div>
       <Tabs
         items={[
@@ -3373,11 +3341,11 @@ export function TagManagementPage() {
                 <Space wrap>
                   <Input.Search
                     allowClear
-                    placeholder="搜索标签名、说明或BU"
+                    placeholder="搜索标签名、类型、说明或适用范围"
                     value={tagKeyword}
                     onChange={(event) => setTagKeyword(event.target.value)}
                     onSearch={(value) => setTagKeyword(value)}
-                    style={{ width: 280 }}
+                    style={{ width: 340 }}
                   />
                   <Select
                     allowClear
@@ -3395,41 +3363,13 @@ export function TagManagementPage() {
                   pagination={{ pageSize: 8 }}
                   locale={{ emptyText: tagKeyword || tagStatusFilter ? '当前筛选条件下暂无标签' : '暂无独立标签，请点击新建标签。' }}
                   columns={[
-                    { title: '标签名', dataIndex: 'name', render: (name, tag) => <Tag color={tag.color || 'blue'}>{name}</Tag> },
-                    { title: '说明', dataIndex: 'description', render: (value) => value || '-' },
-                    { title: '状态', dataIndex: 'status', render: (value) => <Tag color={color(value)}>{value}</Tag> },
+                    { title: '标签名（下拉可选项）', dataIndex: 'name', render: (name, tag) => <Tag color={tag.color || 'blue'}>{name}</Tag> },
+                    { title: '标签类型', render: (_, tag) => <Tag>{tagUsageType(tag)}</Tag> },
+                    { title: '适用范围', dataIndex: 'tenantId', render: (value) => tagScopeName(value) },
+                    { title: '用途说明', dataIndex: 'description', render: (value) => value || '-' },
+                    { title: '是否可选', dataIndex: 'status', render: (value) => <Tag color={value === 'ACTIVE' ? 'green' : 'red'}>{value === 'ACTIVE' ? '可选' : '已停用'}</Tag> },
                     { title: '最近更新', dataIndex: 'updatedAt', render: (value) => value ? new Date(value).toLocaleString('zh-CN') : '-' },
                     { title: '操作', render: (_, tag) => <Space><a onClick={() => openEditTag(tag)}>编辑</a>{tag.status !== 'ARCHIVED' ? <a style={{ color: '#cf1322' }} onClick={() => archiveCatalogTag.mutate(tag.tagId)}>归档</a> : null}</Space> },
-                  ]}
-                />
-              </Space>
-            ),
-          },
-          {
-            key: 'dataset-tags',
-            label: '数据集标签',
-            children: (
-              <Space direction="vertical" className="full-width" size={12}>
-                <Input.Search
-                  allowClear
-                  placeholder="搜索数据集名称、类型、版本或标签"
-                  value={datasetTagKeyword}
-                  onChange={(event) => setDatasetTagKeyword(event.target.value)}
-                  onSearch={(value) => setDatasetTagKeyword(value)}
-                  style={{ width: 320 }}
-                />
-                <Table<DatasetSummary>
-                  rowKey="datasetId"
-                  dataSource={filteredDatasetsByTag}
-                  loading={datasets.isLoading}
-                  pagination={{ pageSize: 8 }}
-                  locale={{ emptyText: datasetTagKeyword ? '当前筛选条件下暂无数据集' : '暂无数据集' }}
-                  columns={[
-                    { title: '数据集名称', dataIndex: 'name' },
-                    { title: '类型', render: (_, dataset) => <Tag>{txt(dataset.datasetType)} / {txt(dataset.dataType)}</Tag> },
-                    { title: '当前版本', dataIndex: 'currentVersionName', render: (value) => value ?? '-' },
-                    { title: '标签', render: (_, dataset) => <Space wrap>{normalizeTags(dataset.tags).length ? normalizeTags(dataset.tags).map((tag) => <Tag key={tag}>{tag}</Tag>) : <Typography.Text type="secondary">未设置</Typography.Text>}</Space> },
-                    { title: '操作', render: (_, dataset) => <a onClick={() => openDatasetEditor(dataset)}>编辑标签</a> },
                   ]}
                 />
               </Space>
@@ -3485,22 +3425,6 @@ export function TagManagementPage() {
           <Button type="primary" htmlType="submit" loading={updateCatalogTag.isPending}>保存标签</Button>
         </Form>
       </Modal>
-      <Drawer title={`编辑数据集标签 · ${editingDataset?.name ?? ''}`} open={Boolean(editingDataset)} onClose={() => setEditingDataset(null)} width={520}>
-        <Form form={datasetForm} layout="vertical" onFinish={submitDatasetTags}>
-          <Form.Item name="tags" label="标签" extra="只能从标签管理的已启用标签中选择；如需新增标签，请先到标签管理维护。">
-            <Select
-              mode="multiple"
-              {...tagSelectSearchProps}
-              allowClear
-              loading={tagCatalog.isLoading}
-              options={tagOptions}
-              placeholder={tagOptions.length ? '请选择标签' : '暂无可用标签，请先到标签管理维护'}
-              disabled={tagCatalog.isLoading || tagOptions.length === 0}
-            />
-          </Form.Item>
-          <Button type="primary" htmlType="submit" loading={updateTags.isPending}>保存数据集标签</Button>
-        </Form>
-      </Drawer>
       <Drawer title="新建标注标签模板" open={templateOpen} onClose={() => setTemplateOpen(false)} width={640} destroyOnHidden>
         <Alert type="info" showIcon title="标注标签模板" description="用于标注任务创建与 Label Studio 配置生成，不会自动改写数据集 tags。" style={{ marginBottom: 16 }} />
         <Form

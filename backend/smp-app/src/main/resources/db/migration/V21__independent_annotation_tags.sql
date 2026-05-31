@@ -96,6 +96,51 @@ INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status,
 SELECT 'ATAG-SURFACE-COLOR-DIFF', 'TENANT-CABIN', '色差', '#C41D7F', '颜色差异标签，用于内饰外观一致性检测', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-CABIN' AND name='色差');
 INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-SURFACE-BURR', 'TENANT-CABIN', '毛刺', '#D46B08', '边缘毛刺与锐边标签，用于外观和装配风险检测', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-CABIN' AND name='毛刺');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-SURFACE-PEELING', 'TENANT-CABIN', '起皮', '#D48806', '表面涂层或材料剥离标签，用于内饰外观检测', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-CABIN' AND name='起皮');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-SURFACE-BUBBLE', 'TENANT-CABIN', '气泡', '#389E0D', '表面气泡与鼓包标签，用于材料外观质量检测', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-CABIN' AND name='气泡');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-SURFACE-WRINKLE', 'TENANT-CABIN', '褶皱', '#5B8C00', '织物、皮革或覆膜褶皱标签，用于内饰表面检测', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-CABIN' AND name='褶皱');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-SURFACE-GAP', 'TENANT-CABIN', '缝隙异常', '#096DD9', '装配间隙异常标签，用于座舱部件装配检测', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-CABIN' AND name='缝隙异常');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-SURFACE-FLASH', 'TENANT-CABIN', '溢料', '#061178', '注塑或包覆溢料标签，用于成型质量检测', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-CABIN' AND name='溢料');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-SURFACE-SINK-MARK', 'TENANT-CABIN', '缩水', '#391085', '注塑缩水与凹陷标签，用于成型质量检测', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-CABIN' AND name='缩水');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-SURFACE-BLACK-SPOT', 'TENANT-CABIN', '黑点', '#262626', '黑点、脏点和局部污染标签，用于外观质量检测', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-CABIN' AND name='黑点');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-SURFACE-EXPOSED-SUBSTRATE', 'TENANT-CABIN', '露底', '#9254DE', '涂层露底或底材外露标签，用于表面缺陷检测', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-CABIN' AND name='露底');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-SURFACE-DIRTY-EDGE', 'TENANT-CABIN', '脏边', '#597EF7', '边缘污染标签，用于内饰和零件边界外观检测', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-CABIN' AND name='脏边');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-TEXT-REPAIR', 'TENANT-YF', '报修', '#1677FF', '工单文本标签，用于售后报修意图分类', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-YF' AND name='报修');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-TEXT-MAINTENANCE', 'TENANT-YF', '保养', '#52C41A', '工单文本标签，用于保养服务意图分类', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-YF' AND name='保养');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-TEXT-CONSULTATION', 'TENANT-YF', '咨询', '#FAAD14', '工单文本标签，用于咨询类意图分类', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-YF' AND name='咨询');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-TEXT-COMPLAINT', 'TENANT-YF', '投诉', '#F5222D', '工单文本标签，用于投诉和客诉场景分类', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-YF' AND name='投诉');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-TEXT-QUALITY-FEEDBACK', 'TENANT-YF', '质量反馈', '#722ED1', '工单文本标签，用于质量问题反馈识别', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-YF' AND name='质量反馈');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
 SELECT 'ATAG-QE-DIMENSION-OOS', 'TENANT-QE', '尺寸超差', '#D4380D', '质量工程测量标签，用于尺寸异常数据集筛选', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-QE' AND name='尺寸超差');
 INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
@@ -104,3 +149,12 @@ WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-QE' AND n
 INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
 SELECT 'ATAG-QE-OUTLIER', 'TENANT-QE', '异常点', '#0958D9', '质量数据异常标签，用于测量与时序数据筛选', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-QE' AND name='异常点');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-QE-CPK-LOW', 'TENANT-QE', 'CPK偏低', '#D48806', '质量工程过程能力标签，用于制程能力不足分析', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-QE' AND name='CPK偏低');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-QE-SAMPLING-FAIL', 'TENANT-QE', '抽检不合格', '#CF1322', '质量抽检标签，用于不合格样本筛选和复核', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-QE' AND name='抽检不合格');
+INSERT INTO annotation_tag (tag_id, tenant_id, name, color, description, status, created_by, created_at, updated_at)
+SELECT 'ATAG-QE-REWORK', 'TENANT-QE', '返工', '#08979C', '质量处置标签，用于返工数据追踪', 'ACTIVE', 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM annotation_tag WHERE tenant_id='TENANT-QE' AND name='返工');

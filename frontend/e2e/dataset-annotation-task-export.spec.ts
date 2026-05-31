@@ -20,6 +20,7 @@ test('TASK-dataset-annotation-task-export AC-01 AC-02 AC-06 AC-07 AC-08 dataset 
   const createTask = page.waitForResponse((response) => response.url().includes('/api/v1/datasets/DATASET-WELD-DEFECT/annotation-tasks') && response.request().method() === 'POST');
   await page.getByRole('button', { name: '从数据集创建标注任务' }).click();
   await expect(page.getByRole('dialog', { name: '从数据集创建标注任务' })).toBeVisible();
+  await page.getByLabel('补充标签').fill('裂纹，气孔');
   await page.getByRole('button', { name: '创建任务' }).click();
   expect((await (await createTask).json()).data.task.sourceDatasetId).toBeTruthy();
   await expect(page.getByText('已从数据集创建标注任务')).toBeVisible();
@@ -33,8 +34,10 @@ test('TASK-dataset-annotation-task-export AC-01 AC-02 AC-06 AC-07 AC-08 dataset 
   expect(exportBody.data.expiresAt).toContain('2026-08-19');
   await expect(page.getByText(/导出请求已创建/)).toBeVisible();
 
-  const downloadResponse = page.waitForResponse((response) => response.url().includes('/api/v1/annotation/exports/AEXP-WELD-Q2-SMP/download-url'));
-  await page.getByRole('button', { name: '获取下载链接' }).last().click();
-  expect((await (await downloadResponse).json()).data.diagnosticCode).toContain('TODO_CONFIRM_MINIO_ENDPOINT');
-  await expect(page.getByText(/训练包下载未配置/)).toBeVisible();
+  const download = page.waitForEvent('download');
+  const contentRequest = page.waitForRequest((request) => request.url().includes('/api/v1/platform/files/FILE-AEXP-WELD-Q2-SMP/content'));
+  await page.getByRole('button', { name: '下载到本地' }).last().click();
+  expect((await contentRequest).headers().authorization).toBe('Bearer token-f006');
+  expect((await download).suggestedFilename()).toBe('FILE-AEXP-WELD-Q2-SMP.zip');
+  await expect(page.getByText(/训练包已下载到本地/)).toBeVisible();
 });

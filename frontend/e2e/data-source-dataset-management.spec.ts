@@ -20,7 +20,7 @@ test('TASK-data-source-dataset-management AC-01 AC-02 datasrc API driven diagnos
   await expect(page.getByText(/SUCCEEDED: SANDBOX_RELATIONAL_DB_IMPORT_READY/)).toBeVisible();
 });
 
-test('TASK-data-source-dataset-management AC-03 AC-06 dataset list and detail preserve prototype IA', async ({ page }) => {
+test('TASK-data-source-dataset-management AC-03 AC-06 dataset list and detail preserve module IA', async ({ page }) => {
   await seedAuthenticatedSession(page);
   await page.getByText('数据集管理').click();
   await expect(page.getByRole('heading', { name: '数据集管理' })).toBeVisible();

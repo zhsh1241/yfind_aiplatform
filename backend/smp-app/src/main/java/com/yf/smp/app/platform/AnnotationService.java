@@ -1,5 +1,9 @@
 package com.yf.smp.app.platform;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -16,6 +20,9 @@ import java.util.LinkedHashSet;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.imageio.ImageIO;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -63,6 +70,7 @@ public class AnnotationService {
     private static final String TRACE_TAG = "TASK-annotation-integration";
     private static final String VISUAL_PREPROCESS_TRACE_TAG = "TASK-visual-preprocess-operators-pipeline";
     private static final double MIN_COVERAGE = 0.90d;
+    private static final ObjectMapper JSON = new ObjectMapper();
     private final JdbcTemplate jdbc;
     private final PlatformIdentityService identityService;
     private final LabelStudioAnnotationAdapter labelStudioAdapter;
@@ -615,11 +623,12 @@ public class AnnotationService {
         String diagnosticCode = async ? "ANNOTATION_EXPORT_ASYNC_REQUIRED" : "ANNOTATION_EXPORT_READY";
         String diagnosticMessage = async ? "导出文件超过 200 MB，已进入异步生成队列" : format + " 自包含训练包已生成，包含图片副本";
         if (!async) {
-            String sha = sha256(task.taskId() + ":" + format + ":" + at);
+            ExportPackage exportPackage = buildExportPackage(task, format, exportId, publication);
+            size = exportPackage.sizeBytes();
+            String sha = exportPackage.sha256();
             String exportBucket = objectStorageService.datasetBucket(task.tenantId());
             String exportObjectKey = task.tenantId() + "/annotation/" + task.taskId() + "/exports/" + format.toLowerCase(Locale.ROOT) + "/" + exportId + packageExtension(format);
-            String exportPayload = "{\"taskId\":\"" + task.taskId() + "\",\"format\":\"" + format + "\",\"exportId\":\"" + exportId + "\"}";
-            objectStorageService.uploadObjectIfConfigured(exportBucket, exportObjectKey, exportPayload.getBytes(StandardCharsets.UTF_8), contentType(format));
+            objectStorageService.uploadObjectIfConfigured(exportBucket, exportObjectKey, exportPackage.content(), contentType(format));
             jdbc.update("INSERT INTO platform_file_object (file_id,asset_type,tenant_id,project_id,bucket,object_key,expected_sha256,sha256,expected_size_bytes,size_bytes,content_type,storage_tier,status,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", fileId, "DATASET", task.tenantId(), task.projectId(), exportBucket, exportObjectKey, sha, sha, size, size, contentType(format), "STANDARD", "AVAILABLE", principal.user().id(), at, at);
         }
         jdbc.update("""
@@ -629,6 +638,148 @@ public class AnnotationService {
         audit(principal, task.tenantId(), "ANNOTATION_EXPORT_REQUESTED", "AnnotationTrainingExport", exportId, "SUCCESS", "INFO", null, format, TRACE_TAG + ";includesImages=true;threshold=200MB;retention=3months");
         if (!async) audit(principal, task.tenantId(), "ANNOTATION_EXPORT_GENERATED", "AnnotationTrainingExport", exportId, "SUCCESS", "INFO", null, fileId, TRACE_TAG);
         return exportById(exportId);
+    }
+
+    private ExportPackage buildExportPackage(AnnotationTaskRecord task, String format, String exportId, AnnotationPublicationResponse publication) {
+        byte[] content = "SMP_JSONL".equals(format)
+            ? smpJsonlPayload(task, format, exportId, publication)
+            : zipExportPayload(task, format, exportId, publication);
+        return new ExportPackage(content, content.length, sha256(content));
+    }
+
+    private byte[] smpJsonlPayload(AnnotationTaskRecord task, String format, String exportId, AnnotationPublicationResponse publication) {
+        String payload = "{\"taskId\":\"" + task.taskId() + "\",\"format\":\"" + format + "\",\"exportId\":\"" + exportId
+            + "\",\"outputDatasetId\":\"" + publication.outputDatasetId() + "\",\"reviewedCount\":" + task.reviewedCount() + "}\n";
+        return payload.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private byte[] zipExportPayload(AnnotationTaskRecord task, String format, String exportId, AnnotationPublicationResponse publication) {
+        try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(); ZipOutputStream zip = new ZipOutputStream(bytes, StandardCharsets.UTF_8)) {
+            if ("YOLO_DETECTION".equals(format)) {
+                writeYoloZip(task, exportId, zip);
+            } else {
+                zipEntry(zip, "manifest.json", ("{\"taskId\":\"" + task.taskId() + "\",\"format\":\"" + format
+                    + "\",\"exportId\":\"" + exportId + "\",\"outputDatasetId\":\"" + publication.outputDatasetId() + "\"}\n").getBytes(StandardCharsets.UTF_8));
+                zipEntry(zip, "annotations/labels.jsonl", smpJsonlPayload(task, format, exportId, publication));
+            }
+            zip.finish();
+            return bytes.toByteArray();
+        } catch (Exception exception) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "训练包生成失败: " + exception.getMessage());
+        }
+    }
+
+    private void writeYoloZip(AnnotationTaskRecord task, String exportId, ZipOutputStream zip) throws Exception {
+        List<YoloSample> samples = approvedYoloSamples(task);
+        String names = "names:\n  0: defect\n";
+        zipEntry(zip, "data.yaml", ("path: .\ntrain: images/train\nval: images/train\nnc: 1\n" + names).getBytes(StandardCharsets.UTF_8));
+        zipEntry(zip, "README.md", ("# YOLO_DETECTION export\n\n- taskId: " + task.taskId() + "\n- exportId: " + exportId + "\n- images: " + samples.size() + "\n").getBytes(StandardCharsets.UTF_8));
+        int index = 1;
+        for (YoloSample sample : samples) {
+            String stem = "frame-%04d".formatted(index);
+            zipEntry(zip, "images/train/" + stem + ".jpg", sample.imageBytes());
+            zipEntry(zip, "labels/train/" + stem + ".txt", yoloLabel(sample.annotationJson(), sample.imageBytes()).getBytes(StandardCharsets.UTF_8));
+            index++;
+        }
+    }
+
+    private List<YoloSample> approvedYoloSamples(AnnotationTaskRecord task) {
+        List<YoloSampleRow> rows = jdbc.query("""
+            SELECT w.work_item_id,w.annotation_json,pfo.bucket,pfo.object_key
+            FROM annotation_work_item w
+            JOIN platform_file_object pfo ON pfo.file_id=w.sample_file_id
+            WHERE w.task_id=? AND w.status='APPROVED'
+            ORDER BY w.sample_key
+            """, (rs, n) -> new YoloSampleRow(rs.getString("work_item_id"), rs.getString("annotation_json"), rs.getString("bucket"), rs.getString("object_key")), task.taskId());
+        if (rows.isEmpty()) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "YOLO_EXPORT_REQUIRES_REAL_APPROVED_IMAGES: 没有可导出的真实已标注图片");
+        }
+        List<YoloSample> samples = new ArrayList<>();
+        for (YoloSampleRow row : rows) {
+            samples.add(new YoloSample(row.workItemId(), readSampleImage(row), row.annotationJson()));
+        }
+        return samples;
+    }
+
+    private byte[] readSampleImage(YoloSampleRow row) {
+        if (blank(row.bucket()) || blank(row.objectKey())) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "YOLO_EXPORT_SAMPLE_FILE_MISSING: 标注样本缺少真实图片文件绑定");
+        }
+        byte[] content = objectStorageService.readObject(row.bucket(), row.objectKey());
+        if (content.length == 0) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "YOLO_EXPORT_SAMPLE_FILE_EMPTY: 标注样本图片为空");
+        }
+        return content;
+    }
+
+    private String yoloLabel(String annotationJson, byte[] imageBytes) {
+        List<YoloBox> boxes = yoloBoxes(annotationJson);
+        if (boxes.isEmpty()) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "YOLO_EXPORT_REQUIRES_BOXES: 每张训练图片必须包含检测框标注");
+        }
+        ImageSize size = imageSize(imageBytes);
+        StringBuilder lines = new StringBuilder();
+        for (YoloBox box : boxes) {
+            double centerX = clamp((box.x() + box.w() / 2.0d) / size.width());
+            double centerY = clamp((box.y() + box.h() / 2.0d) / size.height());
+            double width = clamp(box.w() / size.width());
+            double height = clamp(box.h() / size.height());
+            lines.append(String.format(Locale.ROOT, "0 %.6f %.6f %.6f %.6f%n", centerX, centerY, width, height));
+        }
+        return lines.toString();
+    }
+
+    private List<YoloBox> yoloBoxes(String annotationJson) {
+        if (blank(annotationJson)) {
+            return List.of();
+        }
+        try {
+            JsonNode boxes = JSON.readTree(annotationJson).path("boxes");
+            if (!boxes.isArray()) {
+                return List.of();
+            }
+            List<YoloBox> result = new ArrayList<>();
+            for (JsonNode box : boxes) {
+                double x = box.path("x").asDouble(Double.NaN);
+                double y = box.path("y").asDouble(Double.NaN);
+                double w = box.path("w").asDouble(Double.NaN);
+                double h = box.path("h").asDouble(Double.NaN);
+                if (Double.isFinite(x) && Double.isFinite(y) && Double.isFinite(w) && Double.isFinite(h) && w > 0.0d && h > 0.0d) {
+                    result.add(new YoloBox(x, y, w, h));
+                }
+            }
+            return result;
+        } catch (Exception exception) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "YOLO_EXPORT_INVALID_ANNOTATION_JSON: " + exception.getMessage());
+        }
+    }
+
+    private ImageSize imageSize(byte[] imageBytes) {
+        try {
+            java.awt.image.BufferedImage image = ImageIO.read(new ByteArrayInputStream(imageBytes));
+            if (image == null || image.getWidth() <= 0 || image.getHeight() <= 0) {
+                throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "YOLO_EXPORT_INVALID_IMAGE: 训练图片不是可读取的图片文件");
+            }
+            return new ImageSize(image.getWidth(), image.getHeight());
+        } catch (PlatformException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "YOLO_EXPORT_INVALID_IMAGE: " + exception.getMessage());
+        }
+    }
+
+    private double clamp(double value) {
+        if (!Double.isFinite(value)) {
+            return 0.0d;
+        }
+        return Math.max(0.0d, Math.min(1.0d, value));
+    }
+
+    private void zipEntry(ZipOutputStream zip, String name, byte[] content) throws Exception {
+        ZipEntry entry = new ZipEntry(name);
+        zip.putNextEntry(entry);
+        zip.write(content);
+        zip.closeEntry();
     }
 
     @Transactional(noRollbackFor = PlatformException.class)
@@ -1317,6 +1468,7 @@ public class AnnotationService {
     private boolean exists(String sql, Object... args) { return count(sql, args) > 0; }
     private long count(String sql, Object... args) { Long count = jdbc.queryForObject(sql, Long.class, args); return count == null ? 0L : count; }
     private String sha256(String value) { try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); } catch (NoSuchAlgorithmException exception) { throw new IllegalStateException(exception); } }
+    private String sha256(byte[] value) { try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); } catch (NoSuchAlgorithmException exception) { throw new IllegalStateException(exception); } }
     private boolean contains(String value, String keyword) { return !blank(value) && value.toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT)); }
     private List<String> safe(List<String> value) { return value == null ? List.of() : value.stream().filter(item -> !blank(item)).distinct().toList(); }
     private boolean bool(Boolean value, boolean fallback) { return value == null ? fallback : value; }
@@ -1341,3 +1493,8 @@ record ReviewRecord(String reviewItemId, String workItemId, String taskId, Strin
 record AnnotationExternalBindingRecord(String bindingId, String taskId, String provider, String externalProjectId, String externalUrl, String configStatus, String lastSyncStatus, String diagnosticCode, String diagnosticMessage, String launchUrl, OffsetDateTime lastSyncAt) {}
 record AnnotationExternalTaskBindingRecord(String bindingId, String taskId, String workItemId, String provider, String externalProjectId, String externalTaskId, String externalTaskUrl, String syncStatus, String importStatus, String diagnosticCode, String diagnosticMessage, OffsetDateTime lastSyncAt, OffsetDateTime lastImportAt) {}
 record DatasetInfo(String datasetId, String name, String datasetType, String dataType, String tenantId, String projectId, String currentVersionId, String status, long recordCount, long sizeBytes, String ownerId, String description) {}
+record ExportPackage(byte[] content, long sizeBytes, String sha256) {}
+record YoloSampleRow(String workItemId, String annotationJson, String bucket, String objectKey) {}
+record YoloSample(String workItemId, byte[] imageBytes, String annotationJson) {}
+record YoloBox(double x, double y, double w, double h) {}
+record ImageSize(double width, double height) {}

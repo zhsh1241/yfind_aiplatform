@@ -411,10 +411,11 @@ describe('F006 platform identity frontend', () => {
     useSessionStore.setState({ token: 'token-tagmgmt', user: mockState.user, initialized: true });
     renderApp(['/tagmgmt']);
 
-    expect(await screen.findByRole('heading', { name: '标签管理' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '标签字典' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /标签管理/ })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '独立标签目录' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '数据集标签' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: '数据集标签' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '标注标签模板' })).toBeInTheDocument();
   });
 
   it('renders sys page with config, notification and one-time API key paths', async () => {

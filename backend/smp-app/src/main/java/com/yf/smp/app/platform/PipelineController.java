@@ -72,7 +72,7 @@ public class PipelineController {
 
     @PostMapping("/pipelines/{pipelineId}/runs")
     ResponseEntity<ApiResponse<PipelineRunDetailResponse>> runPipeline(@RequestHeader(name = "Authorization", required = false) String authorization, @PathVariable String pipelineId, @RequestBody(required = false) PipelineRunRequest request) {
-        return PlatformResponses.ok(service.runPipeline(principal(authorization), pipelineId, request == null ? new PipelineRunRequest(null, null) : request));
+        return PlatformResponses.ok(service.runPipeline(principal(authorization), pipelineId, request == null ? new PipelineRunRequest(null, null, null) : request));
     }
 
     @GetMapping("/pipeline-processing-tasks")

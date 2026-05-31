@@ -56,9 +56,15 @@ const datasetFilesByVersion = {
     { bindingId: 'DF-WELD-002', datasetId: 'DATASET-WELD-DEFECT', versionId: 'DVER-WELD-002', fileId: 'FILE-DATASET-WELD-001', fileRole: 'RAW', status: 'BOUND', objectKey: 'TENANT-CABIN/dataset/FILE-DATASET-WELD-001.csv', contentType: 'text/csv', sizeBytes: 1024, sha256: 'sha256-weld-001' },
     { bindingId: 'DF-WELD-003', datasetId: 'DATASET-WELD-DEFECT', versionId: 'DVER-WELD-002', fileId: 'FILE-DATASET-WELD-002', fileRole: 'RAW', status: 'BOUND', objectKey: 'TENANT-CABIN/dataset/FILE-DATASET-WELD-002.jpg', contentType: 'image/jpeg', sizeBytes: 2048, sha256: 'sha256-weld-002' },
   ],
+  'DVER-WELD-FRAMES-001': [
+    { bindingId: 'DF-WELD-FRAME-001', datasetId: 'DATASET-WELD-FRAMES-001', versionId: 'DVER-WELD-FRAMES-001', fileId: 'FILE-DATASET-WELD-FRAME-001', fileRole: 'RAW', status: 'BOUND', objectKey: 'TENANT-CABIN/frames/weld-frame-0001.jpg', contentType: 'image/jpeg', sizeBytes: 2048, sha256: 'sha256-weld-frame-001' },
+  ],
 };
 const buildDatasetDetail = (versionId = 'DVER-WELD-002') => ({ dataset: datasets.items[0], selectedVersionId: versionId, selectedVersion: datasetVersions.find((item) => item.versionId === versionId), versions: datasetVersions, files: datasetFilesByVersion[versionId as keyof typeof datasetFilesByVersion] ?? [], grants: [], lineage: [{ lineageId: 'LIN-DSRC-WELD-001', sourceType: 'DATA_SOURCE', sourceId: 'DSRC-CABIN-MINIO', targetType: 'DATASET_VERSION', targetId: versionId, transformType: 'IMPORT', createdAt: '2026-05-18T00:00:00Z' }], previewStatus: versionId === 'DVER-WELD-002' ? 'PREVIEWABLE' : 'UNSUPPORTED', previewDiagnostic: versionId === 'DVER-WELD-002' ? '样例可预览' : '非图片/不可预览文件显示元数据退化状态' });
 const datasetDetail = buildDatasetDetail();
+const frameDatasetSummary = datasets.items.find((item) => item.datasetId === 'DATASET-WELD-FRAMES-001')!;
+const frameDatasetVersion = { versionId: 'DVER-WELD-FRAMES-001', datasetId: 'DATASET-WELD-FRAMES-001', versionName: 'v1', status: 'READY', isCurrent: true, sourceVersionId: 'DVER-WELD-VIDEO-001', recordCount: 2400, fileCount: 1, sizeBytes: 4096, contentSafetyStatus: 'PASSED', diagnosticCode: 'OK', diagnosticMessage: 'FRAME_EXTRACTION_READY', createdAt: '2026-05-18T00:02:00Z', publishedAt: null, mutable: false, deletable: false, deleteBlockedReason: 'PREPROCESSED_OUTPUT_IMMUTABLE' };
+const frameDatasetDetail = { dataset: frameDatasetSummary, selectedVersionId: 'DVER-WELD-FRAMES-001', selectedVersion: frameDatasetVersion, versions: [frameDatasetVersion], files: datasetFilesByVersion['DVER-WELD-FRAMES-001'], grants: [], lineage: [{ lineageId: 'LIN-PIPE-FRAMES-001', sourceType: 'PIPELINE_RUN', sourceId: 'PRUN-E2E', targetType: 'DATASET_VERSION', targetId: 'DVER-WELD-FRAMES-001', transformType: 'FRAME_EXTRACTION', createdAt: '2026-05-18T00:02:00Z' }], previewStatus: 'PREVIEWABLE', previewDiagnostic: '抽帧图片样例可预览' };
 const uploadDatasetSummary = { datasetId: 'DATASET-UPLOAD-E2E', name: 'F015 本地上传数据集', datasetType: 'RAW', dataType: 'IMAGE', tenantId: 'TENANT-CABIN', projectId: null, currentVersionId: 'DVER-UPLOAD-E2E', currentVersionName: 'v1', status: 'ACTIVE', accessLevel: 'TEAM', tags: [], versionCount: 1, recordCount: 1, sizeBytes: 1024, ownerId: 'USR-ADMIN', ownerName: '平台管理员', description: '本地上传创建', archivedAt: null, updatedAt: '2026-05-18T02:00:00Z', mutable: true, hardDeletable: false };
 const uploadDatasetVersion = { versionId: 'DVER-UPLOAD-E2E', datasetId: 'DATASET-UPLOAD-E2E', versionName: 'v1', status: 'READY', isCurrent: true, sourceVersionId: null, recordCount: 1, fileCount: 1, sizeBytes: 1024, contentSafetyStatus: 'PASSED', diagnosticCode: 'OK', diagnosticMessage: 'VERSION_READY', createdAt: '2026-05-18T02:00:00Z', publishedAt: null, mutable: true, deletable: false, deleteBlockedReason: 'DATASET_VERSION_LAST_ONE_FORBIDDEN' };
 const uploadDatasetDetail = { dataset: uploadDatasetSummary, selectedVersionId: 'DVER-UPLOAD-E2E', selectedVersion: uploadDatasetVersion, versions: [uploadDatasetVersion], files: [{ bindingId: 'DF-UPLOAD-001', datasetId: 'DATASET-UPLOAD-E2E', versionId: 'DVER-UPLOAD-E2E', fileId: 'FILE-UPLOAD-001', fileRole: 'RAW', status: 'BOUND', objectKey: 'TENANT-CABIN/upload/FILE-UPLOAD-001.jpg', contentType: 'image/jpeg', sizeBytes: 1024, sha256: 'sha256-upload-001' }], grants: [], lineage: [], previewStatus: 'PREVIEWABLE', previewDiagnostic: '样例可预览' };
@@ -115,8 +121,7 @@ const annotationPublication = { publicationId: 'APUB-WELD-Q2', taskId: 'ANN-WELD
 const annotationOverview = { stats: { total: 1, inProgress: 1, pendingReview: 1, completed: 0, templates: 1 }, tasks: [annotationTask], templates: [annotationTemplate] };
 const annotationDetail = { task: annotationTask, assignments: [], workItems: annotationWorkItems, reviewItems: annotationReviewItems, publications: [annotationPublication], externalBinding: annotationBinding };
 const datasetAnnotationCreateDetail = { ...annotationDetail, task: { ...annotationTask, sourceDatasetId: 'DATASET-WELD-DEFECT', sourceDatasetName: '焊缝缺陷检测数据集' } };
-const annotationExport = { exportId: 'AEXP-WELD-Q2-SMP', taskId: 'ANN-WELD-Q2', format: 'SMP_JSONL', formatVersion: 'v1', status: 'AVAILABLE', diagnosticCode: 'TODO_CONFIRM_MINIO_ENDPOINT', diagnosticMessage: '训练包下载未配置', fileId: 'FILE-AEXP-WELD-Q2-SMP', downloadUrl: null, sizeBytes: 1048576, asyncRequired: false, packageIncludesImages: true, requestedAt: '2026-05-19T00:00:00Z', generatedAt: '2026-05-19T00:05:00Z', expiresAt: '2026-08-19T00:00:00Z' };
-const datasetAnnotationTasks = [{ task: annotationTask, exports: [annotationExport] }];
+const annotationExport = { exportId: 'AEXP-WELD-Q2-SMP', taskId: 'ANN-WELD-Q2', format: 'SMP_JSONL', formatVersion: 'v1', status: 'AVAILABLE', diagnosticCode: 'AUTHENTICATED_CONTENT_ENDPOINT_READY', diagnosticMessage: '训练包可通过平台鉴权接口下载', fileId: 'FILE-AEXP-WELD-Q2-SMP', downloadUrl: null, sizeBytes: 1048576, asyncRequired: false, packageIncludesImages: true, requestedAt: '2026-05-19T00:00:00Z', generatedAt: '2026-05-19T00:05:00Z', expiresAt: '2026-08-19T00:00:00Z' };
 
 const paiStatus = { status: 'UNCONFIGURED', configured: false, enabled: false, regionId: 'TODO_CONFIRM_PAI_REGION', endpoint: 'TODO_CONFIRM_PAI_ENDPOINT', workspaceId: 'TODO_CONFIRM_PAI_WORKSPACE_ID', quotaId: 'TODO_CONFIRM_PAI_QUOTA_ID', resourceGroupId: 'TODO_CONFIRM_PAI_RESOURCE_GROUP_ID', credentialMode: 'RAM_ROLE', credentialRefMasked: 'TODO_CONFIRM_PAI_RAM_ROLE_ARN', diagnosticCode: 'PAI_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_PAI_REGION;TODO_CONFIRM_PAI_WORKSPACE_ID;TODO_CONFIRM_PAI_QUOTA_ID', lastSyncAt: null, stale: false };
 const paiOverview = { status: 'READY', scopeType: 'BU', scopeId: 'TENANT-CABIN', bindingId: 'PAI-BIND-CABIN', workspaceId: 'pai-ws-cabin-sandbox', quotaId: 'quota-cabin-sandbox', resourceGroupId: 'rg-cabin-general', lastSyncAt: '2026-05-17T00:00:00Z', stale: false, diagnosticCode: 'OK', diagnosticMessage: 'PAI resource sandbox snapshot synchronized', updatedFrom: 'PAI_SNAPSHOT', cards: [{ key: 'gpu', label: 'GPU 总量', used: 36, total: 48, unit: '卡', percent: 75, status: 'WARNING' }, { key: 'npu', label: 'NPU 算力', used: 6, total: 16, unit: '卡', percent: 38, status: 'READY' }, { key: 'cpu', label: 'CPU 核心', used: 128, total: 192, unit: '核', percent: 67, status: 'READY' }, { key: 'storage', label: 'PAI/OSS 存储', used: 145408, total: 204800, unit: 'GB', percent: 71, status: 'READY' }] };
@@ -126,6 +131,7 @@ const paiPools = { items: [{ poolId: 'quota-cabin-sandbox', poolName: '训练资
 const paiStorage = { items: [{ storageId: 'oss-pai-workspace-cabin', name: 'PAI Workspace OSS', sourceType: 'PAI_WORKSPACE_STORAGE', capacityGb: 204800, usedGb: 145408, percent: 71, status: 'READY', diagnostic: 'workspace storage sandbox summary' }], total: 1, page: 1, pageSize: 1 };
 
 export async function mockPlatformApis(page: Page) {
+  let trainingExportState = annotationExport;
   await page.route('**/api/v1/foundation/status', async (route) => {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { service: 'smp-backend', status: 'READY', domains: ['DATA', 'MODEL', 'INFERENCE', 'RESOURCE', 'PLATFORM'], enabledCapabilities: ['identity', 'permission', 'audit'] } } });
   });
@@ -160,10 +166,13 @@ export async function mockPlatformApis(page: Page) {
   });
   await page.route(/\/api\/v1\/platform\/files\/[^/]+\/content(?:\?.*)?$/, async (route) => {
     const auth = route.request().headers().authorization ?? '';
+    const fileId = route.request().url().match(/\/api\/v1\/platform\/files\/([^/]+)\/content/)?.[1] ?? 'FILE-001';
+    const isTrainingPackage = fileId.startsWith('FILE-AEXP-');
+    const filename = isTrainingPackage ? `${fileId}.zip` : fileId === 'FILE-RTSP-SAMPLE-001' ? 'FILE-RTSP-SAMPLE-001.mp4' : `${fileId}.bin`;
     await route.fulfill({
       status: auth.startsWith('Bearer ') ? 200 : 401,
-      headers: { 'Content-Type': 'video/mp4', 'Content-Disposition': 'attachment; filename="rtsp-sample.mp4"' },
-      body: auth.startsWith('Bearer ') ? Buffer.from('F018 sandbox mp4 sample e2e') : Buffer.from('unauthorized'),
+      headers: { 'Content-Type': isTrainingPackage ? 'application/zip' : 'video/mp4', 'Content-Disposition': `attachment; filename="${filename}"` },
+      body: auth.startsWith('Bearer ') ? Buffer.from(isTrainingPackage ? 'mock yolo training zip bytes' : 'F018 sandbox mp4 sample e2e') : Buffer.from('unauthorized'),
     });
   });
   await page.route('**/api/v1/platform/files**', async (route) => {
@@ -275,6 +284,10 @@ export async function mockPlatformApis(page: Page) {
       await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: rtspDatasetDetail } });
       return;
     }
+    if (url.pathname.endsWith('/DATASET-WELD-FRAMES-001')) {
+      await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: frameDatasetDetail } });
+      return;
+    }
     if (url.pathname.endsWith('/DATASET-UPLOAD-RISK')) {
       await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: riskDatasetDetail } });
       return;
@@ -353,6 +366,9 @@ export async function mockPlatformApis(page: Page) {
     const data = { ...pipelineRun.activation, status: 'ACTIVE', confirmed: true, activatedAt: '2026-05-18T00:02:00Z' };
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data } });
   });
+  await page.route('**/api/v1/pipeline-processing-tasks**', async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { items: [], total: 0, page: 1, pageSize: 100 } } });
+  });
   await page.route('**/api/v1/operators/custom', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: operatorDetail('OP-HTTP-CUSTOM') } }); });
   await page.route('**/api/v1/operators/*/submit-review', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: operatorDetail('OP-HTTP-CUSTOM') } }); });
   await page.route('**/api/v1/operators/*/approve', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { ...operatorDetail('OP-HTTP-CUSTOM'), operator: { ...operatorDetail('OP-HTTP-CUSTOM').operator, status: 'PUBLISHED' }, reviews: [{ ...operatorDetail('OP-HTTP-CUSTOM').reviews[0], status: 'APPROVED', reason: 'E2E 审核通过' }] } } }); });
@@ -419,10 +435,16 @@ export async function mockPlatformApis(page: Page) {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationPublication } });
   });
   await page.route(/\/api\/v1\/annotation\/tasks\/[^/]+\/exports(?:\?.*)?$/, async (route) => {
-    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: route.request().method() === 'POST' ? annotationExport : [annotationExport] } });
+    if (route.request().method() === 'POST') {
+      const format = (route.request().postDataJSON() as { format?: string } | null)?.format ?? annotationExport.format;
+      trainingExportState = { ...annotationExport, format, exportId: 'AEXP-WELD-Q2-SMP' };
+      await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: trainingExportState } });
+      return;
+    }
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: [trainingExportState] } });
   });
   await page.route(/\/api\/v1\/annotation\/exports\/[^/]+\/download-url(?:\?.*)?$/, async (route) => {
-    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationExport } });
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: trainingExportState } });
   });
   await page.route(/\/api\/v1\/datasets\/[^/]+\/annotation-candidates(?:\?.*)?$/, async (route) => {
     const url = route.request().url();
@@ -434,11 +456,13 @@ export async function mockPlatformApis(page: Page) {
         ? { datasetId: 'DATASET-UPLOAD-VIDEO-E2E', datasetName: 'F015 本地上传视频数据集', currentVersionId: 'DVER-UPLOAD-VIDEO-E2E', dataType: 'AUDIO_VIDEO', status: 'ACTIVE', eligible: false, diagnosticCode: 'ANNOTATION_DATASET_TYPE_UNSUPPORTED', diagnosticMessage: '视频原始数据集需先经过抽帧预处理生成 IMAGE 数据集后再标注', templates: [annotationTemplate], supportedFormats: ['SMP_JSONL', 'COCO'] }
       : url.includes('DATASET-UPLOAD-E2E')
         ? { datasetId: 'DATASET-UPLOAD-E2E', datasetName: 'F015 本地上传数据集', currentVersionId: 'DVER-UPLOAD-E2E', dataType: 'IMAGE', status: 'ACTIVE', eligible: true, diagnosticCode: 'OK', diagnosticMessage: '候选检查通过', templates: [annotationTemplate], supportedFormats: ['SMP_JSONL', 'COCO'] }
+      : url.includes('DATASET-WELD-FRAMES-001')
+        ? { datasetId: 'DATASET-WELD-FRAMES-001', datasetName: '焊缝视频抽帧预处理结果', currentVersionId: 'DVER-WELD-FRAMES-001', dataType: 'IMAGE', status: 'ACTIVE', eligible: true, diagnosticCode: 'OK', diagnosticMessage: '候选检查通过', templates: [annotationTemplate], supportedFormats: ['SMP_JSONL', 'COCO', 'YOLO_DETECTION'] }
         : { datasetId: 'DATASET-WELD-DEFECT', datasetName: '焊缝缺陷检测数据集', currentVersionId: 'DVER-WELD-002', dataType: 'IMAGE', status: 'ACTIVE', eligible: true, diagnosticCode: 'OK', diagnosticMessage: '候选检查通过', templates: [annotationTemplate], supportedFormats: ['SMP_JSONL', 'COCO'] };
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data } });
   });
   await page.route(/\/api\/v1\/datasets\/[^/]+\/annotation-tasks(?:\?.*)?$/, async (route) => {
-    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: route.request().method() === 'POST' ? datasetAnnotationCreateDetail : datasetAnnotationTasks } });
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: route.request().method() === 'POST' ? datasetAnnotationCreateDetail : [{ task: annotationTask, exports: [trainingExportState] }] } });
   });
   await page.route(/\/api\/v1\/annotation\/tasks\/[^/?]+(?:\?.*)?$/, async (route) => {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationDetail } });

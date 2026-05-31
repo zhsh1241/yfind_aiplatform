@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { mockPlatformApis } from './helpers';
 
-test('TASK-platform-identity-audit AC-08 keeps login usermgmt perm prototype paths reachable', async ({ page }) => {
+test('TASK-platform-identity-audit AC-08 keeps login usermgmt perm module paths reachable', async ({ page }) => {
   await mockPlatformApis(page);
 
   await page.goto('/login');

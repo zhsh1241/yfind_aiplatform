@@ -302,11 +302,11 @@ function renderTagManagementPage() {
 }
 
 describe('TagManagementPage', () => {
-  it('renders dataset tag catalog and supports dataset tag editing', async () => {
+  it('renders independent tag catalog and supports tag creation', async () => {
     renderTagManagementPage();
-    expect(await screen.findByRole('heading', { name: '标签管理' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '标签字典' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '独立标签目录' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '数据集标签' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: '数据集标签' })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '标注标签模板' })).toBeInTheDocument();
     expect(await screen.findByText('裂纹')).toBeInTheDocument();
 
@@ -316,11 +316,6 @@ describe('TagManagementPage', () => {
     await user.type(screen.getByLabelText('标签名称'), '独立存在标签');
     await user.click(screen.getByRole('button', { name: '保存标签' }));
     await waitFor(() => expect(dataApi.createAnnotationTag).toHaveBeenCalledWith(expect.objectContaining({ name: '独立存在标签' }), expect.anything()));
-
-    await user.click(screen.getByRole('tab', { name: '数据集标签' }));
-    await user.click((await screen.findAllByText('编辑标签'))[0]);
-    await user.click(screen.getByRole('button', { name: '保存数据集标签' }));
-    await waitFor(() => expect(dataApi.updateDataset).toHaveBeenCalled());
   });
 });
 

@@ -17,13 +17,13 @@ record PipelineVersionRequest(String versionName, String note) {}
 record PipelineVersionResponse(String versionId, String pipelineId, String versionName, String note, String dagJson, String createdBy, OffsetDateTime createdAt) {}
 record PipelineValidationResponse(boolean valid, String diagnosticCode, String diagnosticMessage, List<PipelineValidationIssue> errors, List<String> warnings) {}
 record PipelineValidationIssue(String code, String message, String nodeId, String edgeId) {}
-record PipelineRunRequest(String triggerMode, String sampleDatasetId) {}
+record PipelineRunRequest(String triggerMode, String sampleDatasetId, String outputDatasetName) {}
 record PipelineRunSummaryResponse(String runId, String pipelineId, String versionId, String status, String triggerMode, String diagnosticCode, String diagnosticMessage, String outputDatasetId, String resultDatasetStatus, Long durationMs, Long totalCount, Long successCount, Long skippedCount, Long failedCount, OffsetDateTime startedAt, OffsetDateTime endedAt) {}
 record PipelineRunDetailResponse(PipelineRunSummaryResponse run, List<PipelineRunNodeResponse> nodeRuns, PreprocessedDatasetPreviewResponse preview, PreprocessedDatasetActivationStateResponse activation, boolean debugMode) {}
 record PipelineRunNodeResponse(String nodeRunId, String runId, String nodeId, String operatorName, String status, Long durationMs, String logSummary, String errorCode) {}
-record PipelineProcessingTaskCreateRequest(String pipelineId, String sourceDatasetId) {}
+record PipelineProcessingTaskCreateRequest(String pipelineId, String sourceDatasetId, String outputDatasetName) {}
 record PipelineProcessingTaskListResponse(List<PipelineProcessingTaskSummaryResponse> items, long total, int page, int pageSize) {}
-record PipelineProcessingTaskSummaryResponse(String taskId, String pipelineId, String pipelineName, String sourceDatasetId, String sourceDatasetName, String sourceVersionId, String outputDatasetId, String status, String resultDatasetStatus, String diagnosticCode, String diagnosticMessage, Long durationMs, Long totalCount, Long successCount, Long skippedCount, Long failedCount, OffsetDateTime createdAt, OffsetDateTime endedAt) {}
+record PipelineProcessingTaskSummaryResponse(String taskId, String pipelineId, String pipelineName, String sourceDatasetId, String sourceDatasetName, String sourceVersionId, String outputDatasetId, String outputDatasetName, String outputDatasetType, String outputDatasetDataType, String status, String resultDatasetStatus, String diagnosticCode, String diagnosticMessage, Long durationMs, Long totalCount, Long successCount, Long skippedCount, Long failedCount, OffsetDateTime createdAt, OffsetDateTime endedAt) {}
 
 record OperatorListResponse(List<OperatorSummaryResponse> items, long total, List<OperatorCategoryResponse> categories, OperatorStatsResponse stats) {}
 record OperatorStatsResponse(long total, long builtin, long custom, long published, long submitted) {}

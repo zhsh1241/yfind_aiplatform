@@ -2,7 +2,7 @@
 import { test, expect } from '@playwright/test';
 import { seedAuthenticatedSession } from './helpers';
 
-test('F007 AC-08 org page keeps prototype tabs and API-driven organization data', async ({ page }) => {
+test('F007 AC-08 org page keeps module tabs and API-driven organization data', async ({ page }) => {
   await seedAuthenticatedSession(page);
 
   await page.getByText('组织管理').click();
