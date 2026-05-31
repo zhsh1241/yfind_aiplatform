@@ -134,7 +134,16 @@ const stableJson = (value: unknown) => JSON.stringify(value);
 const fmtDateTime = (value?: string | null) => value ? value.replace('T', ' ').replace('Z', '') : '-';
 const displayText = (value?: string | null, fallback = '待配置') => {
   if (!value) return fallback;
-  return value.replace(/secret:\/\/TODO_CONFIRM_[A-Z0-9_]+/g, '凭据待配置').replace(/TODO_CONFIRM_[A-Z0-9_]+/g, fallback);
+  return value
+    .replace(/secret:\/\/TODO_CONFIRM_[A-Z0-9_]+/g, '凭据待配置')
+    .replace(/TODO_CONFIRM_[A-Z0-9_]+/g, fallback)
+    .replace(/SANDBOX[_ -]*/gi, '')
+    .replace(/\bsandbox\b/gi, '内部环境')
+    .replace(/\s*seam\b/gi, '')
+    .replace(/TASK-[a-z0-9-]+/gi, '')
+    .replace(/\bF0\d{2}\b/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 };
 
 const readDatasetConfigFromNodes = (nodes: PipelineNode[]) => {
@@ -732,7 +741,6 @@ const defaultLabelSchema = (scene?: string) => scene === 'IMAGE_SEGMENTATION'
   : scene === 'TEXT_LABELING'
     ? '{"labels":["质量投诉","设备故障","工艺咨询"],"dataType":"TEXT"}'
     : '{"labels":["裂纹","气孔"]}';
-const parseInlineLabels = (value?: string) => Array.from(new Set(String(value ?? '').split(/[\n,，]/).map((item) => item.trim()).filter(Boolean)));
 const labelStudioXmlForTemplate = (scene?: string, labelSchemaJson?: string, fallbackXml?: string) => {
   if (fallbackXml?.trim()) return fallbackXml.trim();
   const parsedLabels = parseTemplateLabels(labelSchemaJson);
@@ -935,7 +943,6 @@ export function AnnotationTasksPage() {
     sourceVersionId?: string | null;
     templateId?: string;
     templateMode?: 'EXISTING' | 'INLINE_CREATE';
-    inlineLabels?: string;
     selectedTagNames?: string[];
     inlineTemplateName?: string;
     scene: string;
@@ -968,7 +975,6 @@ export function AnnotationTasksPage() {
       sourceVersionId?: string | null;
       templateId?: string;
       templateMode?: 'EXISTING' | 'INLINE_CREATE';
-      inlineLabels?: string;
       selectedTagNames?: string[];
       inlineTemplateName?: string;
       scene: string;
@@ -981,9 +987,9 @@ export function AnnotationTasksPage() {
       let inlineLabels: string[] | undefined;
       let inlineTemplateName: string | undefined;
       if (values.templateMode === 'INLINE_CREATE' || !templateId) {
-        inlineLabels = uniqueStrings([...(values.selectedTagNames ?? []), ...parseInlineLabels(values.inlineLabels)]);
+        inlineLabels = uniqueStrings(values.selectedTagNames ?? []);
         if (inlineLabels.length === 0) {
-          throw new Error('请至少输入一个标签。');
+          throw new Error('请至少选择一个标签。');
         }
         inlineTemplateName = values.inlineTemplateName?.trim() || `${selectedTaskDataset?.name ?? '数据集'} ${txt(values.scene)}模板`;
         templateId = undefined;
@@ -1044,7 +1050,6 @@ export function AnnotationTasksPage() {
       templateId: defaultTemplateId,
       templateMode: 'INLINE_CREATE',
       selectedTagNames: (tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').slice(0, 3).map((tag) => tag.name),
-      inlineLabels: '',
       inlineTemplateName: `${selectedDataset?.name ?? '数据集'} ${txt(defaultScene)}模板`,
     });
   }, [annotationDatasets, publishedTemplates, tagCatalog.data, taskForm]);
@@ -1134,7 +1139,7 @@ export function AnnotationTasksPage() {
       />
       <Modal title="＋ 新建标注任务" open={wizardOpen} onCancel={() => setWizardOpen(false)} footer={null} destroyOnHidden width={760}>
         <Steps size="small" current={1} items={[{ title: '选择数据集' }, { title: '配置模板' }, { title: '分派审核' }]} style={{ marginBottom: 16 }} />
-        <Alert type="info" showIcon title="数据集范围说明" description="这里不是数据集总览页；仅展示可用于创建标注任务的 ACTIVE 图片数据集。默认自动选中首个可用数据集，并优先使用“直接输入标签”；如需复用流程也可手动切换。" style={{ marginBottom: 12 }} />
+        <Alert type="info" showIcon title="可标注数据集" description="仅展示可用于创建标注任务的 ACTIVE 图片数据集。可选择已发布模板，也可从标签管理中选择标签生成模板。" style={{ marginBottom: 12 }} />
         <Form form={taskForm} layout="vertical" onFinish={(v) => {
           if (!v.sourceDatasetId) return;
           createTask.mutate({ ...v, sourceDatasetId: v.sourceDatasetId, sourceVersionId: v.sourceVersionId ?? undefined });
@@ -1160,15 +1165,14 @@ export function AnnotationTasksPage() {
           ) : (
             <>
               <Form.Item name="inlineTemplateName" label="自动生成的模板名称"><Input /></Form.Item>
-              <Form.Item name="selectedTagNames" label="选择标签" extra="来自标签管理的独立标签目录，不要求关联数据集。"><Select mode="multiple" {...tagSelectSearchProps} options={(tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').map((tag) => ({ value: tag.name, label: tag.name }))} placeholder="请选择标签" /></Form.Item>
-              <Form.Item name="inlineLabels" label="补充标签" rules={[{ validator: async (_rule, value) => { if ([...(taskForm.getFieldValue('selectedTagNames') ?? []), ...parseInlineLabels(value)].length === 0) throw new Error('请至少选择或输入一个标签'); } }]} extra="可额外输入标签，支持逗号、顿号或换行分隔。"><Input.TextArea rows={3} placeholder="裂纹，气孔，夹渣" /></Form.Item>
+              <Form.Item name="selectedTagNames" label="选择标签" extra="来自标签管理的独立标签目录，可多选。"><Select mode="multiple" {...tagSelectSearchProps} options={(tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').map((tag) => ({ value: tag.name, label: tag.name }))} placeholder="请选择标签" /></Form.Item>
             </>
           )}
           <Space wrap>
             <Form.Item name="reviewEnabled" label="审核"><Select options={[{ value: true, label: '启用审核' }, { value: false, label: '不审核' }]} /></Form.Item>
           </Space>
           <Form.Item name="note" label="备注"><Input.TextArea rows={2} /></Form.Item>
-          <Alert type="info" showIcon title="分派策略" description="默认先创建未分派任务，避免跨 BU 账号拦截；后续可在任务页再分派标注员/审核员。" style={{ marginBottom: 12 }} />
+          <Alert type="info" showIcon title="分派策略" description="默认先创建未分派任务，创建后可在任务页分派标注员/审核员。" style={{ marginBottom: 12 }} />
           <Button type="primary" htmlType="submit" loading={createTask.isPending}>创建任务</Button>
         </Form>
       </Modal>
@@ -2249,7 +2253,7 @@ export function DataPipelineStandardPage() {
       await qc.invalidateQueries({ queryKey: ['annotation-source-datasets'] });
       setLatestRun(result);
       setRunOpen(true);
-      msg.success(debugMode ? '调试运行完成，已记录每个中间步骤并生成待确认图片数据集。' : '加工任务运行完成，已生成一条加工记录和待确认预处理数据集。');
+      msg.success(debugMode ? '调试运行完成，已记录每个中间步骤并生成预处理数据集。' : '加工任务运行完成，已生成加工记录和预处理数据集。');
     },
     onError: (e: Error) => msg.error(e.message),
   });
@@ -2291,7 +2295,7 @@ export function DataPipelineStandardPage() {
       await qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
       await qc.invalidateQueries({ queryKey: ['datasets'] });
       await qc.invalidateQueries({ queryKey: ['annotation-source-datasets'] });
-      msg.success('预处理数据集已激活，可用于后续标注。');
+      msg.success('预处理数据集已激活，可用于标注。');
     },
     onError: (e: Error) => msg.error(e.message),
   });
@@ -2479,7 +2483,7 @@ export function DataPipelineStandardPage() {
       <div className="page-hero">
         <div>
           <Typography.Title level={3}>Pipeline编辑器</Typography.Title>
-          <Typography.Text type="secondary">视觉预处理 Pipeline · 图片/视频预处理算子 · 运行后生成待确认 PREPROCESSED 数据集</Typography.Text>
+          <Typography.Text type="secondary">视觉预处理 Pipeline · 图片/视频预处理算子 · 运行后生成预处理数据集</Typography.Text>
         </div>
         <Space wrap>
           <Select
@@ -2545,7 +2549,7 @@ export function DataPipelineStandardPage() {
           </Descriptions>
         </Space>
       </Card>
-      <Alert type="info" showIcon title="F017 视觉预处理闭环" description="固定图片传统增强、视频抽帧输出图片型 PREPROCESSED 数据集；调试模式会记录每个中间步骤的输入/输出与状态；运行成功后不会自动激活，必须先预览确认再人工激活。" style={{ marginBottom: 16 }} />
+      <Alert type="info" showIcon title="视觉预处理闭环" description="支持图片传统增强与视频抽帧，输出图片型预处理数据集；调试模式会记录每个中间步骤的输入、输出与状态。运行成功后需预览确认再激活。" style={{ marginBottom: 16 }} />
       <div className="pipeline-summary-grid">
         <Card size="small" title="编辑状态">
           <Space wrap>
@@ -2663,7 +2667,7 @@ export function DataPipelineStandardPage() {
             showIcon
             style={{ marginTop: 12 }}
             message="视频抽帧默认输出图片型 PREPROCESSED 数据集"
-            description="运行成功后不会自动激活；必须先预览/确认，再手动激活为后续标注可用数据集。"
+            description="运行成功后需先预览确认，再手动激活为可标注数据集。"
           />
           <Descriptions size="small" bordered column={1} style={{ marginTop: 12 }}>
             <Descriptions.Item label="流程代码">{pipeline.data.pipeline.templateCode ?? 'VISUAL_PREPROCESS'}</Descriptions.Item>
@@ -2744,7 +2748,7 @@ export function DataPipelineStandardPage() {
           <Button type="primary" htmlType="submit" loading={createProcessingTask.isPending}>创建并进入编辑器</Button>
         </Form>
       </Modal>
-      <Drawer title={latestRun ? '沙箱运行详情' : '配置本次运行'} open={runOpen} onClose={() => setRunOpen(false)} width={720}>
+      <Drawer title={latestRun ? '运行详情' : '配置本次运行'} open={runOpen} onClose={() => setRunOpen(false)} width={720}>
         {!latestRun ? (
           <Space direction="vertical" className="full-width">
             <Alert type="info" showIcon title="运行前确认输出数据集名称" description="点击确认运行后，系统会创建一条加工记录，并使用下方名称生成新的 PREPROCESSED 数据集。" />
@@ -2772,7 +2776,7 @@ export function DataPipelineStandardPage() {
         ) : null}
         {latestRun ? (
           <>
-            <Alert type="success" showIcon title={latestRun.run.diagnosticMessage ?? 'VISUAL_PREPROCESS_RUN_SUCCEEDED'} description="已生成待确认预处理数据集；请先预览样例和失败摘要，再执行确认与激活。" />
+            <Alert type="success" showIcon title={latestRun.run.diagnosticMessage ?? 'VISUAL_PREPROCESS_RUN_SUCCEEDED'} description="已生成预处理数据集；请先预览样例和失败摘要，再执行确认与激活。" />
           <Space direction="vertical" className="full-width" style={{ marginTop: 16 }}>
             <Card title={latestRunDebugMode ? '调试模式 · 中间步骤监控' : '中间步骤监控'} size="small">
               <Alert
@@ -2791,7 +2795,7 @@ export function DataPipelineStandardPage() {
                   { title: '节点', render: (_, r) => <Space direction="vertical" size={0}><Typography.Text>{r.operatorName}</Typography.Text><Typography.Text type="secondary" className="mono">{r.nodeId}</Typography.Text></Space> },
                   { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> },
                   { title: '耗时', dataIndex: 'durationMs', render: (v) => v ? `${v}ms` : '-' },
-                  { title: '摘要', dataIndex: 'logSummary' },
+                  { title: '摘要', dataIndex: 'logSummary', render: (value: string | null) => displayText(value, '-') },
                 ]}
               />
             </Card>
@@ -2800,9 +2804,9 @@ export function DataPipelineStandardPage() {
                 size="small"
                 current={activation?.status === 'ACTIVE' ? 2 : activation?.confirmed ? 1 : 0}
                 items={[
-                  { title: '运行完成', description: '已生成待确认结果集' },
+                  { title: '运行完成', description: '已生成预处理结果集' },
                   { title: '人工确认', description: activation?.confirmed ? `已确认 ${fmtDateTime(activation.confirmedAt)}` : '检查样例与失败摘要' },
-                  { title: '激活入链', description: activation?.status === 'ACTIVE' ? `已激活 ${fmtDateTime(activation.activatedAt)}` : '激活后进入标注来源列表' },
+                  { title: '激活入链', description: activation?.status === 'ACTIVE' ? `已激活 ${fmtDateTime(activation.activatedAt)}` : '激活后可用于标注' },
                 ]}
               />
             </Card>
@@ -3010,9 +3014,9 @@ export function DataSourceManagementPage() {
         <div><Typography.Title level={3}>数据源管理</Typography.Title><Typography.Text type="secondary">管理文件、数据库、API、流、RTSP 视频流、时序库与工业协议数据源连接、同步导入与采样任务</Typography.Text></div>
         <Space><Button onClick={() => setSyncOpen(true)}>＋ 新建同步任务</Button><Button type="primary" onClick={() => setOpen(true)}>＋ 新建数据源</Button></Space>
       </div>
-      <Alert type="info" showIcon title="数据集导入方式" description="支持文件/对象存储登记导入，也支持关系型数据库、外部 API、流数据、RTSP 视频流、时序库、工业协议通过已激活数据源 + 同步/采样任务导入；平台连接器会生成可追踪的数据集版本、文件元数据与血缘。RTSP 一期仅登记采样任务与 video/mp4 样本，不引入真实解码。" style={{ marginBottom: 16 }} />
+      <Alert type="info" showIcon title="数据集导入方式" description="支持文件/对象存储登记导入，也支持关系型数据库、外部 API、流数据、RTSP 视频流、时序库、工业协议通过已激活数据源与同步/采样任务导入；平台会生成可追踪的数据集版本、文件元数据与血缘。RTSP 采样生成视频样本，抽帧处理可在预处理流程中完成。" style={{ marginBottom: 16 }} />
       <Tabs items={[
-        { key: 'sources', label: '数据源列表', children: <div className="data-source-grid">{(sources.data ?? []).map((s) => <Card key={s.sourceId} title={<Space><Tag color="blue">{txt(s.sourceType)}</Tag>{s.name}</Space>} extra={<Tag color={color(s.status)}>{s.status}</Tag>}><Space direction="vertical" className="full-width"><Typography.Text className="mono">{s.endpoint}{s.port ? `:${s.port}` : ''}</Typography.Text><Typography.Text type="secondary">secretRef: {s.secretRefMasked}</Typography.Text><Typography.Text type="secondary">诊断：{s.diagnosticCode ?? 'NOT_TESTED'} · {displayText(s.diagnosticMessage)}</Typography.Text><Space wrap><Button size="small" onClick={() => test.mutate(s.sourceId)}>测试连接</Button><Button size="small" onClick={() => setDetail(s)}>详情/编辑</Button><Button size="small" type="primary" onClick={() => activate.mutate(s.sourceId)}>激活</Button><Button size="small" danger onClick={() => disable.mutate(s.sourceId)}>禁用</Button></Space></Space></Card>)}</div> },
+        { key: 'sources', label: '数据源列表', children: <div className="data-source-grid">{(sources.data ?? []).map((s) => <Card key={s.sourceId} title={<Space><Tag color="blue">{txt(s.sourceType)}</Tag>{s.name}</Space>} extra={<Tag color={color(s.status)}>{s.status}</Tag>}><Space direction="vertical" className="full-width"><Typography.Text className="mono">{displayText(s.endpoint)}{s.port ? `:${s.port}` : ''}</Typography.Text><Typography.Text type="secondary">SecretRef: {displayText(s.secretRefMasked, '凭据待配置')}</Typography.Text><Typography.Text type="secondary">诊断：{s.diagnosticCode ?? 'NOT_TESTED'} · {displayText(s.diagnosticMessage)}</Typography.Text><Space wrap><Button size="small" onClick={() => test.mutate(s.sourceId)}>测试连接</Button><Button size="small" onClick={() => setDetail(s)}>详情/编辑</Button><Button size="small" type="primary" onClick={() => activate.mutate(s.sourceId)}>激活</Button><Button size="small" danger onClick={() => disable.mutate(s.sourceId)}>禁用</Button></Space></Space></Card>)}</div> },
         { key: 'tasks', label: '同步任务', children: <Table<DataSourceSyncTask> rowKey="taskId" dataSource={tasks.data ?? []} pagination={false} columns={[{ title: '任务名称', dataIndex: 'name' }, { title: '数据源', dataIndex: 'sourceName' }, { title: '目标数据集', dataIndex: 'targetDatasetName', render: (v) => v ?? '待绑定' }, { title: '调度周期', dataIndex: 'scheduleMode' }, { title: '范围/采样参数', dataIndex: 'syncScope', render: (v) => v ?? '-' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '诊断', dataIndex: 'diagnosticMessage', render: (value: string | null) => displayText(value) }, { title: '操作', render: (_, r) => <Button size="small" onClick={() => runTask.mutate(r.taskId)}>{isRtspSource(r.sourceId) ? '立即采样' : '立即同步'}</Button> }]} /> },
       ]} />
       <Modal title="新建数据源" open={open} onCancel={() => setOpen(false)} footer={null} destroyOnHidden>
@@ -3035,7 +3039,7 @@ export function DataSourceManagementPage() {
           <Button type="primary" htmlType="submit">创建任务</Button>
         </Form>
       </Modal>
-      <Drawer title={detail?.name} open={Boolean(detail)} onClose={() => setDetail(null)} size="default"><Descriptions bordered column={1} size="small"><Descriptions.Item label="状态"><Tag color={color(detail?.status)}>{detail?.status}</Tag></Descriptions.Item><Descriptions.Item label="Endpoint">{detail?.endpoint}</Descriptions.Item><Descriptions.Item label="凭据模式">{detail?.credentialMode}</Descriptions.Item><Descriptions.Item label="SecretRef">{detail?.secretRefMasked}</Descriptions.Item><Descriptions.Item label="诊断">{displayText(detail?.diagnosticMessage)}</Descriptions.Item></Descriptions></Drawer>
+      <Drawer title={detail?.name} open={Boolean(detail)} onClose={() => setDetail(null)} size="default"><Descriptions bordered column={1} size="small"><Descriptions.Item label="状态"><Tag color={color(detail?.status)}>{detail?.status}</Tag></Descriptions.Item><Descriptions.Item label="Endpoint">{displayText(detail?.endpoint)}</Descriptions.Item><Descriptions.Item label="凭据模式">{detail?.credentialMode}</Descriptions.Item><Descriptions.Item label="SecretRef">{displayText(detail?.secretRefMasked, '凭据待配置')}</Descriptions.Item><Descriptions.Item label="诊断">{displayText(detail?.diagnosticMessage)}</Descriptions.Item></Descriptions></Drawer>
     </div>
   );
 }
@@ -3074,7 +3078,7 @@ export function DatasetManagementPage() {
     mutationFn: (datasetId: string) => dataApi.archiveDataset(datasetId),
     onSuccess: async () => {
       await refresh();
-      msg.success('数据集已归档，后续仅可只读查看');
+      msg.success('数据集已归档，仅可只读查看');
     },
     onError: (e: Error) => msg.error(e.message),
   });
@@ -4048,7 +4052,7 @@ export function DatasetDetailPage() {
   const detailTagOptions = (tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').map((tag) => ({ value: tag.name, label: tag.name }));
   const ref = useMutation({ mutationFn: () => dataApi.reference(datasetId), onError: () => undefined });
   const [msg, holder] = message.useMessage();
-  const [taskForm] = Form.useForm<{ name: string; scene: string; templateId?: string; templateMode?: 'EXISTING' | 'INLINE_CREATE'; selectedTagNames?: string[]; inlineLabels?: string; inlineTemplateName?: string }>();
+  const [taskForm] = Form.useForm<{ name: string; scene: string; templateId?: string; templateMode?: 'EXISTING' | 'INLINE_CREATE'; selectedTagNames?: string[]; inlineTemplateName?: string }>();
   const [taskOpen, setTaskOpen] = useState(false);
   const [exportTask, setExportTask] = useState<DatasetAnnotationTask | null>(null);
   const [previewFile, setPreviewFile] = useState<{ fileId: string; name: string } | null>(null);
@@ -4140,14 +4144,14 @@ export function DatasetDetailPage() {
     onError: (e: Error) => msg.error(e.message),
   });
   const createTask = useMutation({
-    mutationFn: async (values: { name: string; templateId?: string; scene: string; templateMode?: 'EXISTING' | 'INLINE_CREATE'; selectedTagNames?: string[]; inlineLabels?: string; inlineTemplateName?: string }) => {
+    mutationFn: async (values: { name: string; templateId?: string; scene: string; templateMode?: 'EXISTING' | 'INLINE_CREATE'; selectedTagNames?: string[]; inlineTemplateName?: string }) => {
       let templateId = values.templateId;
       let inlineLabels: string[] | undefined;
       let inlineTemplateName: string | undefined;
       if (values.templateMode === 'INLINE_CREATE' || !templateId) {
-        inlineLabels = uniqueStrings([...(values.selectedTagNames ?? []), ...parseInlineLabels(values.inlineLabels)]);
+        inlineLabels = uniqueStrings(values.selectedTagNames ?? []);
         if (inlineLabels.length === 0) {
-          throw new Error('请至少输入一个标签。');
+          throw new Error('请至少选择一个标签。');
         }
         inlineTemplateName = values.inlineTemplateName?.trim() || `${d?.dataset.name ?? '数据集'} ${txt(values.scene)}模板`;
         templateId = undefined;
@@ -4270,7 +4274,6 @@ export function DatasetDetailPage() {
       templateId: defaultTemplateId,
       templateMode: 'INLINE_CREATE',
       selectedTagNames: (tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').slice(0, 3).map((tag) => tag.name),
-      inlineLabels: '',
       inlineTemplateName: `${d?.dataset.name ?? '数据集'} ${txt(defaultScene)}模板`,
     });
   }, [candidate.data?.templates, d?.dataset.name, tagCatalog.data, taskForm, taskOpen]);
@@ -4302,7 +4305,7 @@ export function DatasetDetailPage() {
           showIcon
           style={{ marginBottom: 16 }}
           title="上传向导追加已完成"
-          description={`targetAction=APPEND_VERSION，versionStatus=${loc.state.versionStatus}`}
+          description={`已追加到当前版本，版本状态：${datasetStatusText(loc.state.versionStatus)}`}
         />
       ) : null}
       <Card loading={detail.isLoading}>
@@ -4447,11 +4450,10 @@ export function DatasetDetailPage() {
           ) : (
             <>
               <Form.Item name="inlineTemplateName" label="自动生成的模板名称"><Input /></Form.Item>
-              <Form.Item name="selectedTagNames" label="选择标签" extra="来自标签管理的独立标签目录，不要求关联数据集。"><Select mode="multiple" {...tagSelectSearchProps} options={(tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').map((tag) => ({ value: tag.name, label: tag.name }))} placeholder="请选择标签" /></Form.Item>
-              <Form.Item name="inlineLabels" label="补充标签" rules={[{ validator: async (_rule, value) => { if ([...(taskForm.getFieldValue('selectedTagNames') ?? []), ...parseInlineLabels(value)].length === 0) throw new Error('请至少选择或输入一个标签'); } }]} extra="可额外输入标签，支持逗号、顿号或换行分隔。"><Input.TextArea rows={3} placeholder="裂纹，气孔，夹渣" /></Form.Item>
+              <Form.Item name="selectedTagNames" label="选择标签" extra="来自标签管理的独立标签目录，可多选。"><Select mode="multiple" {...tagSelectSearchProps} options={(tagCatalog.data ?? []).filter((tag) => tag.status === 'ACTIVE').map((tag) => ({ value: tag.name, label: tag.name }))} placeholder="请选择标签" /></Form.Item>
             </>
           )}
-          <Alert type="info" showIcon style={{ marginBottom: 12 }} title="任务创建说明" description="如果选择“选择标签”，系统会用独立标签目录和补充标签自动生成并发布模板，再创建标注任务；你也可以直接复用已发布模板。" />
+          <Alert type="info" showIcon style={{ marginBottom: 12 }} title="任务创建说明" description="选择标签后，系统会使用标签管理中的独立标签自动生成并发布模板，再创建标注任务；也可以直接复用已发布模板。" />
           <Button type="primary" htmlType="submit" loading={createTask.isPending}>创建任务</Button>
         </Form>
       </Modal>

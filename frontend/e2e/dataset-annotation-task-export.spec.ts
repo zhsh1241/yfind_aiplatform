@@ -20,7 +20,9 @@ test('TASK-dataset-annotation-task-export AC-01 AC-02 AC-06 AC-07 AC-08 dataset 
   const createTask = page.waitForResponse((response) => response.url().includes('/api/v1/datasets/DATASET-WELD-DEFECT/annotation-tasks') && response.request().method() === 'POST');
   await page.getByRole('button', { name: '从数据集创建标注任务' }).click();
   await expect(page.getByRole('dialog', { name: '从数据集创建标注任务' })).toBeVisible();
-  await page.getByLabel('补充标签').fill('裂纹，气孔');
+  await page.getByLabel('选择标签').click();
+  await page.locator('.ant-select-dropdown:visible').getByText('裂纹', { exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible').getByText('气孔', { exact: true }).click();
   await page.getByRole('button', { name: '创建任务' }).click();
   expect((await (await createTask).json()).data.task.sourceDatasetId).toBeTruthy();
   await expect(page.getByText('已从数据集创建标注任务')).toBeVisible();

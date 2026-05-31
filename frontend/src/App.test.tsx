@@ -543,7 +543,7 @@ describe('F006 platform identity frontend', () => {
 
     expect(await screen.findByText('选择标签并自动建模板')).toBeInTheDocument();
     expect(screen.getByLabelText('选择标签')).toBeInTheDocument();
-    expect(screen.getByLabelText('补充标签')).toBeInTheDocument();
+    expect(screen.getByLabelText('选择标签')).toBeInTheDocument();
   }, 15000);
 
   it('requires explicit dataset selection when creating annotation task from annotation page', async () => {
@@ -556,12 +556,12 @@ describe('F006 platform identity frontend', () => {
     expect(await screen.findByRole('heading', { name: '标注任务管理' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '＋ 新建标注任务' }));
 
-    expect(await screen.findByText('数据集范围说明')).toBeInTheDocument();
+    expect(await screen.findByText('可标注数据集')).toBeInTheDocument();
     const createButton = screen.getByRole('button', { name: '创建任务' });
     expect(createButton).toBeEnabled();
     expect(screen.getByText('选择标签并自动建模板')).toBeInTheDocument();
     expect(screen.getByLabelText('选择标签')).toBeInTheDocument();
-    expect(screen.getByLabelText('补充标签')).toBeInTheDocument();
+    expect(screen.getByLabelText('选择标签')).toBeInTheDocument();
 
     await userEvent.click(screen.getByLabelText('源数据集（仅 ACTIVE 且可标注图片数据集）'));
     expect((await screen.findAllByText(/焊缝缺陷检测数据集（DATASET-WELD-DEFECT）/)).length).toBeGreaterThan(0);

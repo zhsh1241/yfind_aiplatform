@@ -120,7 +120,7 @@ test.describe('已完成功能跨模块串联演示', () => {
       await test.step(`3. Pipeline 数据集读取节点绑定当前数据集：${dataset.name}`, async () => {
         await page.getByText('Pipeline编辑器').click();
         await expect(page.getByRole('heading', { name: 'Pipeline编辑器' })).toBeVisible();
-        await expect(page.getByText('F017 视觉预处理闭环')).toBeVisible();
+        await expect(page.getByText('视觉预处理闭环')).toBeVisible();
         await expect(page.getByText('DAG 画布', { exact: true })).toBeVisible();
         await expect(page.getByText('图片质量提高').first()).toBeVisible();
         await page.locator('.node-config-card textarea').fill(JSON.stringify({ datasetId: dataset.id }, null, 2));
@@ -128,18 +128,18 @@ test.describe('已完成功能跨模块串联演示', () => {
         await expect(page.getByText('Pipeline DAG 已保存并通过校验')).toBeVisible();
       });
 
-      await test.step(`4. Pipeline DAG 配置、快照与沙箱运行：${dataset.name}`, async () => {
+      await test.step(`4. Pipeline DAG 配置、快照与运行：${dataset.name}`, async () => {
         await page.getByRole('button', { name: /＋ 添加算子/ }).click();
         await expect(page.getByText('添加算子', { exact: true })).toBeVisible();
         await page.locator('.ant-drawer').getByText(dataset.type === 'IMAGE' ? '图片加水印' : '固定帧率抽帧').first().click();
         await expect(page.getByText(/已添加算子：/)).toBeVisible();
         await page.getByRole('button', { name: '保存快照' }).click();
         await expect(page.getByText('版本快照已保存')).toBeVisible();
-        await page.getByRole('button', { name: /沙箱运行/ }).click();
-        await expect(page.getByText('视觉预处理运行完成，已生成待确认预处理数据集。')).toBeVisible();
-        await expect(page.getByLabel('沙箱运行详情').getByText('VISUAL_PREPROCESS_RUN_SUCCEEDED')).toBeVisible();
+        await page.getByRole('button', { name: /配置并运行|配置调试运行/ }).click();
+        await expect(page.getByText('加工任务运行完成，已生成加工记录和预处理数据集。')).toBeVisible();
+        await expect(page.getByLabel('运行详情').getByText('VISUAL_PREPROCESS_RUN_SUCCEEDED')).toBeVisible();
         await page.keyboard.press('Escape');
-        await expect(page.getByLabel('沙箱运行详情')).toBeHidden();
+        await expect(page.getByLabel('运行详情')).toBeHidden();
       });
 
       if (dataset.shouldAnnotate) {

@@ -25,7 +25,12 @@ function formatDate(value: string | null) {
 
 function displayText(value?: string | null, fallback = '待配置') {
   if (!value) return fallback;
-  return value.replace(/TODO_CONFIRM_[A-Z0-9_]+/g, fallback);
+  return value
+    .replace(/TODO_CONFIRM_[A-Z0-9_]+/g, fallback)
+    .replace(/SANDBOX[_ -]*/gi, '')
+    .replace(/\bsandbox\b/gi, '内部环境')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 function ConfigForm({ items, onSave, loading }: { items: ConfigItem[]; onSave: (key: string, value: string) => void; loading?: boolean }) {

@@ -26,7 +26,12 @@ function formatDate(value: string | null | undefined) {
 
 function displayText(value?: string | null, fallback = '待配置') {
   if (!value) return fallback;
-  return value.replace(/TODO_CONFIRM_[A-Z0-9_]+/g, fallback);
+  return value
+    .replace(/TODO_CONFIRM_[A-Z0-9_]+/g, fallback)
+    .replace(/SANDBOX[_ -]*/gi, '')
+    .replace(/\bsandbox\b/gi, '内部环境')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 function UsageCard({ card }: { card: PaiResourceUsageCard }) {
@@ -39,7 +44,7 @@ function UsageCard({ card }: { card: PaiResourceUsageCard }) {
         </Space>
         <Typography.Title level={3} style={{ margin: 0 }}>{card.used.toLocaleString('zh-CN')} / {card.total.toLocaleString('zh-CN')} {card.unit}</Typography.Title>
         <Progress percent={card.percent} status={card.percent > 85 ? 'exception' : card.percent > 70 ? 'active' : 'normal'} />
-        <Typography.Text type="secondary">来自 PAI Resource Quota 同步快照</Typography.Text>
+        <Typography.Text type="secondary">来自 PAI Resource Quota 同步数据</Typography.Text>
       </Space>
     </Card>
   );

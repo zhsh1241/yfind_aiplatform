@@ -50,7 +50,7 @@ export function ModuleOverviewPage({ page, language }: { page: AppPageInfo; lang
           <Col xs={24} md={8} key={item}>
             <Card className="module-summary-card">
               <Statistic title={item} value={index === 0 ? '准备中' : '—'} valueStyle={{ fontSize: 22 }} />
-              <Typography.Text type="secondary">将在业务接口可用后展示实时数据。</Typography.Text>
+              <Typography.Text type="secondary">暂无数据时显示为空，接入后会自动刷新。</Typography.Text>
             </Card>
           </Col>
         ))}
@@ -58,7 +58,7 @@ export function ModuleOverviewPage({ page, language }: { page: AppPageInfo; lang
       <Card className="page-card" title="模块概览">
         <Space direction="vertical" size={12} className="full-width">
           <Typography.Paragraph>
-            当前模块已纳入平台导航与权限体系，后续数据接入后将在本页集中呈现业务状态、操作入口与审计信息。
+            当前模块用于集中呈现业务状态、操作入口与审计信息。
           </Typography.Paragraph>
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无业务数据" />
         </Space>
