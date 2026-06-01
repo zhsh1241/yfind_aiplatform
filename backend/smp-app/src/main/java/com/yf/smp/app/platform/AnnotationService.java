@@ -669,6 +669,7 @@ public class AnnotationService {
                 zipEntry(zip, "manifest.json", ("{\"taskId\":\"" + task.taskId() + "\",\"format\":\"" + format
                     + "\",\"exportId\":\"" + exportId + "\",\"outputDatasetId\":\"" + publication.outputDatasetId() + "\"}\n").getBytes(StandardCharsets.UTF_8));
                 zipEntry(zip, "annotations/labels.jsonl", smpJsonlPayload(task, format, exportId, publication));
+                writeApprovedImages(zip, task, "SEGMENTATION_MASK_MANIFEST".equals(format) ? "images/" : "images/train/");
             }
             zip.finish();
             return bytes.toByteArray();
@@ -691,20 +692,42 @@ public class AnnotationService {
         }
     }
 
+    private void writeApprovedImages(ZipOutputStream zip, AnnotationTaskRecord task, String prefix) throws Exception {
+        List<YoloSample> samples = approvedYoloSamples(task);
+        int index = 1;
+        for (YoloSample sample : samples) {
+            zipEntry(zip, prefix + imageEntryName(sample, index), sample.imageBytes());
+            index++;
+        }
+    }
+
+    private String imageEntryName(YoloSample sample, int index) {
+        String sampleKey = sample.sampleKey();
+        String extension = ".jpg";
+        if (!blank(sampleKey)) {
+            String filename = sampleKey.replace('\\', '/');
+            int slash = filename.lastIndexOf('/');
+            if (slash >= 0) filename = filename.substring(slash + 1);
+            int dot = filename.lastIndexOf('.');
+            if (dot >= 0 && dot < filename.length() - 1) extension = filename.substring(dot).toLowerCase(Locale.ROOT);
+        }
+        return "frame-%04d%s".formatted(index, extension);
+    }
+
     private List<YoloSample> approvedYoloSamples(AnnotationTaskRecord task) {
         List<YoloSampleRow> rows = jdbc.query("""
-            SELECT w.work_item_id,w.annotation_json,pfo.bucket,pfo.object_key
+            SELECT w.work_item_id,w.sample_key,w.annotation_json,pfo.bucket,pfo.object_key
             FROM annotation_work_item w
             JOIN platform_file_object pfo ON pfo.file_id=w.sample_file_id
             WHERE w.task_id=? AND w.status='APPROVED'
             ORDER BY w.sample_key
-            """, (rs, n) -> new YoloSampleRow(rs.getString("work_item_id"), rs.getString("annotation_json"), rs.getString("bucket"), rs.getString("object_key")), task.taskId());
+            """, (rs, n) -> new YoloSampleRow(rs.getString("work_item_id"), rs.getString("sample_key"), rs.getString("annotation_json"), rs.getString("bucket"), rs.getString("object_key")), task.taskId());
         if (rows.isEmpty()) {
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "YOLO_EXPORT_REQUIRES_REAL_APPROVED_IMAGES: 没有可导出的真实已标注图片");
         }
         List<YoloSample> samples = new ArrayList<>();
         for (YoloSampleRow row : rows) {
-            samples.add(new YoloSample(row.workItemId(), readSampleImage(row), row.annotationJson()));
+            samples.add(new YoloSample(row.workItemId(), row.sampleKey(), readSampleImage(row), row.annotationJson()));
         }
         return samples;
     }
@@ -1516,7 +1539,7 @@ record AnnotationExternalTaskBindingRecord(String bindingId, String taskId, Stri
 record DatasetInfo(String datasetId, String name, String datasetType, String dataType, String tenantId, String projectId, String currentVersionId, String status, long recordCount, long sizeBytes, String ownerId, String description) {}
 record ExportPackage(byte[] content, long sizeBytes, String sha256) {}
 record FileObjectRecord(String fileId, String bucket, String objectKey) {}
-record YoloSampleRow(String workItemId, String annotationJson, String bucket, String objectKey) {}
-record YoloSample(String workItemId, byte[] imageBytes, String annotationJson) {}
+record YoloSampleRow(String workItemId, String sampleKey, String annotationJson, String bucket, String objectKey) {}
+record YoloSample(String workItemId, String sampleKey, byte[] imageBytes, String annotationJson) {}
 record YoloBox(double x, double y, double w, double h) {}
 record ImageSize(double width, double height) {}

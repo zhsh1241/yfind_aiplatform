@@ -243,6 +243,74 @@ class VisualPreprocessPipelineControllerTest {
         assertThat(firstLabel.lines().filter(line -> !line.isBlank()).count()).isEqualTo(3);
     }
 
+    @Test
+    void segmentationMaskExportIncludesOriginalImagesFromPreprocessedDataset() throws Exception {
+        String buAdmin = login("buadmin", "CABIN");
+        JsonNode run = postJson("/api/v1/pipelines/PIPE-VIDEO-PREP/runs", "trace-real-seg-run", """
+            {"triggerMode":"MANUAL","sampleDatasetId":"DATASET-WELD-VIDEO-001","outputDatasetName":"真实分割训练抽帧数据集"}
+            """, buAdmin);
+        String outputDatasetId = run.at("/data/run/outputDatasetId").asText();
+        JsonNode outputDetail = getJson("/api/v1/datasets/" + outputDatasetId, "trace-real-seg-output-detail", buAdmin);
+        Set<String> extractedFrameHashes = new java.util.HashSet<>();
+        for (JsonNode file : outputDetail.at("/data/files")) {
+            byte[] frame = getBytes("/api/v1/platform/files/" + file.at("/fileId").asText() + "/content", "trace-real-seg-frame-download-" + file.at("/fileId").asText(), buAdmin);
+            extractedFrameHashes.add(sha256(frame));
+        }
+        postJson("/api/v1/preprocessed-datasets/" + outputDatasetId + "/confirm", "trace-real-seg-confirm", """
+            {"decision":"CONFIRM","comment":"真实抽帧图片已确认"}
+            """, buAdmin);
+        String outputVersionId = outputDetail.at("/data/dataset/currentVersionId").asText();
+        postJson("/api/v1/preprocessed-datasets/" + outputDatasetId + "/activate", "trace-real-seg-activate", """
+            {"targetVersionId":"%s","activationNote":"进入分割标注链路"}
+            """.formatted(outputVersionId), buAdmin);
+
+        JsonNode task = postJson("/api/v1/annotation/tasks", "trace-real-seg-task", """
+            {
+              "sourceDatasetId":"%s",
+              "sourceVersionId":"%s",
+              "name":"真实抽帧分割标注任务",
+              "scene":"IMAGE_SEGMENTATION",
+              "reviewEnabled":false,
+              "prelabelEnabled":false,
+              "labelStudioEnabled":false,
+              "inlineLabels":["裂纹区域","气孔区域"]
+            }
+            """.formatted(outputDatasetId, outputVersionId), buAdmin);
+        assertThat(task.at("/code").asInt()).as(task.toString()).isZero();
+        String taskId = task.at("/data/task/taskId").asText();
+
+        JsonNode workItems = getJson("/api/v1/annotation/tasks/" + taskId + "/work-items?pageSize=50", "trace-real-seg-work-items", buAdmin);
+        assertThat(workItems.at("/data/items").size()).isGreaterThanOrEqualTo(6);
+        String polygonAnnotationJson = """
+            {"polygons":[{"label":"裂纹区域","points":[{"x":120,"y":118},{"x":198,"y":118},{"x":198,"y":176},{"x":120,"y":176}]}]}
+            """.strip();
+        for (JsonNode item : workItems.at("/data/items")) {
+            JsonNode submitted = postJson(
+                "/api/v1/annotation/work-items/" + item.at("/workItemId").asText() + "/submit",
+                "trace-real-seg-submit-" + item.at("/workItemId").asText(),
+                objectMapper.createObjectNode().put("annotationJson", polygonAnnotationJson).toString(),
+                buAdmin
+            );
+            assertThat(submitted.at("/data/status").asText()).isEqualTo("APPROVED");
+        }
+
+        JsonNode publication = postJson("/api/v1/annotation/tasks/" + taskId + "/publish-dataset", "trace-real-seg-publish", "{}", buAdmin);
+        assertThat(publication.at("/data/annotationArtifactFileId").asText()).startsWith("FILE-ANN-");
+        JsonNode export = postJson("/api/v1/annotation/tasks/" + taskId + "/exports", "trace-real-seg-export", """
+            {"format":"SEGMENTATION_MASK_MANIFEST"}
+            """, buAdmin);
+        assertThat(export.at("/code").asInt()).as(export.toString()).isZero();
+        assertThat(export.at("/data/packageIncludesImages").asBoolean()).isTrue();
+
+        JsonNode download = getJson("/api/v1/annotation/exports/" + export.at("/data/exportId").asText() + "/download-url", "trace-real-seg-download-url", buAdmin);
+        String fileId = download.at("/data/fileId").asText();
+        byte[] segmentationZip = getBytes("/api/v1/platform/files/" + fileId + "/content", "trace-real-seg-zip-download", buAdmin);
+        assertThat(segmentationZip).startsWith(new byte[] {'P', 'K'});
+        Map<String, byte[]> entries = zipContents(segmentationZip);
+        assertThat(entries.keySet()).contains("manifest.json", "annotations/labels.jsonl", "images/frame-0001.jpg");
+        assertThat(extractedFrameHashes).contains(sha256(entries.get("images/frame-0001.jpg")));
+    }
+
 
 
     @Test
