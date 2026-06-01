@@ -856,6 +856,27 @@ describe('F006 platform identity frontend', () => {
     expect(screen.queryByTestId('annotation-draft-polygon')).not.toBeInTheDocument();
   });
 
+  it('keeps first review-pending work item selectable as read-only in annotation workbench', async () => {
+    seedWorkbenchSession();
+    const originalItems = [...mockAnnotationWorkItems];
+    const customItems = [
+      { ...mockAnnotationWorkItems[0], workItemId: 'AWI-REVIEW-FIRST', sampleKey: 'TENANT-CABIN/weld/batch3/0001.jpg', sampleFileId: null, status: 'REVIEW_PENDING', annotationJson: '{"boxes":[{"label":"裂纹"}]}' },
+      { ...mockAnnotationWorkItems[0], workItemId: 'AWI-DRAFT-SECOND', sampleKey: 'TENANT-CABIN/weld/batch3/0002.jpg', sampleFileId: null, status: 'DRAFT', annotationJson: null },
+    ];
+    mockAnnotationWorkItems.splice(0, mockAnnotationWorkItems.length, ...customItems);
+
+    try {
+      renderApp(['/annwork']);
+
+      expect(await screen.findByRole('heading', { name: '标注工作台' })).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: /TENANT-CABIN\/weld\/batch3\/0001\.jpg/i })).toHaveClass('active');
+      expect(screen.getByText('只读样本')).toBeInTheDocument();
+      expect(screen.queryByText('已自动选择可编辑样本')).not.toBeInTheDocument();
+    } finally {
+      mockAnnotationWorkItems.splice(0, mockAnnotationWorkItems.length, ...originalItems);
+    }
+  });
+
   it('auto saves before navigating by Space ArrowLeft ArrowRight and thumbnail click', async () => {
     seedWorkbenchSession();
     const user = userEvent.setup();

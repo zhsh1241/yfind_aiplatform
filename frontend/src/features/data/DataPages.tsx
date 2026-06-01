@@ -1292,10 +1292,9 @@ export function AnnotationWorkbenchPage() {
   const queueItems = items.length
     ? items
     : [{ workItemId: 'EMPTY', taskId, sampleKey: '暂无样本', sampleFileId: null, annotatorId: null, annotatorName: null, status: 'DRAFT', predictionJson: null, annotationJson: null, submittedAt: null, updatedAt: '' }];
-  const editableIndex = items.findIndex((item) => canEditWorkItem(item.status));
   const pageOffset = (currentPage - 1) * ANNOTATION_WORKBENCH_PAGE_SIZE;
   const pageSelectedIndex = Math.max(0, selectedIndex - pageOffset);
-  const effectiveSelectedIndex = pageSelectedIndex === 0 && items[0] && items[0].status === 'REVIEW_PENDING' && editableIndex > 0 ? editableIndex : pageSelectedIndex;
+  const effectiveSelectedIndex = pageSelectedIndex;
   const visibleThumbCount = Math.max(1, Math.ceil(thumbListHeight / ANNOTATION_THUMB_ITEM_HEIGHT));
   const thumbStartIndex = Math.max(0, Math.floor(thumbScrollTop / ANNOTATION_THUMB_ITEM_HEIGHT) - ANNOTATION_THUMB_OVERSCAN);
   const thumbEndIndex = Math.min(queueItems.length, thumbStartIndex + visibleThumbCount + ANNOTATION_THUMB_OVERSCAN * 2);
@@ -1874,16 +1873,6 @@ export function AnnotationWorkbenchPage() {
           description={<Space direction="vertical" size={2}><span>{displayText(externalBinding?.diagnosticMessage, 'Label Studio 连接待配置')}</span>{externalBinding?.externalTaskId ? <a href={externalBinding.externalTaskUrl ?? externalBinding.launchUrl ?? undefined} target="_blank" rel="noreferrer">打开 Label Studio task：{externalBinding.externalTaskId}</a> : externalBinding?.externalProjectId ? <a href={externalBinding.launchUrl ?? undefined} target="_blank" rel="noreferrer">打开 Label Studio project：{externalBinding.externalProjectId}</a> : null}</Space>}
           className="annotation-ls-alert"
         />
-        {items[0]?.status === 'REVIEW_PENDING' && editableIndex > 0 && effectiveSelectedIndex === editableIndex ? (
-          <Alert
-            type="info"
-            showIcon
-            title="已自动选择可编辑样本"
-            description={`队列第一张是 ${annStatusText(items[0].status)}，保存草稿会触发后端状态冲突；当前已切到 ${selectedItem?.sampleKey ?? '可编辑样本'}。`}
-            className="annotation-ls-alert"
-          />
-        ) : null}
-
         <div className="annotation-workbench-layout">
           <aside ref={thumbListRef} className="annotation-thumb-list" aria-label="样本队列" onScroll={handleThumbListScroll}>
             <h4 className="annotation-panel-title">样本队列</h4>
