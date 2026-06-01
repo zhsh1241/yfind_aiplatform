@@ -1167,7 +1167,13 @@ export function AnnotationTasksPage() {
               options={annotationDatasets.map((d) => ({ value: d.datasetId, label: annotationSourceLabel(d) }))}
             />
           </Form.Item>
-          <Form.Item name="sourceVersionId" label="数据版本"><Input placeholder="选择数据集后自动带出 currentVersionId" /></Form.Item>
+          <Form.Item name="sourceVersionId" label="数据版本" rules={[{ required: true, message: '请选择数据版本' }]}>
+            <Select
+              placeholder="请选择数据版本"
+              disabled={!selectedTaskDataset?.currentVersionId}
+              options={selectedTaskDataset?.currentVersionId ? [{ value: selectedTaskDataset.currentVersionId, label: `当前版本 · ${selectedTaskDataset.currentVersionId}` }] : []}
+            />
+          </Form.Item>
           <Form.Item name="name" label="任务名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="scene" label="标注场景"><Select options={annotationSceneOptions} onChange={(scene) => taskForm.setFieldsValue({ templateId: undefined, templateMode: 'INLINE_CREATE', inlineTemplateName: `${selectedTaskDataset?.name ?? '数据集'} ${txt(scene)}模板` })} /></Form.Item>
           <Form.Item name="templateMode" label="标签来源"><Select options={[{ value: 'EXISTING', label: '选择已发布模板' }, { value: 'INLINE_CREATE', label: '选择标签并自动建模板' }]} /></Form.Item>

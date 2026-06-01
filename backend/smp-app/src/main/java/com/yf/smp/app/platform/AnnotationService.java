@@ -180,7 +180,7 @@ public class AnnotationService {
 
         String id = "ANN-" + randomHex(10).toUpperCase(Locale.ROOT);
         OffsetDateTime at = now();
-        String sourceVersionId = blank(request.sourceVersionId(), source.currentVersionId());
+        String sourceVersionId = resolveSourceVersionId(principal, source, request.sourceVersionId());
         List<String> sampleFileIds = sampleFiles(sourceVersionId, scene);
         long total = sampleFileIds.isEmpty() ? countDatasetFiles(sourceVersionId) : sampleFileIds.size();
         if (total <= 0) {
@@ -198,6 +198,20 @@ public class AnnotationService {
             audit(principal, source.tenantId(), "ANNOTATION_TASK_ASSIGNED", "AnnotationTask", id, "SUCCESS", "INFO", null, assignees + ";" + reviewers, TRACE_TAG);
         }
         return detail(taskRecord(id));
+    }
+
+    private String resolveSourceVersionId(PlatformPrincipal principal, DatasetInfo source, String requestedVersionId) {
+        String sourceVersionId = blank(requestedVersionId, source.currentVersionId());
+        if (blank(sourceVersionId)) {
+            audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "Dataset", source.datasetId(), "FAILURE", "WARNING", null, "SOURCE_VERSION_REQUIRED", TRACE_TAG + ";ANNOTATION_SOURCE_VERSION_INVALID");
+            throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "ANNOTATION_SOURCE_VERSION_INVALID: 源数据集没有可用于创建标注任务的当前版本");
+        }
+        if (exists("SELECT COUNT(*) FROM dataset_version WHERE dataset_id=? AND version_id=?", source.datasetId(), sourceVersionId)) {
+            return sourceVersionId;
+        }
+        String diagnostic = "ANNOTATION_SOURCE_VERSION_INVALID: 请选择数据集版本 ID，不要输入版本展示名；当前传入：" + sourceVersionId;
+        audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATE_FAILED", "DatasetVersion", sourceVersionId, "FAILURE", "WARNING", source.datasetId(), "VERSION_NOT_FOUND", TRACE_TAG + ";ANNOTATION_SOURCE_VERSION_INVALID");
+        throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, diagnostic);
     }
 
     private AnnotationLabelTemplateRecord resolveTaskTemplate(PlatformPrincipal principal, DatasetInfo source, AnnotationTaskCreateRequest request) {

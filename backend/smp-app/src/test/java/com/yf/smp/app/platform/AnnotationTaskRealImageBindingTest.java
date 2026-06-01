@@ -152,6 +152,30 @@ class AnnotationTaskRealImageBindingTest {
     }
 
     @Test
+    void createTaskRejectsDisplayVersionNameWithoutDatabaseForeignKeyFailure() throws Exception {
+        seedAdditionalDatasetFiles();
+        String adminToken = login("admin", "YF");
+
+        JsonNode create = postJson("/api/v1/annotation/tasks", "trace-ann-invalid-version-name", """
+            {
+              "sourceDatasetId":"DATASET-WELD-DEFECT",
+              "sourceVersionId":"v1,0",
+              "templateId":"LT-WELD-BBOX",
+              "name":"错误版本展示名不应导致500",
+              "scene":"IMAGE_TAGGING",
+              "reviewEnabled":true,
+              "prelabelEnabled":false,
+              "labelStudioEnabled":false
+            }
+            """, adminToken);
+
+        assertThat(create.at("/code").asInt()).isEqualTo(42200);
+        assertThat(create.at("/message").asText()).contains("ANNOTATION_SOURCE_VERSION_INVALID");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM annotation_task WHERE name=?", Integer.class, "错误版本展示名不应导致500"))
+            .isZero();
+    }
+
+    @Test
     void independentAnnotationTagsCanBeManagedWithoutDatasetBinding() throws Exception {
         String adminToken = login("admin", "YF");
 
