@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import { dataApi } from '../platform/platformApi';
-import { DataPipelineStandardPage, TagManagementPage } from './DataPages';
+import { DataPipelineStandardPage, DatasetUploadPage, TagManagementPage } from './DataPages';
 import { useSessionStore } from '../platform/sessionStore';
 
 vi.mock('../platform/platformApi', async () => {
@@ -200,6 +200,43 @@ vi.mock('../platform/platformApi', async () => {
         pageSize: 100,
         stats: { total: 3, raw: 2, preprocessed: 1, annotated: 0, restricted: 0, totalSizeBytes: 7168 },
       }),
+      dataSources: vi.fn().mockResolvedValue([]),
+      createDatasetUploadSession: vi.fn().mockResolvedValue({
+        sessionId: 'DUS-UNIT-001',
+        datasetId: null,
+        versionId: null,
+        status: 'PENDING_UPLOAD',
+        creationMode: 'LOCAL_UPLOAD',
+        targetAction: 'CREATE_DATASET',
+        targetDatasetId: null,
+        targetVersionId: null,
+        progress: { phase: 'PENDING_UPLOAD', percent: 0 },
+        summary: { totalFiles: 0, acceptedFiles: 0, rejectedFiles: 0 },
+        datasetStatus: null,
+        versionStatus: null,
+        diagnosticCode: 'OK',
+        diagnosticMessage: 'SESSION_CREATED',
+        files: [],
+      }),
+      uploadDatasetSessionFiles: vi.fn().mockResolvedValue({
+        sessionId: 'DUS-UNIT-001',
+        datasetId: null,
+        versionId: null,
+        status: 'UPLOADING',
+        creationMode: 'LOCAL_UPLOAD',
+        targetAction: 'CREATE_DATASET',
+        targetDatasetId: null,
+        targetVersionId: null,
+        progress: { phase: 'UPLOADING_FILES', percent: 45 },
+        summary: { totalFiles: 1, acceptedFiles: 1, rejectedFiles: 0 },
+        datasetStatus: null,
+        versionStatus: null,
+        diagnosticCode: 'OK',
+        diagnosticMessage: 'UPLOAD_SUMMARY_UPDATED',
+        files: [{ fileName: 'line-1.jpg', fileId: 'FILE-UP-001', status: 'UPLOADED', sizeBytes: 1024, contentType: 'image/jpeg', diagnosticCode: 'OK', diagnosticMessage: 'FILE_ACCEPTED' }],
+      }),
+      datasetUploadSession: vi.fn().mockResolvedValue({}),
+      commitDatasetUploadSession: vi.fn().mockResolvedValue({}),
       operators: vi.fn().mockImplementation((params?: { categoryGroup?: string }) => {
         const items = params?.categoryGroup ? operatorItems.filter((item) => item.categoryGroup === params.categoryGroup) : operatorItems;
         return Promise.resolve({ items, total: items.length, categories: [], stats: { total: items.length, builtin: items.length, custom: 0, published: items.length, submitted: 0 } });
@@ -300,6 +337,50 @@ function renderTagManagementPage() {
     </QueryClientProvider>,
   );
 }
+
+function renderDatasetUploadPage() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  useSessionStore.setState({
+    token: 'token-test',
+    initialized: true,
+    user: { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-CABIN', tenantName: '座舱BU', buCode: 'CABIN', status: 'ACTIVE', roles: ['BU_ADMIN'], roleNames: ['BU管理员'], permissions: [], menuPermissions: [], sessionVersion: 1 },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <DatasetUploadPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe('DatasetUploadPage local folder upload', () => {
+  it('keeps extension-detected images visible after selecting a folder', async () => {
+    renderDatasetUploadPage();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: '下一步：创建上传会话' }));
+    expect(await screen.findByText(/上传会话 DUS-UNIT-001/)).toBeInTheDocument();
+
+    const folderInput = document.querySelector('input[webkitdirectory]') as HTMLInputElement;
+    const imageFile = new File(['image-bytes'], 'line-1.jpg', { type: '' });
+    Object.defineProperty(imageFile, 'webkitRelativePath', { value: 'batch-a/line-1.jpg' });
+    const textFile = new File(['text'], 'readme.txt', { type: 'text/plain' });
+    Object.defineProperty(textFile, 'webkitRelativePath', { value: 'batch-a/readme.txt' });
+
+    fireEvent.change(folderInput, { target: { files: [imageFile, textFile] } });
+
+    expect(await screen.findByText('line-1.jpg')).toBeInTheDocument();
+    expect(screen.getByText('batch-a/line-1.jpg')).toBeInTheDocument();
+    expect(screen.getByText('image/jpeg')).toBeInTheDocument();
+    expect(screen.queryByText('readme.txt')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '上传并登记到平台' }));
+    await waitFor(() => expect(dataApi.uploadDatasetSessionFiles).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(dataApi.uploadDatasetSessionFiles).mock.calls[0]?.[1]).toHaveLength(1);
+    expect(vi.mocked(dataApi.uploadDatasetSessionFiles).mock.calls[0]?.[1]?.[0]?.name).toBe('line-1.jpg');
+  });
+});
 
 describe('TagManagementPage', () => {
   it('renders independent tag catalog and supports tag creation', async () => {

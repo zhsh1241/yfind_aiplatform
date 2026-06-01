@@ -115,6 +115,27 @@ class DataManagementControllerTest {
     }
 
     @Test
+    void localDatasetUploadDetectsImageContentTypeFromExtensionWhenBrowserOmitsMime() throws Exception {
+        String buAdmin = login("buadmin", "CABIN");
+        JsonNode created = postJson("/api/v1/dataset-upload-sessions", "trace-f015-folder-mime-create", """
+            {"name":"F015 文件夹图片上传","tenantId":"TENANT-CABIN","accessLevel":"TEAM","datasetType":"RAW","dataType":"IMAGE","creationMode":"LOCAL_UPLOAD"}
+            """, buAdmin);
+        String sessionId = created.at("/data/sessionId").asText();
+
+        JsonNode uploaded = postMultipart(
+            "/api/v1/dataset-upload-sessions/" + sessionId + "/files",
+            "trace-f015-folder-mime-upload",
+            List.of(new MultipartPart("files", "folder-line-1.jpg", "application/octet-stream", imageBytes("jpg"))),
+            buAdmin
+        );
+
+        assertThat(uploaded.at("/code").asInt()).isZero();
+        assertThat(uploaded.at("/data/summary/acceptedFiles").asInt()).isEqualTo(1);
+        assertThat(uploaded.at("/data/files/0/fileName").asText()).isEqualTo("folder-line-1.jpg");
+        assertThat(uploaded.at("/data/files/0/contentType").asText()).isEqualTo("image/jpeg");
+    }
+
+    @Test
     void localDatasetUploadRejectsIllegalFormatAndPreventsEmptyCommit() throws Exception {
         // TASK-local-dataset-upload AC-02 AC-04 AC-06
         String buAdmin = login("buadmin", "CABIN");

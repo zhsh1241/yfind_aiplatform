@@ -841,7 +841,7 @@ public class DataManagementService {
                 processZipUpload(principal, session, normalizedName, part.getBytes(), now);
                 return;
             }
-            processSingleUploadFile(principal, session, normalizedName, part.getContentType(), part.getBytes(), now);
+            processSingleUploadFile(principal, session, normalizedName, resolveUploadContentType(normalizedName, part.getContentType()), part.getBytes(), now);
         } catch (IOException exception) {
             insertRejectedUploadFile(session.sessionId(), normalizedName, size, "DATASET_UPLOAD_FILE_CORRUPTED", "文件读取失败");
             audit(principal, session.tenantId(), "DATASET_UPLOAD_FILE_REJECTED", "DatasetUploadSession", session.sessionId(), "FAILURE", "WARNING", normalizedName, "FILE_CORRUPTED", TRACE_TAG);
@@ -1086,11 +1086,16 @@ public class DataManagementService {
         if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
         if (name.endsWith(".bmp")) return "image/bmp";
         if (name.endsWith(".webp")) return "image/webp";
+        if (name.endsWith(".gif")) return "image/gif";
         if (name.endsWith(".zip")) return "application/zip";
         if (name.endsWith(".mp4")) return "video/mp4";
         if (name.endsWith(".mov")) return "video/quicktime";
         if (name.endsWith(".avi")) return "video/x-msvideo";
         return "application/octet-stream";
+    }
+    private String resolveUploadContentType(String fileName, String contentType) {
+        String type = blank(contentType, "");
+        return type.isBlank() || "application/octet-stream".equalsIgnoreCase(type) ? detectContentType(fileName) : type;
     }
     private String sanitizeFileName(String fileName) { return blank(fileName, "file").replace('\\', '-').replace('/', '-').replace(' ', '_'); }
     private String sha256Bytes(byte[] content) { try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content)); } catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); } }

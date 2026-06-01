@@ -67,6 +67,27 @@ const ANNOTATION_DRAFT_POLYGON_HIT_RADIUS = 7;
 const ANNOTATION_POLYGON_CENTER_MARK_SIZE = 6;
 const localUploadAccept = (dataType?: string) => dataType === 'AUDIO_VIDEO' ? '.mp4,.mov,.avi,video/mp4,video/quicktime,video/x-msvideo' : 'image/*,.zip';
 const localUploadHint = (dataType?: string) => dataType === 'AUDIO_VIDEO' ? 'mp4 / mov / avi 视频文件' : '图片 / zip 包';
+const detectLocalFileType = (file: File) => {
+  if (file.type && file.type !== 'application/octet-stream') return file.type;
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg';
+  if (name.endsWith('.png')) return 'image/png';
+  if (name.endsWith('.bmp')) return 'image/bmp';
+  if (name.endsWith('.webp')) return 'image/webp';
+  if (name.endsWith('.gif')) return 'image/gif';
+  if (name.endsWith('.zip')) return 'application/zip';
+  if (name.endsWith('.mp4')) return 'video/mp4';
+  if (name.endsWith('.mov')) return 'video/quicktime';
+  if (name.endsWith('.avi')) return 'video/x-msvideo';
+  return file.type || 'application/octet-stream';
+};
+const isLocalFileAllowed = (file: File, dataType?: string) => {
+  const name = file.name.toLowerCase();
+  const type = detectLocalFileType(file).toLowerCase();
+  return dataType === 'AUDIO_VIDEO'
+    ? ['.mp4', '.mov', '.avi'].some((ext) => name.endsWith(ext)) || ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/avi'].includes(type)
+    : ['.jpg', '.jpeg', '.png', '.bmp', '.webp', '.gif', '.zip'].some((ext) => name.endsWith(ext)) || type.startsWith('image/') || type === 'application/zip';
+};
 
 const filenameFromObjectKey = (objectKey?: string | null, fallback = 'dataset-file') => {
   if (!objectKey) return fallback;
@@ -3624,8 +3645,13 @@ export function DatasetUploadPage() {
   const isCommitPolling = activeUploadSession?.status === 'PROCESSING';
   const handledTerminalSessionRef = useRef<string | null>(null);
   const appendLocalFiles = useCallback((files: File[]) => {
+    const allowedFiles = files.filter((file) => isLocalFileAllowed(file, localUploadDataType));
+    const rejectedCount = files.length - allowedFiles.length;
+    if (rejectedCount > 0) {
+      msg.warning(`已过滤 ${rejectedCount} 个不支持的文件；当前仅支持${localUploadHint(localUploadDataType)}。`);
+    }
     setSelectedLocalFiles((items) => {
-      const next = [...items, ...files];
+      const next = [...items, ...allowedFiles];
       const seen = new Set<string>();
       return next.filter((item) => {
         const key = localFileRowKey(item);
@@ -3634,7 +3660,7 @@ export function DatasetUploadPage() {
         return true;
       });
     });
-  }, []);
+  }, [localUploadDataType, msg]);
   const handleFolderInputChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     appendLocalFiles(Array.from(event.target.files ?? []));
     event.currentTarget.value = '';
@@ -3957,7 +3983,7 @@ export function DatasetUploadPage() {
             </Space>
             <Table<{ key: string; name: string; relativePath?: string; type: string; size: number }>
               rowKey="key"
-              dataSource={selectedLocalFiles.map((file) => ({ key: localFileRowKey(file), name: file.name, relativePath: localFileRelativePath(file), type: file.type || 'application/octet-stream', size: file.size }))}
+              dataSource={selectedLocalFiles.map((file) => ({ key: localFileRowKey(file), name: file.name, relativePath: localFileRelativePath(file), type: detectLocalFileType(file), size: file.size }))}
               pagination={false}
               locale={{ emptyText: `请选择本地${selectedUploadHint}。` }}
               columns={[
