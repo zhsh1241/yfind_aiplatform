@@ -65,12 +65,14 @@ const ANNOTATION_DRAFT_POLYGON_VERTEX_RADIUS = 2.2;
 const ANNOTATION_DRAFT_POLYGON_CLOSE_RADIUS = 3.1;
 const ANNOTATION_DRAFT_POLYGON_HIT_RADIUS = 7;
 const ANNOTATION_POLYGON_CENTER_MARK_SIZE = 6;
-const localUploadAccept = (dataType?: string) => dataType === 'AUDIO_VIDEO' ? '.mp4,.mov,.avi,video/mp4,video/quicktime,video/x-msvideo' : 'image/*,.zip';
+const localUploadAccept = (dataType?: string) => dataType === 'AUDIO_VIDEO'
+  ? '.mp4,.mov,.avi,video/mp4,video/quicktime,video/x-msvideo'
+  : '.jpg,.jpeg,.jpe,.jfif,.jepg,.png,.bmp,.webp,.gif,.zip,image/jpeg,image/png,image/bmp,image/webp,image/gif,image/*,application/zip';
 const localUploadHint = (dataType?: string) => dataType === 'AUDIO_VIDEO' ? 'mp4 / mov / avi 视频文件' : '图片 / zip 包';
 const detectLocalFileType = (file: File) => {
   if (file.type && file.type !== 'application/octet-stream') return file.type;
   const name = file.name.toLowerCase();
-  if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg';
+  if (name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.jpe') || name.endsWith('.jfif') || name.endsWith('.jepg')) return 'image/jpeg';
   if (name.endsWith('.png')) return 'image/png';
   if (name.endsWith('.bmp')) return 'image/bmp';
   if (name.endsWith('.webp')) return 'image/webp';
@@ -86,7 +88,7 @@ const isLocalFileAllowed = (file: File, dataType?: string) => {
   const type = detectLocalFileType(file).toLowerCase();
   return dataType === 'AUDIO_VIDEO'
     ? ['.mp4', '.mov', '.avi'].some((ext) => name.endsWith(ext)) || ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/avi'].includes(type)
-    : ['.jpg', '.jpeg', '.png', '.bmp', '.webp', '.gif', '.zip'].some((ext) => name.endsWith(ext)) || type.startsWith('image/') || type === 'application/zip';
+    : ['.jpg', '.jpeg', '.jpe', '.jfif', '.jepg', '.png', '.bmp', '.webp', '.gif', '.zip'].some((ext) => name.endsWith(ext)) || type.startsWith('image/') || type === 'application/zip';
 };
 
 const filenameFromObjectKey = (objectKey?: string | null, fallback = 'dataset-file') => {

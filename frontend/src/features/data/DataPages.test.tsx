@@ -355,7 +355,7 @@ function renderDatasetUploadPage() {
 }
 
 describe('DatasetUploadPage local folder upload', () => {
-  it('keeps extension-detected images visible after selecting a folder', async () => {
+  it('keeps jpg jpeg png and common jpeg aliases visible after selecting a folder', async () => {
     renderDatasetUploadPage();
     const user = userEvent.setup();
 
@@ -363,22 +363,49 @@ describe('DatasetUploadPage local folder upload', () => {
     expect(await screen.findByText(/上传会话 DUS-UNIT-001/)).toBeInTheDocument();
 
     const folderInput = document.querySelector('input[webkitdirectory]') as HTMLInputElement;
-    const imageFile = new File(['image-bytes'], 'line-1.jpg', { type: '' });
-    Object.defineProperty(imageFile, 'webkitRelativePath', { value: 'batch-a/line-1.jpg' });
+    const imageFiles = [
+      new File(['jpg-bytes'], 'line-1.jpg', { type: '' }),
+      new File(['jpeg-bytes'], 'line-2.jpeg', { type: '' }),
+      new File(['png-bytes'], 'line-3.png', { type: '' }),
+      new File(['jepg-bytes'], 'line-4.jepg', { type: '' }),
+    ];
+    imageFiles.forEach((file) => Object.defineProperty(file, 'webkitRelativePath', { value: `batch-a/${file.name}` }));
     const textFile = new File(['text'], 'readme.txt', { type: 'text/plain' });
     Object.defineProperty(textFile, 'webkitRelativePath', { value: 'batch-a/readme.txt' });
 
-    fireEvent.change(folderInput, { target: { files: [imageFile, textFile] } });
+    fireEvent.change(folderInput, { target: { files: [...imageFiles, textFile] } });
 
     expect(await screen.findByText('line-1.jpg')).toBeInTheDocument();
+    expect(screen.getByText('line-2.jpeg')).toBeInTheDocument();
+    expect(screen.getByText('line-3.png')).toBeInTheDocument();
+    expect(screen.getByText('line-4.jepg')).toBeInTheDocument();
     expect(screen.getByText('batch-a/line-1.jpg')).toBeInTheDocument();
-    expect(screen.getByText('image/jpeg')).toBeInTheDocument();
+    expect(screen.getAllByText('image/jpeg')).toHaveLength(3);
+    expect(screen.getByText('image/png')).toBeInTheDocument();
     expect(screen.queryByText('readme.txt')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '上传并登记到平台' }));
     await waitFor(() => expect(dataApi.uploadDatasetSessionFiles).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(dataApi.uploadDatasetSessionFiles).mock.calls[0]?.[1]).toHaveLength(1);
-    expect(vi.mocked(dataApi.uploadDatasetSessionFiles).mock.calls[0]?.[1]?.[0]?.name).toBe('line-1.jpg');
+    expect(vi.mocked(dataApi.uploadDatasetSessionFiles).mock.calls[0]?.[1].map((file) => file.name)).toEqual([
+      'line-1.jpg',
+      'line-2.jpeg',
+      'line-3.png',
+      'line-4.jepg',
+    ]);
+  });
+
+  it('uses explicit image extensions so the native picker can show jpeg and png files', async () => {
+    renderDatasetUploadPage();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: '下一步：创建上传会话' }));
+
+    const folderInput = document.querySelector('input[webkitdirectory]') as HTMLInputElement;
+    expect(folderInput).toHaveAttribute('accept', expect.stringContaining('.jpeg'));
+    expect(folderInput).toHaveAttribute('accept', expect.stringContaining('.jepg'));
+    expect(folderInput).toHaveAttribute('accept', expect.stringContaining('.png'));
+    expect(folderInput).toHaveAttribute('accept', expect.stringContaining('image/jpeg'));
+    expect(folderInput).toHaveAttribute('accept', expect.stringContaining('image/png'));
   });
 });
 
