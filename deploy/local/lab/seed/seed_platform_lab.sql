@@ -28,6 +28,27 @@ version = EXCLUDED.version,
 updated_by = EXCLUDED.updated_by,
 updated_at = CURRENT_TIMESTAMP;
 
+
+INSERT INTO platform_config_value (id, config_key, scope_type, scope_id, value_json, masked_value, version, updated_by, updated_at)
+VALUES ('CV-storage.prefix-BU-TENANT-CABIN', 'storage.prefix', 'BU', 'TENANT-CABIN', 'TENANT-CABIN', NULL, 1, 'USR-ADMIN', CURRENT_TIMESTAMP)
+ON CONFLICT (config_key, scope_type, scope_id) DO UPDATE SET
+id = EXCLUDED.id,
+value_json = EXCLUDED.value_json,
+masked_value = EXCLUDED.masked_value,
+version = EXCLUDED.version,
+updated_by = EXCLUDED.updated_by,
+updated_at = CURRENT_TIMESTAMP;
+
+INSERT INTO platform_config_value (id, config_key, scope_type, scope_id, value_json, masked_value, version, updated_by, updated_at)
+VALUES ('CV-storage.prefix-BU-TENANT-QE', 'storage.prefix', 'BU', 'TENANT-QE', 'TENANT-QE', NULL, 1, 'USR-ADMIN', CURRENT_TIMESTAMP)
+ON CONFLICT (config_key, scope_type, scope_id) DO UPDATE SET
+id = EXCLUDED.id,
+value_json = EXCLUDED.value_json,
+masked_value = EXCLUDED.masked_value,
+version = EXCLUDED.version,
+updated_by = EXCLUDED.updated_by,
+updated_at = CURRENT_TIMESTAMP;
+
 INSERT INTO data_source (source_id, name, source_type, tenant_id, project_id, endpoint, port, database_name, credential_mode, secret_ref, shared_scope, description, status, last_test_at, diagnostic_code, diagnostic_message, latency_ms, created_by, created_at, updated_at) VALUES
 ('DSRC-LAB-POSTGRES', '本地 PostgreSQL MES 源库', 'RELATIONAL_DB', 'TENANT-CABIN', NULL, '127.0.0.1', 5432, 'smp_source_mes', 'SECRET_REF', 'secret://local/postgres-source', 'BU', 'Docker 生产仿真：MES 工单与质量测量 PostgreSQL 源库', 'ACTIVE', CURRENT_TIMESTAMP, 'OK', 'DOCKER RELATIONAL_DB connector verified', 5, 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
 ('DSRC-LAB-MYSQL', '本地 MySQL 工位事件源库', 'RELATIONAL_DB', 'TENANT-CABIN', NULL, '127.0.0.1', 3306, 'smp_source_mes', 'SECRET_REF', 'secret://local/mysql-source', 'BU', 'Docker 生产仿真：工位事件与供应商质量 MySQL 源库', 'ACTIVE', CURRENT_TIMESTAMP, 'OK', 'DOCKER RELATIONAL_DB connector verified', 5, 'USR-ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),

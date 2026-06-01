@@ -523,7 +523,7 @@ public class AnnotationService {
         String sha = sha256(task.taskId() + ":" + task.reviewedCount() + ":" + at);
         long size = Math.max(512L, task.reviewedCount() * 256L);
         String annotationBucket = objectStorageService.datasetBucket(task.tenantId());
-        String annotationObjectKey = task.tenantId() + "/annotation/" + task.taskId() + "/labels.jsonl";
+        String annotationObjectKey = objectStorageService.objectKey(task.tenantId(), "annotation", task.taskId(), "labels.jsonl");
         String annotationPayload = "{\"taskId\":\"" + task.taskId() + "\",\"reviewedCount\":" + task.reviewedCount() + ",\"scene\":\"" + task.scene() + "\"}\n";
         objectStorageService.uploadObjectIfConfigured(annotationBucket, annotationObjectKey, annotationPayload.getBytes(StandardCharsets.UTF_8), "application/jsonl");
         jdbc.update("INSERT INTO dataset (dataset_id,name,dataset_type,data_type,tenant_id,project_id,current_version_id,status,access_level,tags,record_count,size_bytes,owner_id,description,created_at,updated_at) VALUES (?,?,?,?,?,?,NULL,'ACTIVE','TEAM',?,?,?,?,?,?,?)", datasetId, task.name() + " 标注结果", "ANNOTATED", source.dataType(), task.tenantId(), task.projectId(), "标注,ANNOTATED," + task.scene(), task.reviewedCount(), size, principal.user().id(), "由标注任务 " + task.taskId() + " 生成", at, at);
@@ -621,7 +621,7 @@ public class AnnotationService {
             size = exportPackage.sizeBytes();
             String sha = exportPackage.sha256();
             String exportBucket = objectStorageService.datasetBucket(task.tenantId());
-            String exportObjectKey = task.tenantId() + "/annotation/" + task.taskId() + "/exports/" + format.toLowerCase(Locale.ROOT) + "/" + exportId + packageExtension(format);
+            String exportObjectKey = objectStorageService.objectKey(task.tenantId(), "annotation", task.taskId(), "exports", format.toLowerCase(Locale.ROOT), exportId + packageExtension(format));
             objectStorageService.uploadObjectIfConfigured(exportBucket, exportObjectKey, exportPackage.content(), contentType(format));
             jdbc.update("INSERT INTO platform_file_object (file_id,asset_type,tenant_id,project_id,bucket,object_key,expected_sha256,sha256,expected_size_bytes,size_bytes,content_type,storage_tier,status,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", fileId, "DATASET", task.tenantId(), task.projectId(), exportBucket, exportObjectKey, sha, sha, size, size, contentType(format), "STANDARD", "AVAILABLE", principal.user().id(), at, at);
         }
@@ -787,8 +787,13 @@ public class AnnotationService {
             throw new PlatformException(PlatformError.CONFLICT, "ANNOTATION_EXPORT_EXPIRED: 导出文件已过期，请重新生成");
         }
         if (blank(export.fileId())) throw new PlatformException(PlatformError.CONFLICT, "ANNOTATION_EXPORT_NOT_READY: 导出文件尚未生成");
+        FileObjectRecord file = fileObject(export.fileId());
         String diagnostic = objectStorageService.downloadDiagnostic();
-        String url = diagnostic.startsWith("TODO_CONFIRM") ? null : objectStorageService.publicObjectUrl(objectStorageService.datasetBucket(task.tenantId()), task.tenantId() + "/annotation/" + task.taskId() + "/exports/" + export.format().toLowerCase(Locale.ROOT) + "/" + export.exportId() + packageExtension(export.format()));
+        String url = objectStorageService.presignedDownloadUrl(file.bucket(), file.objectKey(), file.objectKey());
+        if (url == null || url.isBlank()) {
+            url = "/api/v1/platform/files/" + export.fileId() + "/content";
+            diagnostic = diagnostic.startsWith("TODO_CONFIRM") ? diagnostic + ";AUTHENTICATED_CONTENT_ENDPOINT_READY" : "AUTHENTICATED_CONTENT_ENDPOINT_READY";
+        }
         audit(principal, task.tenantId(), "ANNOTATION_EXPORT_DOWNLOADED", "AnnotationTrainingExport", exportId, "SUCCESS", "INFO", export.fileId(), diagnostic, TRACE_TAG);
         return new AnnotationTrainingExportResponse(export.exportId(), export.taskId(), export.format(), export.formatVersion(), export.status(), diagnostic, diagnostic.startsWith("TODO_CONFIRM") ? "文件下载未配置：" + diagnostic : export.diagnosticMessage(), export.fileId(), url, export.sizeBytes(), export.asyncRequired(), export.packageIncludesImages(), export.requestedAt(), export.generatedAt(), export.expiresAt());
     }
@@ -1462,6 +1467,10 @@ public class AnnotationService {
         }
     }
 
+    private FileObjectRecord fileObject(String fileId) {
+        return jdbc.queryForObject("SELECT * FROM platform_file_object WHERE file_id=?", (rs, n) -> new FileObjectRecord(rs.getString("file_id"), rs.getString("bucket"), rs.getString("object_key")), fileId);
+    }
+
     private double round(double value) { return Math.round(value * 1000.0d) / 1000.0d; }
     private boolean exists(String sql, Object... args) { return count(sql, args) > 0; }
     private long count(String sql, Object... args) { Long count = jdbc.queryForObject(sql, Long.class, args); return count == null ? 0L : count; }
@@ -1492,6 +1501,7 @@ record AnnotationExternalBindingRecord(String bindingId, String taskId, String p
 record AnnotationExternalTaskBindingRecord(String bindingId, String taskId, String workItemId, String provider, String externalProjectId, String externalTaskId, String externalTaskUrl, String syncStatus, String importStatus, String diagnosticCode, String diagnosticMessage, OffsetDateTime lastSyncAt, OffsetDateTime lastImportAt) {}
 record DatasetInfo(String datasetId, String name, String datasetType, String dataType, String tenantId, String projectId, String currentVersionId, String status, long recordCount, long sizeBytes, String ownerId, String description) {}
 record ExportPackage(byte[] content, long sizeBytes, String sha256) {}
+record FileObjectRecord(String fileId, String bucket, String objectKey) {}
 record YoloSampleRow(String workItemId, String annotationJson, String bucket, String objectKey) {}
 record YoloSample(String workItemId, byte[] imageBytes, String annotationJson) {}
 record YoloBox(double x, double y, double w, double h) {}

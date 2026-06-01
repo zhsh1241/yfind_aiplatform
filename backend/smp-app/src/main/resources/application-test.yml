@@ -16,8 +16,10 @@ spring:
 
 smp:
   storage:
+    enabled: "${SMP_STORAGE_ENABLED:true}"
     endpoint: "${SMP_STORAGE_ENDPOINT:http://localhost:9000}"
     public-endpoint: "${SMP_STORAGE_PUBLIC_ENDPOINT:http://localhost:9000}"
     bucket: "${SMP_STORAGE_BUCKET:smp-datasets}"
     access-key: "${SMP_STORAGE_ACCESS_KEY:smpminio}"
     secret-key: "${SMP_STORAGE_SECRET_KEY:smpminio_local_password}"
+    presigned-expiry-seconds: "${SMP_STORAGE_PRESIGNED_EXPIRY_SECONDS:900}"

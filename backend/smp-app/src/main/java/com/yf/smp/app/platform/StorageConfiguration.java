@@ -2,6 +2,7 @@ package com.yf.smp.app.platform;
 
 import io.minio.MinioClient;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -9,14 +10,18 @@ import org.springframework.context.annotation.Configuration;
 class StorageConfiguration {
 
     @Bean
+    @ConditionalOnProperty(prefix = "smp.storage", name = "enabled", havingValue = "true")
     MinioClient minioClient(
         @Value("${smp.storage.endpoint:}") String endpoint,
         @Value("${smp.storage.access-key:}") String accessKey,
         @Value("${smp.storage.secret-key:}") String secretKey
     ) {
+        if (!hasText(endpoint) || !hasText(accessKey) || !hasText(secretKey)) {
+            throw new IllegalStateException("smp.storage.enabled=true 时必须显式配置 endpoint、access-key 与 secret-key");
+        }
         return MinioClient.builder()
-            .endpoint(hasText(endpoint) ? endpoint.trim() : "http://localhost:9000")
-            .credentials(hasText(accessKey) ? accessKey.trim() : "smpminio", hasText(secretKey) ? secretKey.trim() : "smpminio_local_password")
+            .endpoint(endpoint.trim())
+            .credentials(accessKey.trim(), secretKey.trim())
             .build();
     }
 

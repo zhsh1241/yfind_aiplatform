@@ -30,8 +30,10 @@ smp:
   content-safety:
     bypass: ${SMP_CONTENT_SAFETY_BYPASS:false}
   storage:
+    enabled: ${SMP_STORAGE_ENABLED:false}
     endpoint: ${SMP_STORAGE_ENDPOINT:}
     public-endpoint: ${SMP_STORAGE_PUBLIC_ENDPOINT:}
     bucket: ${SMP_STORAGE_BUCKET:}
     access-key: ${SMP_STORAGE_ACCESS_KEY:}
     secret-key: ${SMP_STORAGE_SECRET_KEY:}
+    presigned-expiry-seconds: ${SMP_STORAGE_PRESIGNED_EXPIRY_SECONDS:900}

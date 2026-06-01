@@ -129,8 +129,9 @@ class PlatformOrganizationConfigControllerTest {
         assertThat(restored.at("/data/status").asText()).isEqualTo("AVAILABLE");
         JsonNode download = getJson("/api/v1/platform/files/" + fileId + "/download-url", "trace-f007-file-download", admin);
         assertThat(download.at("/data/status").asText()).isEqualTo("READY");
-        assertThat(download.at("/data/diagnostic").asText()).isEqualTo("SIGNED_URL_READY");
-        assertThat(download.at("/data/downloadUrl").asText()).contains("localhost");
+        assertThat(download.at("/data/diagnostic").asText()).isEqualTo("PRESIGNED_URL_READY");
+        assertThat(download.at("/data/downloadUrl").asText()).contains("X-Amz-Signature");
+        assertThat(download.at("/data/downloadUrl").asText()).contains("X-Amz-Expires=900");
 
         JsonNode notification = postJson("/api/v1/platform/notification-channels/NC-GLOBAL-EMAIL/test", "trace-f007-notification-test", "{}", admin);
         assertThat(notification.at("/data/result").asText()).isEqualTo("UNCONFIGURED");

@@ -542,15 +542,15 @@ public class PipelineService {
             byte[] seededVideo = readBundledSeedVideo("weld-source.avi");
             List<byte[]> seededFrames = videoFrameExtractor.extractFrames(seededVideo, "weld-source.avi", 6);
             if (seededFrames.size() >= 6) {
-                objectStorageService.uploadObjectIfConfigured(sourceFile.bucket(), "TENANT-CABIN/dataset/video/weld-source.avi", seededVideo, "video/x-msvideo");
+                objectStorageService.uploadObjectIfConfigured(sourceFile.bucket(), objectStorageService.objectKey("TENANT-CABIN", "dataset", "video", "weld-source.avi"), seededVideo, "video/x-msvideo");
                 String sha = sha256(seededVideo);
                 OffsetDateTime at = now();
                 jdbc.update("""
                     UPDATE platform_file_object
-                    SET object_key='TENANT-CABIN/dataset/video/weld-source.avi', content_type='video/x-msvideo',
+                    SET object_key=?, content_type='video/x-msvideo',
                         expected_sha256=?, sha256=?, expected_size_bytes=?, size_bytes=?, updated_at=?
                     WHERE file_id=?
-                    """, sha, sha, seededVideo.length, seededVideo.length, at, sourceFile.fileId());
+                    """, objectStorageService.objectKey("TENANT-CABIN", "dataset", "video", "weld-source.avi"), sha, sha, seededVideo.length, seededVideo.length, at, sourceFile.fileId());
                 jdbc.update("UPDATE dataset SET record_count=1, size_bytes=?, updated_at=? WHERE dataset_id=?", seededVideo.length, at, sample.datasetId());
                 jdbc.update("UPDATE dataset_version SET record_count=1, size_bytes=? WHERE version_id=?", seededVideo.length, sample.versionId());
                 frames = seededFrames;
@@ -563,7 +563,7 @@ public class PipelineService {
         int index = 1;
         for (byte[] content : frames) {
             String fileId = "FILE-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT);
-            String objectKey = pipeline.tenantId() + "/pipeline/" + runId + "/frames/frame-%04d.jpg".formatted(index);
+            String objectKey = objectStorageService.objectKey(pipeline.tenantId(), "pipeline", runId, "frames", "frame-%04d.jpg".formatted(index));
             files.add(new PipelineOutputFile(fileId, "DF-PIPE-" + randomHex(8).toUpperCase(Locale.ROOT), objectKey, content, "image/jpeg", content.length, sha256(content)));
             index++;
         }

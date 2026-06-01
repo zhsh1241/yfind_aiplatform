@@ -2,10 +2,12 @@ package com.yf.smp.app.platform;
 
 import io.minio.BucketExistsArgs;
 import io.minio.GetObjectArgs;
+import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.StatObjectArgs;
+import io.minio.http.Method;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -13,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Map;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -24,17 +27,20 @@ class ObjectStorageService {
     private final ObjectProvider<MinioClient> minioClientProvider;
     private final String storageEndpointOverride;
     private final String publicStorageEndpointOverride;
+    private final int presignedExpirySeconds;
 
     ObjectStorageService(
         JdbcTemplate jdbc,
         ObjectProvider<MinioClient> minioClientProvider,
         @Value("${smp.storage.endpoint:}") String storageEndpointOverride,
-        @Value("${smp.storage.public-endpoint:}") String publicStorageEndpointOverride
+        @Value("${smp.storage.public-endpoint:}") String publicStorageEndpointOverride,
+        @Value("${smp.storage.presigned-expiry-seconds:900}") int presignedExpirySeconds
     ) {
         this.jdbc = jdbc;
         this.minioClientProvider = minioClientProvider;
         this.storageEndpointOverride = storageEndpointOverride;
         this.publicStorageEndpointOverride = publicStorageEndpointOverride;
+        this.presignedExpirySeconds = Math.max(60, Math.min(presignedExpirySeconds, 3600));
     }
 
     String datasetBucket(String tenantId) {
@@ -48,6 +54,36 @@ class ObjectStorageService {
         }
         String bucket = values.isEmpty() ? "" : sanitize(values.getFirst());
         return bucket.isBlank() || bucket.startsWith("TODO_CONFIRM") ? "smp-datasets" : bucket;
+    }
+
+    String objectKey(String tenantId, String domain, String... parts) {
+        StringBuilder key = new StringBuilder(storagePrefix(tenantId));
+        appendPathSegment(key, domain);
+        for (String part : parts) {
+            appendPathSegment(key, part);
+        }
+        return key.toString();
+    }
+
+    String presignedDownloadUrl(String bucket, String objectKey, String downloadFilename) {
+        MinioClient client = minioClientProvider.getIfAvailable();
+        if (client == null) {
+            return null;
+        }
+        try {
+            String signedUrl = client.getPresignedObjectUrl(
+                GetPresignedObjectUrlArgs.builder()
+                    .method(Method.GET)
+                    .bucket(bucket)
+                    .object(objectKey)
+                    .expiry(presignedExpirySeconds)
+                    .extraQueryParams(downloadFilename == null || downloadFilename.isBlank() ? Map.of() : Map.of("response-content-disposition", "attachment; filename=\"" + safeDownloadFilename(downloadFilename) + "\""))
+                    .build()
+            );
+            return rewriteToPublicEndpoint(signedUrl);
+        } catch (Exception exception) {
+            return null;
+        }
     }
 
     void uploadObjectIfConfigured(String bucket, String objectKey, byte[] content, String contentType) {
@@ -76,20 +112,10 @@ class ObjectStorageService {
 
     String downloadDiagnostic() {
         if (minioClientProvider.getIfAvailable() != null) {
-            return "SIGNED_URL_READY";
+            return "PRESIGNED_URL_READY";
         }
         String endpoint = storageEndpoint();
-        return endpoint.isBlank() || endpoint.startsWith("TODO_CONFIRM") ? "TODO_CONFIRM_MINIO_ENDPOINT" : "SIGNED_URL_READY";
-    }
-
-    String publicObjectUrl(String bucket, String objectKey) {
-        String publicEndpoint = publicStorageEndpoint();
-        if (publicEndpoint.isBlank()) {
-            return null;
-        }
-        String normalizedEndpoint = publicEndpoint.replaceAll("/+$", "");
-        String normalizedObjectKey = objectKey.replaceFirst("^/+", "");
-        return normalizedEndpoint + "/" + bucket + "/" + normalizedObjectKey;
+        return endpoint.isBlank() || endpoint.startsWith("TODO_CONFIRM") ? "TODO_CONFIRM_MINIO_ENDPOINT" : "AUTHENTICATED_CONTENT_ENDPOINT_READY";
     }
 
     byte[] readObject(String bucket, String objectKey) {
@@ -146,11 +172,57 @@ class ObjectStorageService {
                 return configured;
             }
         }
-        String endpoint = storageEndpoint();
-        if (!endpoint.isBlank() && !endpoint.startsWith("TODO_CONFIRM")) {
-            return endpoint;
+        return "";
+    }
+
+
+    private String storagePrefix(String tenantId) {
+        List<String> values = jdbc.queryForList(
+            "SELECT value_json FROM platform_config_value WHERE config_key='storage.prefix' AND ((scope_type='BU' AND scope_id=?) OR (scope_type='GLOBAL' AND scope_id='TENANT-YF')) ORDER BY CASE WHEN scope_type='BU' THEN 0 ELSE 1 END",
+            String.class,
+            tenantId
+        );
+        String configured = values.isEmpty() ? "" : sanitize(values.getFirst());
+        String prefix = configured.isBlank() || configured.startsWith("TODO_CONFIRM") ? tenantId : configured;
+        return normalizeObjectPath(prefix);
+    }
+
+    private void appendPathSegment(StringBuilder key, String value) {
+        String segment = normalizeObjectPath(value);
+        if (segment.isBlank()) {
+            return;
         }
-        return minioClientProvider.getIfAvailable() != null ? "http://localhost:9000" : "";
+        if (!key.isEmpty()) {
+            key.append('/');
+        }
+        key.append(segment);
+    }
+
+    private String rewriteToPublicEndpoint(String signedUrl) {
+        String publicEndpoint = publicStorageEndpoint();
+        if (publicEndpoint.isBlank()) {
+            return signedUrl;
+        }
+        try {
+            java.net.URI signed = java.net.URI.create(signedUrl);
+            java.net.URI publicBase = java.net.URI.create(publicEndpoint.replaceAll("/+$", ""));
+            return new java.net.URI(publicBase.getScheme(), publicBase.getAuthority(), signed.getPath(), signed.getQuery(), signed.getFragment()).toString();
+        } catch (Exception ignored) {
+            return signedUrl;
+        }
+    }
+
+    private String safeDownloadFilename(String value) {
+        String filename = value.contains("/") ? value.substring(value.lastIndexOf('/') + 1) : value;
+        return filename.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private String normalizeObjectPath(String value) {
+        return sanitize(value)
+            .replace('\\', '/')
+            .replaceAll("^/+|/+$", "")
+            .replaceAll("/{2,}", "/")
+            .replaceAll("\\.\\.", "_");
     }
 
     private void ensureBucket(MinioClient client, String bucket) throws Exception {

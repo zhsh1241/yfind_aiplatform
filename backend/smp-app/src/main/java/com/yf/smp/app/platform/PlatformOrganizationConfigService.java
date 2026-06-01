@@ -265,7 +265,7 @@ public class PlatformOrganizationConfigService {
         String fileId = "FILE-" + randomHex(8).toUpperCase(Locale.ROOT);
         String bucket = objectStorageService.datasetBucket(tenantId);
         String filename = blankToDefault(request.filename(), fileId + ".bin").replaceAll("[^A-Za-z0-9._-]", "_");
-        String objectKey = tenantId + "/" + blankToDefault(request.assetType(), "GENERIC").toLowerCase(Locale.ROOT) + "/" + fileId + "/" + filename;
+        String objectKey = objectStorageService.objectKey(tenantId, blankToDefault(request.assetType(), "GENERIC").toLowerCase(Locale.ROOT), fileId, filename);
         OffsetDateTime now = now();
         jdbc.update("""
             INSERT INTO platform_file_object (file_id, asset_type, tenant_id, project_id, bucket, object_key, expected_sha256, expected_size_bytes, content_type, storage_tier, status, owner_id, created_at, updated_at)
@@ -333,7 +333,7 @@ public class PlatformOrganizationConfigService {
             recordAudit(principal, file.tenantId(), "FILE_HASH_MISMATCH", "FileObject", fileId, "FAILURE", "WARNING", file.expectedSha256() + ":" + file.expectedSizeBytes(), sha + ":" + size, "hashMismatch=" + hashMismatch + ";sizeMismatch=" + sizeMismatch);
             throw new PlatformException(PlatformError.BUSINESS_RULE_FAILED, "文件 hash 或大小与初始化元数据不一致");
         }
-        if ("SIGNED_URL_READY".equals(objectStorageService.downloadDiagnostic())) {
+        if ("PRESIGNED_URL_READY".equals(objectStorageService.downloadDiagnostic())) {
             objectStorageService.assertObjectExistsIfConfigured(file.bucket(), file.objectKey());
         }
         jdbc.update("UPDATE platform_file_object SET status='AVAILABLE', sha256=?, size_bytes=?, updated_at=? WHERE file_id=?", sha, size, now(), fileId);
@@ -370,10 +370,7 @@ public class PlatformOrganizationConfigService {
         }
         String diagnostic = objectStorageService.downloadDiagnostic();
         String status = diagnostic.startsWith("TODO_CONFIRM") ? "UNCONFIGURED" : "READY";
-        String url = null;
-        if (!diagnostic.startsWith("TODO_CONFIRM")) {
-            url = objectStorageService.publicObjectUrl(file.bucket(), file.objectKey());
-        }
+        String url = objectStorageService.presignedDownloadUrl(file.bucket(), file.objectKey(), file.objectKey());
         if (url == null || url.isBlank()) {
             url = "/api/v1/platform/files/" + fileId + "/content";
             status = "READY";

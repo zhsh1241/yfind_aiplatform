@@ -121,8 +121,8 @@ class AnnotationFlowJsonlExportRunnerTest {
 
         JsonNode download = getJson("/api/v1/annotation/exports/" + exportId + "/download-url", "trace-user-flow-download", reviewer);
         assertThat(download.at("/code").asInt()).isZero();
-        assertThat(download.at("/data/diagnosticCode").asText()).isEqualTo("SIGNED_URL_READY");
-        assertThat(download.at("/data/downloadUrl").asText()).contains("localhost");
+        assertThat(download.at("/data/diagnosticCode").asText()).isEqualTo("PRESIGNED_URL_READY");
+        assertThat(download.at("/data/downloadUrl").asText()).contains("X-Amz-Signature");
 
         JsonNode finalDetail = getJson("/api/v1/annotation/tasks/" + taskId, "trace-user-flow-final-detail", reviewer);
         Path artifactDir = writeArtifacts(taskId, finalDetail, loadSortedWorkItems(taskId, "trace-user-flow-final-work-items", reviewer), publication.at("/data"), export.at("/data"), download.at("/data"));
@@ -242,8 +242,8 @@ class AnnotationFlowJsonlExportRunnerTest {
 
         JsonNode download = getJson("/api/v1/annotation/exports/" + exportId + "/download-url", "trace-real-flow-download", reviewer);
         assertThat(download.at("/code").asInt()).isZero();
-        assertThat(download.at("/data/diagnosticCode").asText()).isEqualTo("SIGNED_URL_READY");
-        assertThat(download.at("/data/downloadUrl").asText()).contains("localhost");
+        assertThat(download.at("/data/diagnosticCode").asText()).isEqualTo("PRESIGNED_URL_READY");
+        assertThat(download.at("/data/downloadUrl").asText()).contains("X-Amz-Signature");
 
         Path artifactDir = writeArtifactsWithRealImages(taskId, approvedDetail, loadSortedWorkItems(taskId, "trace-real-flow-final-work-items", reviewer), publication.at("/data"), export.at("/data"), download.at("/data"), assets);
         System.out.println("REAL_IMAGE_ANNOTATION_FLOW_TASK=" + taskId);
