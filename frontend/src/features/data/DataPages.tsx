@@ -216,6 +216,19 @@ const annStatusText = (status?: string) => ({
   CANCELLED: '已取消',
 } as Record<string, string>)[status ?? ''] ?? status ?? '-';
 const pct = (done?: number, total?: number) => !total ? 0 : Math.round(((done ?? 0) / total) * 100);
+const segmentationExportFormats = ['SMP_JSONL', 'LABEL_STUDIO_JSON', 'SEGMENTATION_MASK_MANIFEST'];
+const detectionExportFormats = ['SMP_JSONL', 'LABEL_STUDIO_JSON', 'COCO_DETECTION', 'YOLO_DETECTION', 'VOC_DETECTION'];
+const compatibleExportFormats = (formats: string[] = [], scene?: string) => {
+  const allowed = scene === 'IMAGE_SEGMENTATION' ? segmentationExportFormats : detectionExportFormats;
+  return formats.filter((format) => allowed.includes(format));
+};
+const defaultExportFormat = (formats: string[] = [], scene?: string) => {
+  const compatible = compatibleExportFormats(formats, scene);
+  if (scene === 'IMAGE_SEGMENTATION' && compatible.includes('SEGMENTATION_MASK_MANIFEST')) return 'SEGMENTATION_MASK_MANIFEST';
+  return compatible[0] ?? formats[0] ?? 'SMP_JSONL';
+};
+const isTaskApprovedForPublication = (task: AnnotationTaskSummary) => task.status === 'APPROVED' || task.status === 'COMPLETED';
+const hasPublishedAnnotationArtifact = (task: DatasetAnnotationTask) => task.exports.some((item) => Boolean(item.fileId)) || task.task.status === 'COMPLETED';
 const annotationClasses = ['焊接气孔', '裂纹', '夹渣', '未熔合'];
 const annotationClassPalette = ['#ff6533', '#1a6bff', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
 const annotationTagPresetColors = ['#1677ff', '#52c41a', '#faad14', '#ff4d4f', '#722ed1', '#13c2c2', '#eb2f96', '#fa8c16'];
@@ -4180,7 +4193,10 @@ export function DatasetDetailPage() {
     onError: (e: Error) => msg.error(e.message),
   });
   const createExport = useMutation({
-    mutationFn: ({ taskId, format }: { taskId: string; format: string }) => dataApi.createAnnotationExport(taskId, { format }),
+    mutationFn: async ({ taskId, format, publishFirst }: { taskId: string; format: string; publishFirst?: boolean }) => {
+      if (publishFirst) await dataApi.publishAnnotationDataset(taskId);
+      return dataApi.createAnnotationExport(taskId, { format });
+    },
     onSuccess: async () => { setExportTask(null); await qc.invalidateQueries({ queryKey: ['dataset-annotation-tasks', datasetId] }); msg.success('导出请求已创建'); },
     onError: (e: Error) => msg.error(e.message),
   });
@@ -4218,6 +4234,9 @@ export function DatasetDetailPage() {
   });
   const d = detail.data;
   const selectedVersion = d?.selectedVersion;
+  const exportFormats = compatibleExportFormats(candidate.data?.supportedFormats ?? [], exportTask?.task.scene);
+  const exportInitialFormat = defaultExportFormat(candidate.data?.supportedFormats ?? [], exportTask?.task.scene);
+  const exportNeedsPublish = Boolean(exportTask && isTaskApprovedForPublication(exportTask.task) && !hasPublishedAnnotationArtifact(exportTask));
   const canWriteSelectedVersion = Boolean(
     d
     && selectedVersion
@@ -4458,9 +4477,9 @@ export function DatasetDetailPage() {
         </Form>
       </Modal>
       <Modal title={`生成训练格式导出：${exportTask?.task.name ?? ''}`} open={!!exportTask} onCancel={() => setExportTask(null)} footer={null} destroyOnHidden>
-        <Form layout="vertical" initialValues={{ format: candidate.data?.supportedFormats?.[0] ?? 'SMP_JSONL' }} onFinish={(v) => exportTask && createExport.mutate({ taskId: exportTask.task.taskId, format: v.format })}>
-          <Alert type="info" showIcon title="导出策略" description="COCO/YOLO/VOC/Mask 包含图片副本和 metadata。超过 200MB 进入异步生成。" style={{ marginBottom: 16 }} />
-          <Form.Item name="format" label="训练格式"><Select options={(candidate.data?.supportedFormats ?? []).map((f) => ({ value: f, label: f }))} /></Form.Item>
+        <Form layout="vertical" key={`${exportTask?.task.taskId ?? 'none'}-${exportInitialFormat}`} initialValues={{ format: exportInitialFormat }} onFinish={(v) => exportTask && createExport.mutate({ taskId: exportTask.task.taskId, format: v.format, publishFirst: exportNeedsPublish })}>
+          <Alert type={exportNeedsPublish ? 'warning' : 'info'} showIcon title="导出策略" description={exportNeedsPublish ? '该任务已全部审核通过但还未发布标注数据集；点击生成时会先发布 ANNOTATED 数据集，再生成训练包。' : 'COCO/YOLO/VOC/Mask 包含图片副本和 metadata。超过 200MB 进入异步生成。'} style={{ marginBottom: 16 }} />
+          <Form.Item name="format" label="训练格式"><Select options={exportFormats.map((f) => ({ value: f, label: f }))} /></Form.Item>
           <Button type="primary" htmlType="submit" loading={createExport.isPending}>生成训练包</Button>
         </Form>
       </Modal>
