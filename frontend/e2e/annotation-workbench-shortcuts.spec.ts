@@ -25,7 +25,7 @@ test('annotation workbench keeps existing labels and auto saves before navigatio
     status: 'IN_PROGRESS',
     reviewEnabled: true,
     prelabelEnabled: false,
-    labelStudioEnabled: true,
+    labelStudioEnabled: false,
     totalCount: 2,
     annotatedCount: 0,
     reviewedCount: 0,

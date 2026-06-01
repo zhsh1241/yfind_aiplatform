@@ -842,14 +842,14 @@ class DataManagementControllerTest {
         assertThat(config.at("/data/configXml").asText()).contains("<View>");
 
         JsonNode createdTask = postJson("/api/v1/annotation/tasks", "trace-f012-task-create", """
-            {"name":"F012 单测标注任务","sourceDatasetId":"DATASET-WELD-DEFECT","sourceVersionId":"DVER-WELD-001","templateId":"%s","scene":"OBJECT_DETECTION","reviewEnabled":true,"prelabelEnabled":true,"labelStudioEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"],"prelabelModelSource":"TODO_CONFIRM_PRELABEL_MODEL_SOURCE"}
+            {"name":"F012 单测标注任务","sourceDatasetId":"DATASET-WELD-DEFECT","sourceVersionId":"DVER-WELD-001","templateId":"%s","scene":"OBJECT_DETECTION","reviewEnabled":true,"prelabelEnabled":true,"labelStudioEnabled":false,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"],"prelabelModelSource":"TODO_CONFIRM_PRELABEL_MODEL_SOURCE"}
             """.formatted(templateId), admin);
         assertThat(createdTask.at("/data/task/status").asText()).isEqualTo("IN_PROGRESS");
         String taskId = createdTask.at("/data/task/taskId").asText();
 
         JsonNode labelStudio = postJson("/api/v1/annotation/tasks/" + taskId + "/label-studio/sync-project", "trace-f012-labelstudio-sync", "{}", admin);
-        assertThat(labelStudio.at("/data/configStatus").asText()).isEqualTo("UNCONFIGURED");
-        assertThat(labelStudio.at("/data/diagnosticMessage").asText()).contains("TODO_CONFIRM_LABEL_STUDIO_BASE_URL");
+        assertThat(labelStudio.at("/data/configStatus").asText()).isEqualTo("DISABLED");
+        assertThat(labelStudio.at("/data/diagnosticCode").asText()).isEqualTo("LABEL_STUDIO_DISABLED");
 
         JsonNode workItems = getJson("/api/v1/annotation/tasks/" + taskId + "/work-items?page=1&pageSize=50", "trace-f012-work-items", admin);
         String firstWorkItemId = workItems.at("/data/items/0/workItemId").asText();

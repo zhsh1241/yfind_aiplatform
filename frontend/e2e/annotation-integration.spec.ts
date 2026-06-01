@@ -1,13 +1,13 @@
 import { test, expect } from '@playwright/test';
 import { seedAuthenticatedSession } from './helpers';
 
-test('TASK-annotation-integration TASK-label-studio-production-integration AC-01 AC-02 AC-03 annotation task list and Label Studio project sync', async ({ page }) => {
+test('TASK-annotation-integration AC-01 AC-02 AC-03 annotation task list and local workbench entry', async ({ page }) => {
   await seedAuthenticatedSession(page);
   await page.getByText('标注任务').click();
   await expect(page.getByRole('heading', { name: '标注任务管理' })).toBeVisible();
   await expect(page.getByText('焊缝缺陷检测标注任务')).toBeVisible();
   await expect(page.getByRole('button', { name: '标签模板' })).toBeVisible();
-  await expect(page.getByText(/外部标注工具 \/ Label Studio/)).toBeVisible();
+  await expect(page.getByText(/本地标注模式/)).toBeVisible();
   await expect(page.getByText('焊缝视频抽帧预处理结果')).toBeVisible();
 
   await page.getByRole('button', { name: '＋ 新建标注任务' }).click();
@@ -17,12 +17,7 @@ test('TASK-annotation-integration TASK-label-studio-production-integration AC-01
   await expect(page.locator('.ant-select-dropdown:visible')).not.toContainText(/TEXT_LABELING|文本分类|语音|视频逐帧|多模态/);
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Close' }).click();
-  const syncProjectResponse = page.waitForResponse((response) => response.url().includes('/api/v1/annotation/tasks/ANN-WELD-Q2/label-studio/sync-project') && response.request().method() === 'POST');
-  await page.locator('a', { hasText: '同步 Label Studio project' }).click();
-  const syncProjectBody = await (await syncProjectResponse).json();
-  expect(syncProjectBody.data.configStatus).toBe('CONFIGURED');
-  expect(syncProjectBody.data.externalProjectId).toBe('123');
-  await expect(page.getByText(/PROJECT_SYNCED/)).toBeVisible();
+  await expect(page.locator('a', { hasText: '同步' })).toHaveCount(0);
 });
 
 test('TASK-visual-preprocess-operators-pipeline AC-04 AC-05 AC-08 AC-09 preprocessed dataset annotation source eligibility', async ({ page }) => {
@@ -43,7 +38,7 @@ test('TASK-visual-preprocess-operators-pipeline AC-04 AC-05 AC-08 AC-09 preproce
   await expect(page.getByText('标注任务已创建')).toBeVisible();
 });
 
-test('TASK-annotation-integration TASK-label-studio-production-integration AC-04 AC-05 workbench draft submit and Label Studio task sync', async ({ page }) => {
+test('TASK-annotation-integration AC-04 AC-05 workbench draft submit flow', async ({ page }) => {
   await seedAuthenticatedSession(page);
   await page.getByText('标注工作台').click();
   await expect(page.getByRole('heading', { name: '标注工作台' })).toBeVisible();
@@ -106,11 +101,7 @@ test('TASK-annotation-integration TASK-label-studio-production-integration AC-04
   await page.getByRole('button', { name: '快捷键 ?' }).click();
   await expect(page.getByText('快捷键参考')).toBeVisible();
   await page.getByRole('button', { name: 'Close' }).click();
-  const syncTaskResponse = page.waitForResponse((response) => response.url().includes('/api/v1/annotation/work-items/AWI-WELD-001/label-studio/sync-task') && response.request().method() === 'POST');
-  await page.getByRole('button', { name: '同步 Label Studio task' }).click();
-  const syncTaskBody = await (await syncTaskResponse).json();
-  expect(syncTaskBody.data.externalTaskId).toBe('456');
-  await expect(page.getByRole('link', { name: /打开 Label Studio task/ }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /同步/ })).toHaveCount(0);
   const draftResponse = page.waitForRequest((request) => request.url().includes('/api/v1/annotation/work-items/AWI-WELD-001/draft') && request.method() === 'POST');
   await page.getByRole('button', { name: '保存标注' }).click();
   const draftBody = JSON.parse((await draftResponse).postData() ?? '{}');
@@ -122,15 +113,12 @@ test('TASK-annotation-integration TASK-label-studio-production-integration AC-04
   await expect(page.getByText('标注结果已提交，等待审核')).toBeVisible();
 });
 
-test('TASK-annotation-integration TASK-label-studio-production-integration AC-06 AC-07 AC-08 AC-09 review quality import and publication flow', async ({ page }) => {
+test('TASK-annotation-integration AC-06 AC-07 AC-08 AC-09 review quality and publication flow', async ({ page }) => {
   await seedAuthenticatedSession(page);
   await page.getByText('标注审核').click();
   await expect(page.getByRole('heading', { name: '标注审核' })).toBeVisible();
   await expect(page.getByText(/DAT-004/)).toBeVisible();
-  const importResponse = page.waitForResponse((response) => response.url().includes('/api/v1/annotation/tasks/ANN-WELD-Q2/label-studio/import-results') && response.request().method() === 'POST');
-  await page.getByRole('button', { name: '导入 Label Studio 结果' }).click();
-  const importBody = await (await importResponse).json();
-  expect(importBody.data.lastSyncStatus).toBe('RESULT_IMPORTED');
+  await expect(page.getByRole('button', { name: /导入/ })).toHaveCount(0);
   const qualityResponse = page.waitForResponse((response) => response.url().includes('/api/v1/annotation/tasks/ANN-WELD-Q2/quality-check') && response.request().method() === 'POST');
   await page.getByRole('button', { name: '质量检查' }).click();
   const qualityBody = await (await qualityResponse).json();

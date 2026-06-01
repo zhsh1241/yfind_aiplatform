@@ -47,7 +47,7 @@ test('DEMO 创建并发布文本标注标签模板', async ({ page }) => {
 
   await page.getByRole('button', { name: '标签模板' }).click();
   await expect(page.getByRole('heading', { name: '标签模板' })).toBeVisible();
-  await expect(page.getByText('Label Studio label config seam')).toBeVisible();
+  await expect(page.getByText('标签模板配置')).toBeVisible();
 
   await page.getByLabel('模板名称').fill(textTemplate.name);
   await page.getByLabel('BU').fill(textTemplate.tenantId);
@@ -56,10 +56,10 @@ test('DEMO 创建并发布文本标注标签模板', async ({ page }) => {
   await page.getByLabel('标注类型').click();
   await page.getByTitle('文本分类').last().click();
   await page.getByLabel('标签 Schema').fill(textTemplate.labelSchemaJson);
-  await expect(page.getByText('文本分类模板将自动生成 Text + Choices 的 Label Studio XML')).toBeVisible();
+  await expect(page.getByText('文本分类模板将按标签 Schema 自动生成配置')).toBeVisible();
 
   await page.getByRole('button', { name: '创建并发布模板' }).click();
-  await expect(page.getByText('标签模板已发布并生成 Label Studio config')).toBeVisible();
+  await expect(page.getByText('标签模板已发布并生成模板配置')).toBeVisible();
   await expect(page.getByRole('cell', { name: textTemplate.name })).toBeVisible();
   await expect(page.getByRole('cell', { name: 'TEXT_LABELING' })).toBeVisible();
   await expect(page.getByRole('cell', { name: 'TEXT_CLASSIFICATION' })).toBeVisible();

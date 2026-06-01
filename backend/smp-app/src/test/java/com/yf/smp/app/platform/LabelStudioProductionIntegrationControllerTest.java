@@ -57,46 +57,40 @@ class LabelStudioProductionIntegrationControllerTest {
     }
 
     @Test
-    void labelStudioProductionAdapterSyncsProjectTaskAndImportsResultsWithoutLeakingToken() throws Exception {
-        // TASK-label-studio-production-integration AC-02 AC-03 AC-04 AC-06 AC-08
+    void labelStudioEndpointsReturnDisabledBindingWhenAssociationIsPaused() throws Exception {
+        // User-facing annotation tasks are temporarily decoupled from Label Studio.
         String admin = login("admin", "YF");
 
         JsonNode createdTask = postJson("/api/v1/annotation/tasks", "trace-f013-create", """
-            {"name":"F013 Label Studio 生产化联通","sourceDatasetId":"DATASET-WELD-DEFECT","sourceVersionId":"DVER-WELD-001","templateId":"LT-WELD-BBOX","scene":"IMAGE_TAGGING","reviewEnabled":true,"prelabelEnabled":false,"labelStudioEnabled":true,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
+            {"name":"F013 本地标注任务","sourceDatasetId":"DATASET-WELD-DEFECT","sourceVersionId":"DVER-WELD-001","templateId":"LT-WELD-BBOX","scene":"IMAGE_TAGGING","reviewEnabled":true,"prelabelEnabled":false,"labelStudioEnabled":false,"assigneeIds":["USR-ANNOTATOR"],"reviewerIds":["USR-BU-CABIN"]}
             """, admin);
         String taskId = createdTask.at("/data/task/taskId").asText();
         JsonNode createdWorkItems = workItemsPage(taskId, "trace-f013-create-work-items", admin);
         String workItemId = createdWorkItems.at("/data/items/0/workItemId").asText();
 
         JsonNode project = postJson("/api/v1/annotation/tasks/" + taskId + "/label-studio/sync-project", "trace-f013-project", "{}", admin);
-        assertThat(project.at("/data/configStatus").asText()).isEqualTo("CONFIGURED");
-        assertThat(project.at("/data/lastSyncStatus").asText()).isEqualTo("PROJECT_SYNCED");
-        assertThat(project.at("/data/externalProjectId").asText()).isEqualTo("123");
+        assertThat(project.at("/data/configStatus").asText()).isEqualTo("DISABLED");
+        assertThat(project.at("/data/lastSyncStatus").asText()).isEqualTo("DISABLED");
+        assertThat(project.at("/data/diagnosticCode").asText()).isEqualTo("LABEL_STUDIO_DISABLED");
+        assertThat(project.at("/data/externalProjectId").isMissingNode() || project.at("/data/externalProjectId").isNull()).isTrue();
         assertThat(project.toString()).doesNotContain("f013-secret-token");
 
-        JsonNode projectAgain = postJson("/api/v1/annotation/tasks/" + taskId + "/label-studio/sync-project", "trace-f013-project-again", "{}", admin);
-        assertThat(projectAgain.at("/data/externalProjectId").asText()).isEqualTo("123");
-
         JsonNode externalTask = postJson("/api/v1/annotation/work-items/" + workItemId + "/label-studio/sync-task", "trace-f013-task", "{}", admin);
-        assertThat(externalTask.at("/data/lastSyncStatus").asText()).isEqualTo("TASK_SYNCED");
-        assertThat(externalTask.at("/data/externalTaskId").asText()).isEqualTo("456");
+        assertThat(externalTask.at("/data/lastSyncStatus").asText()).isEqualTo("DISABLED");
+        assertThat(externalTask.at("/data/externalTaskId").isMissingNode() || externalTask.at("/data/externalTaskId").isNull()).isTrue();
         assertThat(externalTask.toString()).doesNotContain("f013-secret-token");
 
-        JsonNode externalTaskAgain = postJson("/api/v1/annotation/work-items/" + workItemId + "/label-studio/sync-task", "trace-f013-task-again", "{}", admin);
-        assertThat(externalTaskAgain.at("/data/externalTaskId").asText()).isEqualTo("456");
-
         JsonNode imported = postJson("/api/v1/annotation/tasks/" + taskId + "/label-studio/import-results", "trace-f013-import", "{}", admin);
-        assertThat(imported.at("/data/lastSyncStatus").asText()).isEqualTo("RESULT_IMPORTED");
-        assertThat(imported.at("/data/diagnosticCode").asText()).isEqualTo("LABEL_STUDIO_RESULTS_IMPORTED");
+        assertThat(imported.at("/data/lastSyncStatus").asText()).isEqualTo("DISABLED");
+        assertThat(imported.at("/data/diagnosticCode").asText()).isEqualTo("LABEL_STUDIO_DISABLED");
         assertThat(imported.toString()).doesNotContain("f013-secret-token");
 
         JsonNode detail = getJson("/api/v1/annotation/tasks/" + taskId, "trace-f013-detail", admin);
-        JsonNode importedWorkItems = workItemsPage(taskId, "trace-f013-detail-work-items", admin);
-        assertThat(importedWorkItems.at("/data/items/0/annotationJson").asText()).contains("LABEL_STUDIO");
-        assertThat(detail.at("/data/externalBinding/externalTaskId").asText()).isEqualTo("456");
+        JsonNode currentWorkItems = workItemsPage(taskId, "trace-f013-detail-work-items", admin);
+        assertThat(currentWorkItems.at("/data/items/0/annotationJson").asText()).doesNotContain("LABEL_STUDIO");
+        assertThat(detail.at("/data/externalBinding/lastSyncStatus").asText()).isEqualTo("DISABLED");
         assertThat(detail.toString()).doesNotContain("f013-secret-token");
-        assertThat(requests.stream().filter(path -> path.equals("POST /api/projects")).count()).isEqualTo(1L);
-        assertThat(requests.stream().filter(path -> path.equals("POST /api/projects/123/tasks")).count()).isEqualTo(1L);
+        assertThat(requests).isEmpty();
     }
 
     private JsonNode workItemsPage(String taskId, String traceId, String token) throws Exception {

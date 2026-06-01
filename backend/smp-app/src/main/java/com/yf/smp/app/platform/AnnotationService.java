@@ -73,13 +73,11 @@ public class AnnotationService {
     private static final ObjectMapper JSON = new ObjectMapper();
     private final JdbcTemplate jdbc;
     private final PlatformIdentityService identityService;
-    private final LabelStudioAnnotationAdapter labelStudioAdapter;
     private final ObjectStorageService objectStorageService;
 
-    public AnnotationService(JdbcTemplate jdbc, PlatformIdentityService identityService, LabelStudioAnnotationAdapter labelStudioAdapter, ObjectStorageService objectStorageService) {
+    public AnnotationService(JdbcTemplate jdbc, PlatformIdentityService identityService, ObjectStorageService objectStorageService) {
         this.jdbc = jdbc;
         this.identityService = identityService;
-        this.labelStudioAdapter = labelStudioAdapter;
         this.objectStorageService = objectStorageService;
     }
 
@@ -192,10 +190,9 @@ public class AnnotationService {
         jdbc.update("""
             INSERT INTO annotation_task (task_id, tenant_id, project_id, source_dataset_id, source_version_id, template_id, name, scene, status, review_enabled, prelabel_enabled, label_studio_enabled, prelabel_model_source, prelabel_confidence, total_count, annotated_count, reviewed_count, quality_score, deadline, note, created_by, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, ?, ?, ?, ?, ?)
-            """, id, source.tenantId(), source.projectId(), source.datasetId(), sourceVersionId, template.templateId(), require(request.name(), "标注任务名称不能为空"), scene, status, bool(request.reviewEnabled(), true), bool(request.prelabelEnabled(), false), bool(request.labelStudioEnabled(), true), blank(request.prelabelModelSource(), "TODO_CONFIRM_PRELABEL_MODEL_SOURCE"), request.prelabelConfidence(), total, request.deadline(), nullIfBlank(request.note()), principal.user().id(), at, at);
+            """, id, source.tenantId(), source.projectId(), source.datasetId(), sourceVersionId, template.templateId(), require(request.name(), "标注任务名称不能为空"), scene, status, bool(request.reviewEnabled(), true), bool(request.prelabelEnabled(), false), false, blank(request.prelabelModelSource(), "TODO_CONFIRM_PRELABEL_MODEL_SOURCE"), request.prelabelConfidence(), total, request.deadline(), nullIfBlank(request.note()), principal.user().id(), at, at);
         replaceAssignments(principal, id, assignees, reviewers);
         createInitialWorkItems(id, source, sampleFileIds, assignees, bool(request.prelabelEnabled(), false), total, at);
-        ensureBinding(id);
         audit(principal, source.tenantId(), "ANNOTATION_TASK_CREATED", "AnnotationTask", id, "SUCCESS", "INFO", null, status, TRACE_TAG);
         if (!assignees.isEmpty() || !reviewers.isEmpty()) {
             audit(principal, source.tenantId(), "ANNOTATION_TASK_ASSIGNED", "AnnotationTask", id, "SUCCESS", "INFO", null, assignees + ";" + reviewers, TRACE_TAG);
@@ -546,16 +543,15 @@ public class AnnotationService {
     public AnnotationExternalBindingResponse labelStudioStatus(PlatformPrincipal principal, String taskId) {
         identityService.requirePermission(principal, "data:annotation:read");
         AnnotationTaskRecord task = taskVisible(principal, taskId, false);
-        return labelStudioAdapter.status(task, binding(taskId));
+        return labelStudioDisabledBinding(taskId);
     }
 
     @Transactional(noRollbackFor = PlatformException.class)
     public AnnotationExternalBindingResponse syncLabelStudioProject(PlatformPrincipal principal, String taskId) {
         identityService.requirePermission(principal, "data:annotation:admin");
         AnnotationTaskRecord task = taskVisible(principal, taskId, true);
-        AnnotationExternalBindingResponse result = labelStudioAdapter.syncProject(task, binding(taskId));
-        persistBinding(result);
-        audit(principal, task.tenantId(), "PROJECT_SYNCED".equals(result.lastSyncStatus()) ? "ANNOTATION_LABEL_STUDIO_PROJECT_SYNCED" : "ANNOTATION_LABEL_STUDIO_SYNC_FAILED", "AnnotationTask", taskId, "PROJECT_SYNCED".equals(result.lastSyncStatus()) ? "SUCCESS" : "FAILURE", "PROJECT_SYNCED".equals(result.lastSyncStatus()) ? "INFO" : "WARNING", null, result.diagnosticCode(), TRACE_TAG + ";" + result.diagnosticMessage());
+        AnnotationExternalBindingResponse result = labelStudioDisabledBinding(taskId);
+        audit(principal, task.tenantId(), "ANNOTATION_LABEL_STUDIO_SKIPPED", "AnnotationTask", taskId, "SUCCESS", "INFO", null, result.diagnosticCode(), TRACE_TAG + ";label-studio-disabled");
         return result;
     }
 
@@ -564,9 +560,8 @@ public class AnnotationService {
         identityService.requirePermission(principal, "data:annotation:submit");
         AnnotationWorkItemRecord item = workItemVisible(principal, workItemId, false);
         AnnotationTaskRecord task = taskRecord(item.taskId());
-        AnnotationExternalBindingResponse result = labelStudioAdapter.syncTask(item, task, binding(task.taskId()));
-        persistBinding(result);
-        audit(principal, task.tenantId(), "TASK_SYNCED".equals(result.lastSyncStatus()) ? "ANNOTATION_LABEL_STUDIO_TASK_SYNCED" : "ANNOTATION_LABEL_STUDIO_SYNC_FAILED", "AnnotationWorkItem", workItemId, "TASK_SYNCED".equals(result.lastSyncStatus()) ? "SUCCESS" : "FAILURE", "TASK_SYNCED".equals(result.lastSyncStatus()) ? "INFO" : "WARNING", null, result.diagnosticCode(), TRACE_TAG + ";" + result.diagnosticMessage());
+        AnnotationExternalBindingResponse result = labelStudioDisabledBinding(task.taskId());
+        audit(principal, task.tenantId(), "ANNOTATION_LABEL_STUDIO_SKIPPED", "AnnotationWorkItem", workItemId, "SUCCESS", "INFO", null, result.diagnosticCode(), TRACE_TAG + ";label-studio-disabled");
         return result;
     }
 
@@ -574,9 +569,8 @@ public class AnnotationService {
     public AnnotationExternalBindingResponse importLabelStudioResults(PlatformPrincipal principal, String taskId) {
         identityService.requirePermission(principal, "data:annotation:admin");
         AnnotationTaskRecord task = taskVisible(principal, taskId, true);
-        AnnotationExternalBindingResponse result = labelStudioAdapter.importResults(task, binding(taskId));
-        persistBinding(result);
-        audit(principal, task.tenantId(), "RESULT_IMPORTED".equals(result.lastSyncStatus()) ? "ANNOTATION_LABEL_STUDIO_RESULTS_IMPORTED" : "ANNOTATION_LABEL_STUDIO_IMPORT_FAILED", "AnnotationTask", taskId, "RESULT_IMPORTED".equals(result.lastSyncStatus()) ? "SUCCESS" : "FAILURE", "RESULT_IMPORTED".equals(result.lastSyncStatus()) ? "INFO" : "WARNING", null, result.diagnosticCode(), TRACE_TAG + ";import-results");
+        AnnotationExternalBindingResponse result = labelStudioDisabledBinding(taskId);
+        audit(principal, task.tenantId(), "ANNOTATION_LABEL_STUDIO_SKIPPED", "AnnotationTask", taskId, "SUCCESS", "INFO", null, result.diagnosticCode(), TRACE_TAG + ";label-studio-disabled");
         return result;
     }
 
@@ -1298,9 +1292,13 @@ public class AnnotationService {
         return new AnnotationLabelTemplateResponse(rs.getString("template_id"), rs.getString("name"), rs.getString("scene"), rs.getString("label_type"), rs.getString("label_schema_json"), rs.getString("label_studio_config_xml"), rs.getString("status"), rs.getString("tenant_id"), rs.getString("created_by"), rs.getObject("updated_at", OffsetDateTime.class));
     }
 
+    private AnnotationExternalBindingResponse labelStudioDisabledBinding(String taskId) {
+        return new AnnotationExternalBindingResponse("LABEL-STUDIO-DISABLED", taskId, "LABEL_STUDIO", null, null, null, null, "DISABLED", "DISABLED", "LABEL_STUDIO_DISABLED", "当前标注任务暂不关联 Label Studio", null, false, null);
+    }
+
     private void ensureBinding(String taskId) {
         if (exists("SELECT COUNT(*) FROM annotation_external_binding WHERE task_id=? AND provider='LABEL_STUDIO'", taskId)) return;
-        jdbc.update("INSERT INTO annotation_external_binding (binding_id,task_id,provider,external_project_id,external_url,config_status,last_sync_status,last_sync_at,diagnostic_code,diagnostic_message,launch_url) VALUES (?,?, 'LABEL_STUDIO', NULL, 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL', 'UNCONFIGURED', 'UNCONFIGURED', NULL, 'LABEL_STUDIO_UNCONFIGURED', 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL;TODO_CONFIRM_LABEL_STUDIO_TOKEN_SECRET;TODO_CONFIRM_LABEL_STUDIO_WORKSPACE_POLICY;TODO_CONFIRM_LABEL_STUDIO_STORAGE_POLICY', NULL)", "ANN-EXT-" + randomHex(10).toUpperCase(Locale.ROOT), taskId);
+        jdbc.update("INSERT INTO annotation_external_binding (binding_id,task_id,provider,external_project_id,external_url,config_status,last_sync_status,last_sync_at,diagnostic_code,diagnostic_message,launch_url) VALUES (?,?, 'LABEL_STUDIO', NULL, NULL, 'DISABLED', 'DISABLED', NULL, 'LABEL_STUDIO_DISABLED', '当前标注任务暂不关联 Label Studio', NULL)", "ANN-EXT-" + randomHex(10).toUpperCase(Locale.ROOT), taskId);
     }
 
     private AnnotationExternalBindingRecord binding(String taskId) {

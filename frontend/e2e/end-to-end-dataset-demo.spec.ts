@@ -143,7 +143,7 @@ test.describe('已完成功能跨模块串联演示', () => {
       });
 
       if (dataset.shouldAnnotate) {
-        await test.step('5. 标注任务、Label Studio 同步、审核、质量检查与发布', async () => {
+        await test.step('5. 标注任务、本地工作台、审核、质量检查与发布', async () => {
           await page.getByText('标注任务').click();
           await expect(page.getByRole('heading', { name: '标注任务管理' })).toBeVisible();
           await page.getByRole('button', { name: '＋ 新建标注任务' }).click();
@@ -151,14 +151,9 @@ test.describe('已完成功能跨模块串联演示', () => {
           await page.getByRole('textbox', { name: '标签列表' }).fill('裂纹，气孔，夹渣');
           await page.getByRole('button', { name: '创建任务' }).click();
           await expect(page.getByRole('dialog', { name: '＋ 新建标注任务' })).toBeHidden();
-          await page.locator('a', { hasText: '同步 Label Studio project' }).click();
-          await expect(page.getByText(/PROJECT_SYNCED/)).toBeVisible();
-
           await page.getByRole('button', { name: '进入标注' }).first().click();
           await expect(page.getByRole('heading', { name: '标注工作台' })).toBeVisible();
           await expect(page.getByLabel('原生标注画布')).toBeVisible();
-          await page.getByRole('button', { name: '同步 Label Studio task' }).click();
-          await expect(page.getByRole('link', { name: /打开 Label Studio task/ }).first()).toBeVisible();
           await page.getByRole('button', { name: '保存标注' }).click();
           await expect(page.getByText('草稿已保存')).toBeVisible();
           await page.getByRole('button', { name: '提交审核' }).click();
@@ -166,7 +161,6 @@ test.describe('已完成功能跨模块串联演示', () => {
 
           await page.getByText('标注审核').click();
           await expect(page.getByRole('heading', { name: '标注审核' })).toBeVisible();
-          await page.getByRole('button', { name: '导入 Label Studio 结果' }).click();
           await page.getByRole('button', { name: '质量检查' }).click();
           await expect(page.getByText(/DAT-010 quality passed/)).toBeVisible();
           await page.getByRole('button', { name: '发布标注数据集' }).click();
