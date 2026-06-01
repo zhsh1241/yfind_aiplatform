@@ -74,6 +74,7 @@ const mockAnnotationWorkItems: Array<{ workItemId: string; taskId: string; sampl
 const mockSegmentationWorkItems = [{ workItemId: 'AWI-WELD-SEG-001', taskId: 'ANN-WELD-SEG', sampleKey: 'weld/0001.jpg', sampleFileId: 'FILE-DATASET-WELD-001', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', status: 'DRAFT', predictionJson: null, annotationJson: '{"polygons":[{"id":"poly-crack-001","label":"裂纹区域","cls":1,"points":[{"x":146,"y":108},{"x":188,"y":92},{"x":238,"y":126},{"x":224,"y":178},{"x":162,"y":170}]}]}', submittedAt: null, updatedAt: '2026-05-21T00:00:00Z' }];
 const mockAnnotationReviewItems = [{ reviewItemId: 'ARV-WELD-001', workItemId: 'AWI-WELD-002', taskId: 'ANN-WELD-Q2', taskName: '焊缝缺陷检测标注任务', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', reviewerId: 'USR-BU-CABIN', reviewerName: '座舱审核员', status: 'REVIEW_PENDING', reviewComment: null, reviewedAt: null }];
 const mockAnnotationPublication = { publicationId: 'APUB-WELD-Q2', taskId: 'ANN-WELD-Q2', qualityStatus: 'PASSED', coverageRate: 1, formatStatus: 'COCO_READY', diagnosticCode: 'ANNOTATION_QUALITY_PASSED', diagnosticMessage: 'DAT-010 quality passed', outputDatasetId: 'DATASET-WELD-ANNOTATED', outputVersionId: 'DVER-WELD-ANN-001', annotationArtifactFileId: 'FILE-ANN-WELD-Q2', annotationArtifactRole: 'ANNOTATION_RESULT', publishedAt: '2026-05-19T00:00:00Z' };
+const mockSegmentationExport = { exportId: 'AEXP-SEG-001', taskId: 'ANN-WELD-SEG', format: 'SEGMENTATION_MASK_MANIFEST', formatVersion: '1.0', status: 'AVAILABLE', diagnosticCode: 'ANNOTATION_EXPORT_READY', diagnosticMessage: 'SEGMENTATION_MASK_MANIFEST 自包含训练包已生成，包含图片副本', fileId: 'FILE-AEXP-SEG-001', downloadUrl: null, sizeBytes: 1024, asyncRequired: false, packageIncludesImages: true, requestedAt: '2026-05-21T00:00:00Z', generatedAt: '2026-05-21T00:00:00Z', expiresAt: '2026-08-21T00:00:00Z' };
 const mockAnnotationOverview = { stats: { total: 2, inProgress: 1, pendingReview: 1, completed: 0, templates: 1 }, tasks: [mockAssignedAnnotationTask, mockAnnotationTask], templates: [mockAnnotationTemplate] };
 const mockAnnotationDetail = { task: mockAnnotationTask, assignments: [], workItems: mockAnnotationWorkItems, reviewItems: mockAnnotationReviewItems, publications: [], externalBinding: mockAnnotationBinding };
 const mockSegmentationAnnotationDetail = { task: mockSegmentationAnnotationTask, assignments: [], workItems: mockSegmentationWorkItems, reviewItems: [], publications: [], externalBinding: mockAnnotationBinding };
@@ -110,6 +111,7 @@ vi.mock('./features/foundation/apiClient', () => ({
         const items = url.includes('/api/v1/annotation/tasks/ANN-WELD-SEG') ? mockSegmentationWorkItems : mockAnnotationWorkItems;
         return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { items, total: items.length, page: 1, pageSize: 50 } } });
       }
+      if (url.includes('/api/v1/annotation/exports/AEXP-SEG-001/download-url')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockSegmentationExport } });
       if (url.includes('/api/v1/annotation/tasks/') && url.includes('/label-studio/status')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationBinding } });
       if (url.includes('/api/v1/annotation/tasks/ANN-WELD-SEG')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockSegmentationAnnotationDetail } });
       if (url.includes('/api/v1/annotation/tasks/')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationDetail } });
@@ -174,7 +176,7 @@ vi.mock('./features/foundation/apiClient', () => ({
       if (url.includes('/platform/users')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { ...mockUsers[0], id: 'USR-NEW' } } });
       if (url.includes('/api/v1/annotation/tasks/') && url.includes('/quality-check')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationPublication } });
       if (url.includes('/api/v1/annotation/tasks/') && url.includes('/publish-dataset')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationPublication } });
-      if (url.includes('/api/v1/annotation/tasks/') && url.includes('/exports')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { exportId: 'AEXP-SEG-001', taskId: 'ANN-WELD-SEG', format: 'SEGMENTATION_MASK_MANIFEST', formatVersion: '1.0', status: 'AVAILABLE', diagnosticCode: 'ANNOTATION_EXPORT_READY', diagnosticMessage: 'SEGMENTATION_MASK_MANIFEST 自包含训练包已生成，包含图片副本', fileId: 'FILE-AEXP-SEG-001', downloadUrl: null, sizeBytes: 1024, asyncRequired: false, packageIncludesImages: true, requestedAt: '2026-05-21T00:00:00Z', generatedAt: '2026-05-21T00:00:00Z', expiresAt: '2026-08-21T00:00:00Z' } } });
+      if (url.includes('/api/v1/annotation/tasks/') && url.includes('/exports')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockSegmentationExport } });
       if (url.includes('/api/v1/annotation/tasks/') && url.includes('/label-studio')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationBinding } });
       if (url.includes('/api/v1/annotation/tasks/') && url.endsWith('/start')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: { ...mockAssignedAnnotationTask, status: 'IN_PROGRESS' } } });
       if (url.includes('/api/v1/annotation/tasks')) return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: mockAnnotationDetail } });
@@ -517,14 +519,20 @@ describe('F006 platform identity frontend', () => {
     const { apiClient } = await import('./features/foundation/apiClient');
     const getMock = vi.mocked(apiClient.get);
     const postMock = vi.mocked(apiClient.post);
+    getMock.mockClear();
     const originalGet = getMock.getMockImplementation() as ((url: string, config?: AxiosRequestConfig<unknown>) => Promise<unknown>) | undefined;
     getMock.mockImplementation((url: string, config?: AxiosRequestConfig<unknown>) => {
       if (url.includes('/api/v1/datasets/') && url.includes('/annotation-tasks')) {
         return Promise.resolve({ data: { code: 0, message: 'success', traceId: 't', timestamp: '', data: [{ task: mockAnnotationTask, exports: [] }, { task: mockSegmentationAnnotationTask, exports: [] }] } });
       }
+      if (url.includes('/api/v1/platform/files/FILE-AEXP-SEG-001/content')) {
+        return Promise.resolve({ data: new Blob(['mask-export'], { type: 'application/zip' }), headers: { 'content-type': 'application/zip', 'content-disposition': 'attachment; filename="segmentation-mask.zip"' } });
+      }
       return originalGet?.(url, config) ?? Promise.reject(new Error(`unhandled get: ${url}`));
     });
     postMock.mockClear();
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:segmentation-export');
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
 
     try {
       renderApp(['/dsdetail']);
@@ -539,8 +547,13 @@ describe('F006 platform identity frontend', () => {
 
       await waitFor(() => expect(postMock).toHaveBeenCalledWith('/api/v1/annotation/tasks/ANN-WELD-SEG/publish-dataset'));
       await waitFor(() => expect(postMock).toHaveBeenCalledWith('/api/v1/annotation/tasks/ANN-WELD-SEG/exports', { format: 'SEGMENTATION_MASK_MANIFEST' }));
+      await waitFor(() => expect(getMock).toHaveBeenCalledWith('/api/v1/annotation/exports/AEXP-SEG-001/download-url'));
+      await waitFor(() => expect(getMock).toHaveBeenCalledWith('/api/v1/platform/files/FILE-AEXP-SEG-001/content', { responseType: 'blob' }));
+      expect(createObjectUrl).toHaveBeenCalled();
     } finally {
       if (originalGet) getMock.mockImplementation(originalGet);
+      createObjectUrl.mockRestore();
+      revokeObjectUrl.mockRestore();
     }
   }, 15000);
   it('filters dataset detail templates by selected annotation scene', async () => {

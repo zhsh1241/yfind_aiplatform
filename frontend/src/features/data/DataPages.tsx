@@ -4197,7 +4197,16 @@ export function DatasetDetailPage() {
       if (publishFirst) await dataApi.publishAnnotationDataset(taskId);
       return dataApi.createAnnotationExport(taskId, { format });
     },
-    onSuccess: async () => { setExportTask(null); await qc.invalidateQueries({ queryKey: ['dataset-annotation-tasks', datasetId] }); msg.success('导出请求已创建'); },
+    onSuccess: async (created) => {
+      setExportTask(null);
+      await qc.invalidateQueries({ queryKey: ['dataset-annotation-tasks', datasetId] });
+      if (created.status === 'AVAILABLE' && created.fileId) {
+        exportDownload.mutate(created);
+        msg.success('训练包已生成，正在开始下载');
+      } else {
+        msg.success('导出请求已创建，请在导出记录中等待可下载状态');
+      }
+    },
     onError: (e: Error) => msg.error(e.message),
   });
   const exportDownload = useMutation({
@@ -4257,6 +4266,15 @@ export function DatasetDetailPage() {
     { title: '下载', render: (_: unknown, r: { fileId: string; status: string; objectKey?: string | null }) => <Button size="small" disabled={r.status !== 'BOUND'} loading={download.isPending} onClick={() => download.mutate(r)}>获取下载链接</Button> },
     { title: '绑定 ID', dataIndex: 'bindingId', render: (v: string) => <Typography.Text className="mono" copyable>{v}</Typography.Text> },
     { title: '解绑', render: (_: unknown, r: { bindingId: string; versionId: string }) => canWriteSelectedVersion ? <Button size="small" danger loading={unbind.isPending} onClick={() => Modal.confirm({ title: '解绑当前版本文件？', content: '仅删除当前版本的绑定关系，不删除底层文件对象。', okText: '确认解绑', onOk: () => unbind.mutateAsync({ versionId: r.versionId, bindingId: r.bindingId }) })}>解绑</Button> : null },
+  ];
+  const exportColumns = [
+    { title: '格式', dataIndex: 'format' },
+    { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={color(v)}>{v}</Tag> },
+    { title: '包含', render: (_v: unknown, item: AnnotationTrainingExport) => item.packageIncludesImages ? '包含图片副本和 metadata' : '仅 metadata' },
+    { title: '有效期', render: (_v: unknown, item: AnnotationTrainingExport) => item.expiresAt ? item.expiresAt.slice(0, 10) : '-' },
+    { title: '大小', render: (_v: unknown, item: AnnotationTrainingExport) => fmtSize(item.sizeBytes) },
+    { title: '诊断', render: (_v: unknown, item: AnnotationTrainingExport) => `${item.diagnosticCode} · ${item.diagnosticMessage}` },
+    { title: '下载', render: (_v: unknown, item: AnnotationTrainingExport) => <Button size="small" type={item.status === 'AVAILABLE' ? 'primary' : 'default'} disabled={!item.exportId || item.status !== 'AVAILABLE'} loading={exportDownload.isPending} onClick={() => exportDownload.mutate(item)}>下载训练包</Button> },
   ];
   const canCreateAnnotationTask = Boolean(
     candidate.data
@@ -4395,7 +4413,7 @@ export function DatasetDetailPage() {
             children: <Space direction="vertical" className="full-width">
               <Alert type={canCreateAnnotationTask ? 'success' : 'warning'} showIcon title="ACTIVE IMAGE 数据集可创建标注任务" description={`${candidate.data?.diagnosticCode ?? 'LOADING'} · ${candidate.data?.diagnosticMessage ?? '正在加载候选状态'}；${candidate.data?.diagnosticCode === 'ANNOTATION_TEMPLATE_REQUIRED' ? '当前可在创建任务时直接输入标签，系统会自动生成并发布模板。' : 'COCO/YOLO/VOC/Mask 均包含图片副本，训练环境默认采用自包含导出包。'}`} />
               <Space wrap><Button type="primary" disabled={!canCreateAnnotationTask} onClick={() => setTaskOpen(true)}>从数据集创建标注任务</Button><Typography.Text type="secondary">当前版本：{candidate.data?.currentVersionId ?? '-'}</Typography.Text></Space>
-              <Table<DatasetAnnotationTask> rowKey={(r) => r.task.taskId} dataSource={annTasks.data ?? []} loading={annTasks.isLoading} expandable={{ expandedRowRender: (r) => <Table<AnnotationTrainingExport> rowKey="exportId" dataSource={r.exports} pagination={false} columns={[{ title: '格式', dataIndex: 'format' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '包含', render: (_v, item) => item.packageIncludesImages ? '包含图片副本和 metadata' : '仅 metadata' }, { title: '有效期', render: (_v, item) => item.expiresAt ? item.expiresAt.slice(0, 10) : '-' }, { title: '大小', render: (_v, item) => fmtSize(item.sizeBytes) }, { title: '诊断', render: (_v, item) => `${item.diagnosticCode} · ${item.diagnosticMessage}` }, { title: '下载', render: (_v, item) => <Button size="small" disabled={!item.exportId || item.status !== 'AVAILABLE'} loading={exportDownload.isPending} onClick={() => exportDownload.mutate(item)}>下载到本地</Button> }]} locale={{ emptyText: '暂无训练格式导出' }} /> }} columns={[{ title: '任务', render: (_v, r) => <Space direction="vertical" size={0}><Typography.Text strong>{r.task.name}</Typography.Text><Typography.Text type="secondary" className="mono">{r.task.taskId}</Typography.Text></Space> }, { title: '场景', render: (_v, r) => txt(r.task.scene) }, { title: '状态', render: (_v, r) => <Tag color={color(r.task.status)}>{annStatusText(r.task.status)}</Tag> }, { title: '进度', render: (_v, r) => `${r.task.reviewedCount}/${r.task.totalCount}` }, { title: '质量分', render: (_v, r) => r.task.qualityScore ?? '-' }, { title: '操作', render: (_v, r) => <Space wrap><Button size="small" type="primary" onClick={() => nav(`/annwork?taskId=${encodeURIComponent(r.task.taskId)}`, { state: { taskId: r.task.taskId } })}>进入标注</Button><Button size="small" onClick={() => setExportTask(r)}>生成训练包</Button></Space> }]} />
+              <Table<DatasetAnnotationTask> rowKey={(r) => r.task.taskId} dataSource={annTasks.data ?? []} loading={annTasks.isLoading} expandable={{ expandedRowRender: (r) => <Table<AnnotationTrainingExport> rowKey="exportId" dataSource={r.exports} pagination={false} columns={exportColumns} locale={{ emptyText: '暂无训练格式导出' }} /> }} columns={[{ title: '任务', render: (_v, r) => <Space direction="vertical" size={0}><Typography.Text strong>{r.task.name}</Typography.Text><Typography.Text type="secondary" className="mono">{r.task.taskId}</Typography.Text></Space> }, { title: '场景', render: (_v, r) => txt(r.task.scene) }, { title: '状态', render: (_v, r) => <Tag color={color(r.task.status)}>{annStatusText(r.task.status)}</Tag> }, { title: '进度', render: (_v, r) => `${r.task.reviewedCount}/${r.task.totalCount}` }, { title: '质量分', render: (_v, r) => r.task.qualityScore ?? '-' }, { title: '操作', render: (_v, r) => <Space wrap><Button size="small" type="primary" onClick={() => nav(`/annwork?taskId=${encodeURIComponent(r.task.taskId)}`, { state: { taskId: r.task.taskId } })}>进入标注</Button><Button size="small" onClick={() => setExportTask(r)}>生成训练包</Button>{r.exports.some((item) => item.status === 'AVAILABLE') ? <Button size="small" type="primary" loading={exportDownload.isPending} onClick={() => exportDownload.mutate(r.exports.find((item) => item.status === 'AVAILABLE')!)}>下载训练包</Button> : null}</Space> }]} />
             </Space>,
           },
           {
