@@ -453,9 +453,11 @@ public class AnnotationService {
     public List<AnnotationReviewItemResponse> reviewItems(PlatformPrincipal principal, String status, String taskId) {
         identityService.requirePermission(principal, "data:annotation:review");
         return jdbc.query("""
-            SELECT r.*, t.name AS task_name, au.display_name AS annotator_name, ru.display_name AS reviewer_name
+            SELECT r.*, t.name AS task_name, t.scene, w.sample_key, w.sample_file_id, w.prediction_json, w.annotation_json,
+                   au.display_name AS annotator_name, ru.display_name AS reviewer_name
             FROM annotation_review_item r
             JOIN annotation_task t ON t.task_id=r.task_id
+            JOIN annotation_work_item w ON w.work_item_id=r.work_item_id
             JOIN platform_user au ON au.id=r.annotator_id
             LEFT JOIN platform_user ru ON ru.id=r.reviewer_id
             ORDER BY r.created_at DESC
@@ -892,9 +894,11 @@ public class AnnotationService {
 
     private List<AnnotationReviewItemResponse> reviewItemResponses(String taskId) {
         return jdbc.query("""
-            SELECT r.*, t.name AS task_name, au.display_name AS annotator_name, ru.display_name AS reviewer_name
+            SELECT r.*, t.name AS task_name, t.scene, w.sample_key, w.sample_file_id, w.prediction_json, w.annotation_json,
+                   au.display_name AS annotator_name, ru.display_name AS reviewer_name
             FROM annotation_review_item r
             JOIN annotation_task t ON t.task_id=r.task_id
+            JOIN annotation_work_item w ON w.work_item_id=r.work_item_id
             JOIN platform_user au ON au.id=r.annotator_id
             LEFT JOIN platform_user ru ON ru.id=r.reviewer_id
             WHERE r.task_id=? ORDER BY r.created_at DESC
@@ -902,7 +906,7 @@ public class AnnotationService {
     }
 
     private AnnotationReviewItemResponse reviewResponse(ResultSet rs) throws SQLException {
-        return new AnnotationReviewItemResponse(rs.getString("review_item_id"), rs.getString("work_item_id"), rs.getString("task_id"), rs.getString("task_name"), rs.getString("annotator_id"), rs.getString("annotator_name"), rs.getString("reviewer_id"), rs.getString("reviewer_name"), rs.getString("status"), rs.getString("review_comment"), rs.getObject("reviewed_at", OffsetDateTime.class));
+        return new AnnotationReviewItemResponse(rs.getString("review_item_id"), rs.getString("work_item_id"), rs.getString("task_id"), rs.getString("task_name"), rs.getString("scene"), rs.getString("sample_key"), rs.getString("sample_file_id"), rs.getString("annotator_id"), rs.getString("annotator_name"), rs.getString("reviewer_id"), rs.getString("reviewer_name"), rs.getString("status"), rs.getString("prediction_json"), rs.getString("annotation_json"), rs.getString("review_comment"), rs.getObject("reviewed_at", OffsetDateTime.class));
     }
 
     private List<AnnotationPublicationResponse> publications(String taskId) {

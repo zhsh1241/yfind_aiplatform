@@ -845,6 +845,12 @@ class DataManagementControllerTest {
     void annotationIntegrationManagesTemplatesTasksWorkReviewAndPublication() throws Exception {
         // TASK-annotation-integration AC-01 AC-02 AC-03 AC-04 AC-05 AC-06 AC-07
         String admin = login("admin", "YF");
+        Integer reviewerPreviewPermissions = jdbc.queryForObject("""
+            SELECT COUNT(*) FROM platform_role_permission
+            WHERE role_code='DATA_REVIEWER'
+              AND permission_code IN ('platform:file:read', 'platform:file:download')
+            """, Integer.class);
+        assertThat(reviewerPreviewPermissions).isEqualTo(2);
         JsonNode overview = getJson("/api/v1/annotation/overview", "trace-f012-overview", admin);
         assertThat(overview.at("/code").asInt()).isZero();
         assertThat(overview.at("/data/tasks").findValuesAsText("name")).contains("Q2焊缝检测图像标注");
@@ -884,6 +890,11 @@ class DataManagementControllerTest {
         assertThat(submitted.at("/data/status").asText()).isEqualTo("REVIEW_PENDING");
 
         JsonNode reviews = getJson("/api/v1/annotation/review-items?taskId=" + taskId, "trace-f012-review-list", admin);
+        assertThat(reviews.at("/data/0/sampleKey").asText()).isNotBlank();
+        assertThat(reviews.at("/data/0/scene").asText()).isEqualTo(createdTask.at("/data/task/scene").asText());
+        assertThat(reviews.at("/data/0/annotationJson").asText()).contains("裂纹");
+        String sampleFileId = reviews.at("/data/0/sampleFileId").asText();
+        assertThat(sampleFileId).isNotBlank();
         String reviewId = reviews.at("/data/0/reviewItemId").asText();
         JsonNode approved = postJson("/api/v1/annotation/review-items/" + reviewId + "/approve", "trace-f012-review-approve", "{}", admin);
         assertThat(approved.at("/data/status").asText()).isEqualTo("APPROVED");

@@ -72,7 +72,7 @@ const mockSegmentationTemplate = { templateId: 'LT-WELD-POLYGON', name: '焊缝�
 const mockAnnotationBinding = { bindingId: 'AEXT-WELD-Q2', taskId: 'ANN-WELD-Q2', provider: 'LABEL_STUDIO', externalProjectId: null, externalUrl: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL', configStatus: 'UNCONFIGURED', lastSyncStatus: 'UNCONFIGURED', diagnosticCode: 'LABEL_STUDIO_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL;TODO_CONFIRM_LABEL_STUDIO_TOKEN_SECRET', launchUrl: null, lastSyncAt: null };
 const mockAnnotationWorkItems: Array<{ workItemId: string; taskId: string; sampleKey: string; sampleFileId: string | null; annotatorId: string; annotatorName: string; status: string; predictionJson: string | null; annotationJson: string | null; submittedAt: string | null; updatedAt: string }> = [{ workItemId: 'AWI-WELD-001', taskId: 'ANN-WELD-Q2', sampleKey: 'weld/0001.jpg', sampleFileId: 'FILE-DATASET-WELD-001', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', status: 'DRAFT', predictionJson: null, annotationJson: null, submittedAt: null, updatedAt: '2026-05-19T00:00:00Z' }];
 const mockSegmentationWorkItems = [{ workItemId: 'AWI-WELD-SEG-001', taskId: 'ANN-WELD-SEG', sampleKey: 'weld/0001.jpg', sampleFileId: 'FILE-DATASET-WELD-001', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', status: 'DRAFT', predictionJson: null, annotationJson: '{"polygons":[{"id":"poly-crack-001","label":"裂纹区域","cls":1,"points":[{"x":146,"y":108},{"x":188,"y":92},{"x":238,"y":126},{"x":224,"y":178},{"x":162,"y":170}]}]}', submittedAt: null, updatedAt: '2026-05-21T00:00:00Z' }];
-const mockAnnotationReviewItems = [{ reviewItemId: 'ARV-WELD-001', workItemId: 'AWI-WELD-002', taskId: 'ANN-WELD-Q2', taskName: '焊缝缺陷检测标注任务', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', reviewerId: 'USR-BU-CABIN', reviewerName: '座舱审核员', status: 'REVIEW_PENDING', reviewComment: null, reviewedAt: null }];
+const mockAnnotationReviewItems = [{ reviewItemId: 'ARV-WELD-001', workItemId: 'AWI-WELD-002', taskId: 'ANN-WELD-Q2', taskName: '焊缝缺陷检测标注任务', scene: 'IMAGE_TAGGING', sampleKey: 'weld/0001.jpg', sampleFileId: 'FILE-DATASET-WELD-001', annotatorId: 'USR-ANNOTATOR', annotatorName: '标注工程师', reviewerId: 'USR-BU-CABIN', reviewerName: '座舱审核员', status: 'REVIEW_PENDING', predictionJson: null, annotationJson: '{"boxes":[{"id":"box-review-1","label":"裂纹","cls":1,"shape":"rect","x":32,"y":44,"w":96,"h":52}]}', reviewComment: null, reviewedAt: null }];
 const mockAnnotationPublication = { publicationId: 'APUB-WELD-Q2', taskId: 'ANN-WELD-Q2', qualityStatus: 'PASSED', coverageRate: 1, formatStatus: 'COCO_READY', diagnosticCode: 'ANNOTATION_QUALITY_PASSED', diagnosticMessage: 'DAT-010 quality passed', outputDatasetId: 'DATASET-WELD-ANNOTATED', outputVersionId: 'DVER-WELD-ANN-001', annotationArtifactFileId: 'FILE-ANN-WELD-Q2', annotationArtifactRole: 'ANNOTATION_RESULT', publishedAt: '2026-05-19T00:00:00Z' };
 const mockSegmentationExport = { exportId: 'AEXP-SEG-001', taskId: 'ANN-WELD-SEG', format: 'SEGMENTATION_MASK_MANIFEST', formatVersion: '1.0', status: 'AVAILABLE', diagnosticCode: 'ANNOTATION_EXPORT_READY', diagnosticMessage: 'SEGMENTATION_MASK_MANIFEST 自包含训练包已生成，包含图片副本', fileId: 'FILE-AEXP-SEG-001', downloadUrl: null, sizeBytes: 1024, asyncRequired: false, packageIncludesImages: true, requestedAt: '2026-05-21T00:00:00Z', generatedAt: '2026-05-21T00:00:00Z', expiresAt: '2026-08-21T00:00:00Z' };
 const mockAnnotationOverview = { stats: { total: 2, inProgress: 1, pendingReview: 1, completed: 0, templates: 1 }, tasks: [mockAssignedAnnotationTask, mockAnnotationTask], templates: [mockAnnotationTemplate] };
@@ -490,7 +490,46 @@ describe('F006 platform identity frontend', () => {
     render(renderRoute(['/annreview']));
     expect(await screen.findByRole('heading', { name: '标注审核' })).toBeInTheDocument();
     expect(screen.getByText(/DAT-004/)).toBeInTheDocument();
+    expect(await screen.findByText('weld/0001.jpg')).toBeInTheDocument();
+    expect(await screen.findByText(/裂纹 · 矩形/)).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: '查看明细' }));
+    expect(await screen.findByText('标注审核明细')).toBeInTheDocument();
+    expect(await screen.findByText('标注明细内容')).toBeInTheDocument();
+    const reviewPreview = await screen.findByTestId('annotation-review-preview');
+    expect(reviewPreview).toBeInTheDocument();
+    expect(reviewPreview.querySelector('image')).toHaveAttribute('href', '/industrial-samples/tig-welding.jpg');
+    expect(screen.queryByText(/样本图片不可预览/)).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue(/box-review-1/)).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '质量检查' })).toBeInTheDocument();
+  });
+
+  it('falls back to local industrial image when review sample object is unavailable', async () => {
+    seedWorkbenchSession();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(() => Promise.resolve(new Response('missing object', { status: 422 })));
+    const originalReviewItems = [...mockAnnotationReviewItems];
+    mockAnnotationReviewItems.splice(0, mockAnnotationReviewItems.length, {
+      ...mockAnnotationReviewItems[0],
+      reviewItemId: 'ARV-SEG-MISSING-OBJECT',
+      workItemId: 'AWI-SEG-MISSING-OBJECT',
+      taskId: 'ANN-WELD-SEG',
+      taskName: '图片分割任务',
+      scene: 'IMAGE_SEGMENTATION',
+      sampleKey: 'TENANT-CABIN/annotation/ANN-731ED15A6F/sample-2.jpg',
+      sampleFileId: 'FILE-C9EA6FFFB589A0CC',
+      annotationJson: '{"polygons":[{"id":"poly-final-check-1","label":"分割标签","cls":0,"points":[{"x":96,"y":78},{"x":152,"y":86},{"x":148,"y":134},{"x":102,"y":128}]}]}',
+    });
+
+    try {
+      renderApp(['/annreview']);
+      await userEvent.click(await screen.findByRole('button', { name: '查看明细' }));
+      const reviewPreview = await screen.findByTestId('annotation-review-preview');
+      expect(reviewPreview.querySelector('image')).toHaveAttribute('href', '/industrial-samples/foundry-blowhole.jpg');
+      expect(screen.queryByText(/样本图片不可预览/)).not.toBeInTheDocument();
+    } finally {
+      globalThis.fetch = originalFetch;
+      mockAnnotationReviewItems.splice(0, mockAnnotationReviewItems.length, ...originalReviewItems);
+    }
   });
 
   it('allows entering annotation workbench from dataset detail existing tasks', async () => {

@@ -254,7 +254,31 @@ const industrialSampleImages: Record<string, { url: string; title: string; sourc
     title: 'Industrial TIG welding sample',
     source: 'Wikimedia Commons: TIG welding.jpg',
   },
+  'TENANT-CABIN/annotation/ANN-731ED15A6F/sample-2.jpg': {
+    url: '/industrial-samples/foundry-blowhole.jpg',
+    title: 'Industrial foundry blowhole sample',
+    source: 'Wikimedia Commons: Foundry defect blowhole.jpg',
+  },
+  'FILE-C9EA6FFFB589A0CC': {
+    url: '/industrial-samples/foundry-blowhole.jpg',
+    title: 'Industrial foundry blowhole sample',
+    source: 'Wikimedia Commons: Foundry defect blowhole.jpg',
+  },
+  'FILE-DATASET-WELD-001': {
+    url: '/industrial-samples/tig-welding.jpg',
+    title: 'Industrial TIG welding sample',
+    source: 'Wikimedia Commons: TIG welding.jpg',
+  },
 };
+const defaultAnnotationPreviewUrl = (scene?: string | null) => scene === 'IMAGE_SEGMENTATION'
+  ? industrialSampleImages['TENANT-CABIN/annotation/ANN-731ED15A6F/sample-2.jpg']?.url
+  : industrialSampleImages['TENANT-CABIN/weld/batch3/0001.jpg']?.url;
+
+const industrialSamplePreviewUrl = (sampleKey?: string | null, sampleFileId?: string | null, scene?: string | null) =>
+  (sampleKey ? industrialSampleImages[sampleKey]?.url : undefined)
+  ?? (sampleFileId ? industrialSampleImages[sampleFileId]?.url : undefined)
+  ?? (sampleKey?.includes('/annotation/') ? industrialSampleImages['TENANT-CABIN/annotation/ANN-731ED15A6F/sample-2.jpg']?.url : undefined)
+  ?? defaultAnnotationPreviewUrl(scene);
 
 function readStoredAccessToken() {
   if (typeof window === 'undefined') return null;
@@ -915,6 +939,74 @@ const hasCompletedAnnotationPayload = (scene?: string, rawJson?: string | null, 
   const parsed = parseAnnotationPayload(scene, rawJson, labels);
   return scene === 'IMAGE_SEGMENTATION' ? parsed.polygons.length > 0 : parsed.boxes.length > 0;
 };
+const annotationDetailSummary = (scene?: string | null, rawJson?: string | null, labels: string[] = annotationClasses) => {
+  const parsed = parseAnnotationPayload(scene ?? undefined, rawJson, labels);
+  if ((scene ?? '') === 'IMAGE_SEGMENTATION') {
+    return parsed.polygons.length
+      ? parsed.polygons.map((polygon) => `${polygon.label} · ${polygon.points.length}点`).join('；')
+      : '暂无分割区域';
+  }
+  return parsed.boxes.length
+    ? parsed.boxes.map((box) => `${box.label} · ${shapeText(box.shape)} · (${Math.round(box.x)},${Math.round(box.y)}) ${Math.round(box.w)}×${Math.round(box.h)}`).join('；')
+    : '暂无标注框';
+};
+const AnnotationResultPreview = ({ item, previewUrl }: { item: AnnotationReviewItem; previewUrl?: string }) => {
+  const parsed = parseAnnotationPayload(item.scene ?? undefined, item.annotationJson);
+  const labels = item.scene === 'IMAGE_SEGMENTATION' ? parsed.polygons.map((polygon) => polygon.label) : parsed.boxes.map((box) => box.label);
+  const uniqueLabels = Array.from(new Set(labels));
+  const effectivePreviewUrl = previewUrl || industrialSamplePreviewUrl(item.sampleKey, item.sampleFileId, item.scene);
+  return (
+    <div>
+      <svg viewBox="0 0 520 340" role="img" aria-label="标注结果预览" data-testid="annotation-review-preview" style={{ width: '100%', maxWidth: 640, borderRadius: 8, border: '1px solid #d9d9d9', background: '#0f172a' }}>
+        <defs>
+          <linearGradient id="annotation-review-empty-bg" x1="0" x2="1">
+            <stop offset="0%" stopColor="#172033" />
+            <stop offset="100%" stopColor="#26354f" />
+          </linearGradient>
+        </defs>
+        {effectivePreviewUrl ? (
+          <>
+            <image href={effectivePreviewUrl} x="0" y="0" width="520" height="340" preserveAspectRatio="xMidYMid slice" />
+            <rect width="520" height="340" fill="rgba(7, 12, 24, .22)" />
+          </>
+        ) : (
+          <>
+            <rect width="520" height="340" fill="url(#annotation-review-empty-bg)" />
+          </>
+        )}
+        {item.scene === 'IMAGE_SEGMENTATION' ? parsed.polygons.map((polygon, index) => {
+          const stroke = annotationClassPalette[polygon.cls % annotationClassPalette.length] ?? annotationClassPalette[index % annotationClassPalette.length];
+          const center = polygonCentroid(polygon.points);
+          return (
+            <g key={polygon.id}>
+              <polygon points={polygonPath(polygon.points)} fill={`${stroke}33`} stroke={stroke} strokeWidth="2.6" />
+              {polygon.points.map((point, pointIndex) => <circle key={`${polygon.id}-${pointIndex}`} cx={point.x} cy={point.y} r="3" fill="#fff" stroke={stroke} strokeWidth="1.2" />)}
+              <rect x={center.x - 4} y={center.y - 22} width={polygon.label.length * 12 + 10} height="20" fill={`${stroke}ee`} rx="4" />
+              <text x={center.x + 2} y={center.y - 8} fill="#fff" fontSize="12">{polygon.label}</text>
+            </g>
+          );
+        }) : parsed.boxes.map((box, index) => {
+          const stroke = annotationClassPalette[box.cls % annotationClassPalette.length] ?? annotationClassPalette[index % annotationClassPalette.length];
+          return (
+            <g key={box.id}>
+              {box.shape === 'ellipse'
+                ? <ellipse cx={box.x + box.w / 2} cy={box.y + box.h / 2} rx={box.w / 2} ry={box.h / 2} fill={`${stroke}2b`} stroke={stroke} strokeWidth="2.6" />
+                : box.shape === 'polygon'
+                  ? <polygon points={polygonPoints(box)} fill={`${stroke}2b`} stroke={stroke} strokeWidth="2.6" />
+                  : <rect x={box.x} y={box.y} width={box.w} height={box.h} fill={`${stroke}2b`} stroke={stroke} strokeWidth="2.6" rx="2" />}
+              <rect x={box.x} y={Math.max(0, box.y - 22)} width={box.label.length * 12 + 10} height="20" fill={`${stroke}ee`} rx="4" />
+              <text x={box.x + 5} y={Math.max(14, box.y - 8)} fill="#fff" fontSize="12">{box.label}</text>
+            </g>
+          );
+        })}
+      </svg>
+      <Space wrap style={{ marginTop: 8 }}>
+        {uniqueLabels.map((label, index) => <Tag key={label} color={annotationClassPalette[index % annotationClassPalette.length]}>{label}</Tag>)}
+        {!uniqueLabels.length ? <Tag>暂无标注图形</Tag> : null}
+      </Space>
+    </div>
+  );
+};
 const initialAnnotationEditorState: AnnotationEditorState = {
   boxes: [],
   polygons: [],
@@ -1356,8 +1448,10 @@ export function AnnotationWorkbenchPage() {
   const currentNo = Math.min(selectedIndex + 1, total);
   const canEditSelectedItem = canEditWorkItem(selectedItem?.status);
   const canSubmit = selectedItem && selectedItem.status !== 'APPROVED' && selectedItem.status !== 'REVIEW_PENDING';
-  const selectedSamplePreviewUrl = selectedItem?.sampleFileId ? samplePreviewUrls[selectedItem.sampleFileId] : null;
-  const selectedSampleMetadata = selectedItem ? industrialSampleImages[selectedItem.sampleKey] : null;
+  const selectedSamplePreviewUrl = (selectedItem?.sampleFileId ? samplePreviewUrls[selectedItem.sampleFileId] : null)
+    || industrialSamplePreviewUrl(selectedItem?.sampleKey, selectedItem?.sampleFileId)
+    || null;
+  const selectedSampleMetadata = selectedItem ? (industrialSampleImages[selectedItem.sampleKey] ?? industrialSampleImages[selectedItem.sampleFileId ?? '']) : null;
   const selectedSampleImage = selectedItem
     ? selectedItem.sampleFileId
       ? (selectedSamplePreviewUrl
@@ -1961,8 +2055,8 @@ export function AnnotationWorkbenchPage() {
                     <span className="annotation-thumb-image">
                       {item.sampleFileId && !failedThumbPreviewIds[item.sampleFileId] && samplePreviewUrls[item.sampleFileId]
                         ? <img src={samplePreviewUrls[item.sampleFileId]} alt={item.sampleKey} loading="lazy" onLoad={() => clearThumbPreviewFailed(item.sampleFileId!)} onError={() => markThumbPreviewFailed(item.sampleFileId!)} />
-                        : industrialSampleImages[item.sampleKey]
-                          ? <img src={industrialSampleImages[item.sampleKey].url} alt={item.sampleKey} loading="lazy" />
+                        : industrialSamplePreviewUrl(item.sampleKey, item.sampleFileId)
+                          ? <img src={industrialSamplePreviewUrl(item.sampleKey, item.sampleFileId)} alt={item.sampleKey} loading="lazy" />
                           : <span className="annotation-thumb-weld">{item.sampleFileId ? '加载中' : ''}</span>}
                       {item.status === 'REVIEW_PENDING' || item.status === 'APPROVED' ? <span className="annotation-thumb-done" /> : null}
                     </span>
@@ -2165,12 +2259,58 @@ export function AnnotationReviewPage() {
   const qc = useQueryClient();
   const [msg, holder] = message.useMessage();
   const [reasonOpen, setReasonOpen] = useState<AnnotationReviewItem | null>(null);
+  const [detailOpen, setDetailOpen] = useState<AnnotationReviewItem | null>(null);
   const reviews = useQuery({ queryKey: ['annotation-review-items'], queryFn: () => dataApi.annotationReviewItems() });
+  const reviewItems = useMemo(() => reviews.data ?? [], [reviews.data]);
+  const detailWorkItems = useQuery({
+    queryKey: ['annotation-review-detail-work-items', detailOpen?.taskId],
+    queryFn: () => dataApi.annotationWorkItems(detailOpen!.taskId, { page: 1, pageSize: 200 }),
+    enabled: Boolean(detailOpen?.taskId),
+  });
+  const detailTask = useQuery({
+    queryKey: ['annotation-review-detail-task', detailOpen?.taskId],
+    queryFn: () => dataApi.annotationTaskDetail(detailOpen!.taskId),
+    enabled: Boolean(detailOpen?.taskId),
+  });
+  const detailWorkItem = detailWorkItems.data?.items.find((item) => item.workItemId === detailOpen?.workItemId);
+  const activeReviewDetail = detailOpen ? {
+    ...detailOpen,
+    scene: detailOpen.scene ?? detailTask.data?.task.scene ?? null,
+    sampleKey: detailOpen.sampleKey ?? detailWorkItem?.sampleKey ?? null,
+    sampleFileId: detailOpen.sampleFileId ?? detailWorkItem?.sampleFileId ?? null,
+    predictionJson: detailOpen.predictionJson ?? detailWorkItem?.predictionJson ?? null,
+    annotationJson: detailOpen.annotationJson ?? detailWorkItem?.annotationJson ?? null,
+  } : null;
+  const reviewSampleFileIds = useMemo(() => Array.from(new Set(reviewItems.map((item) => item.sampleFileId).filter((fileId): fileId is string => Boolean(fileId)))), [reviewItems]);
+  const activeReviewSampleFileIds = useMemo(() => Array.from(new Set([
+    ...reviewSampleFileIds,
+    activeReviewDetail?.sampleFileId,
+  ].filter((fileId): fileId is string => Boolean(fileId)))), [activeReviewDetail?.sampleFileId, reviewSampleFileIds]);
+  const reviewSamplePreviewUrls = useAnnotationSamplePreviewUrls(activeReviewSampleFileIds);
   const approve = useMutation({ mutationFn: dataApi.approveAnnotationReviewItem, onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['annotation-review-items'] }); msg.success('审核通过'); }, onError: (e: Error) => msg.error(e.message) });
   const reject = useMutation({ mutationFn: ({ id, reason }: { id: string; reason: string }) => dataApi.rejectAnnotationReviewItem(id, reason), onSuccess: async () => { setReasonOpen(null); await qc.invalidateQueries({ queryKey: ['annotation-review-items'] }); msg.warning('已驳回并返回标注员'); }, onError: (e: Error) => msg.error(e.message) });
   const quality = useMutation({ mutationFn: dataApi.qualityCheckAnnotationTask, onSuccess: (r) => msg.info(`${r.qualityStatus}: ${r.diagnosticMessage}`), onError: (e: Error) => msg.error(e.message) });
   const publish = useMutation({ mutationFn: dataApi.publishAnnotationDataset, onSuccess: (r) => msg.success(`已发布 ANNOTATED 数据集：${r.outputDatasetId}，标注文件：${r.annotationArtifactFileId ?? '待生成'}`), onError: (e: Error) => msg.error(e.message) });
-  const taskIds = Array.from(new Set((reviews.data ?? []).map((item) => item.taskId)));
+  const taskIds = Array.from(new Set(reviewItems.map((item) => item.taskId)));
+  const reviewDetail = useCallback((item: AnnotationReviewItem) => {
+    const previewUrl = (item.sampleFileId ? reviewSamplePreviewUrls[item.sampleFileId] : null)
+      || industrialSamplePreviewUrl(item.sampleKey, item.sampleFileId);
+    return (
+      <Card size="small" title="标注明细内容">
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Descriptions size="small" column={2}>
+            <Descriptions.Item label="样本">{item.sampleKey ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label="标注类型">{txt(item.scene)}</Descriptions.Item>
+            <Descriptions.Item label="WorkItem">{item.workItemId}</Descriptions.Item>
+            <Descriptions.Item label="标注员">{item.annotatorName}</Descriptions.Item>
+            <Descriptions.Item label="标注摘要" span={2}>{annotationDetailSummary(item.scene, item.annotationJson)}</Descriptions.Item>
+          </Descriptions>
+          <AnnotationResultPreview item={item} previewUrl={previewUrl} />
+          <Input.TextArea value={item.annotationJson ?? '无标注内容'} readOnly rows={4} />
+        </Space>
+      </Card>
+    );
+  }, [reviewSamplePreviewUrls]);
   return (
     <div className="content-page annotation-review-page">
       {holder}
@@ -2187,18 +2327,35 @@ export function AnnotationReviewPage() {
       <Alert type="info" showIcon title="审核规则" description="审核人与标注员必须分离；通过后可执行质量检查并发布 ANNOTATED 数据集，同时生成 ANNOTATION_RESULT 标注文件并写入 ANNOTATION 血缘。" style={{ marginBottom: 16 }} />
       <Table<AnnotationReviewItem>
         rowKey="reviewItemId"
-        dataSource={reviews.data ?? []}
+        dataSource={reviewItems}
         loading={reviews.isLoading}
         pagination={{ pageSize: 8 }}
+        expandable={{ expandedRowRender: reviewDetail, rowExpandable: (item) => Boolean(item.annotationJson || item.sampleKey || item.sampleFileId) }}
         columns={[
           { title: '标注任务', dataIndex: 'taskName' },
+          { title: '样本', dataIndex: 'sampleKey', render: (v) => v ?? '-' },
           { title: '标注员', dataIndex: 'annotatorName' },
           { title: '审核员', dataIndex: 'reviewerName', render: (v) => v ?? '待分派' },
           { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{annStatusText(v)}</Tag> },
+          { title: '明细摘要', render: (_, r) => annotationDetailSummary(r.scene, r.annotationJson) },
           { title: '意见', dataIndex: 'reviewComment', render: (v) => v ?? '-' },
-          { title: '操作', render: (_, r) => <Space><Button size="small" type="primary" disabled={r.status === 'APPROVED'} onClick={() => approve.mutate(r.reviewItemId)}>通过</Button><Button size="small" danger disabled={r.status === 'APPROVED'} onClick={() => setReasonOpen(r)}>驳回</Button></Space> },
+          { title: '操作', render: (_, r) => <Space><Button size="small" onClick={() => setDetailOpen(r)}>查看明细</Button><Button size="small" type="primary" disabled={r.status === 'APPROVED'} onClick={() => approve.mutate(r.reviewItemId)}>通过</Button><Button size="small" danger disabled={r.status === 'APPROVED'} onClick={() => setReasonOpen(r)}>驳回</Button></Space> },
         ]}
       />
+      <Drawer title="标注审核明细" open={Boolean(detailOpen)} onClose={() => setDetailOpen(null)} width={720}>
+        {activeReviewDetail ? (
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Alert type="info" showIcon message="请在这里核对样本图片和标注结果，再选择通过或驳回。" />
+            {reviewDetail(activeReviewDetail)}
+            {detailWorkItems.isLoading || detailTask.isLoading ? <Typography.Text type="secondary">正在补充加载样本明细...</Typography.Text> : null}
+            {!activeReviewDetail.annotationJson && !detailWorkItems.isLoading ? <Alert type="warning" showIcon message="没有查到标注 JSON，请确认该审核项对应样本是否已经提交标注。" /> : null}
+            <Space>
+              <Button type="primary" disabled={activeReviewDetail.status === 'APPROVED'} onClick={() => approve.mutate(activeReviewDetail.reviewItemId)}>通过</Button>
+              <Button danger disabled={activeReviewDetail.status === 'APPROVED'} onClick={() => setReasonOpen(activeReviewDetail)}>驳回</Button>
+            </Space>
+          </Space>
+        ) : null}
+      </Drawer>
       <Modal title="驳回原因" open={Boolean(reasonOpen)} onCancel={() => setReasonOpen(null)} footer={null} destroyOnHidden>
         <Form layout="vertical" initialValues={{ reason: '标注边界框不完整，请补充。' }} onFinish={(v) => reasonOpen && reject.mutate({ id: reasonOpen.reviewItemId, reason: v.reason })}>
           <Form.Item name="reason" label="原因" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item>

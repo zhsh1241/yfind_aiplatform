@@ -97,11 +97,16 @@ record AnnotationReviewItemResponse(
     String workItemId,
     String taskId,
     String taskName,
+    String scene,
+    String sampleKey,
+    String sampleFileId,
     String annotatorId,
     String annotatorName,
     String reviewerId,
     String reviewerName,
     String status,
+    String predictionJson,
+    String annotationJson,
     String reviewComment,
     OffsetDateTime reviewedAt
 ) {}

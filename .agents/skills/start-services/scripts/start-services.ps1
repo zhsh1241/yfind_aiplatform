@@ -307,6 +307,7 @@ $backendEnv = @{
     DB_USER = 'smp'
     DB_PASSWORD = 'smp_local_password'
     SERVER_PORT = "$BackendPort"
+    SMP_STORAGE_ENABLED = 'true'
     SMP_STORAGE_ENDPOINT = 'http://localhost:9000'
     SMP_STORAGE_PUBLIC_ENDPOINT = 'http://localhost:9000'
     SMP_STORAGE_BUCKET = 'smp-datasets'
