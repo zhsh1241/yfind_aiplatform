@@ -976,6 +976,48 @@ describe('F006 platform identity frontend', () => {
     }
   });
 
+  it('batch saves and batch submits completed annotation work items', async () => {
+    seedWorkbenchSession();
+    const user = userEvent.setup();
+    const { apiClient } = await import('./features/foundation/apiClient');
+    const postMock = vi.mocked(apiClient.post);
+    const originalItems = [...mockAnnotationWorkItems];
+    const completedAnnotationJson = '{"boxes":[{"id":"box-1","label":"裂纹","cls":1,"shape":"rect","x":24,"y":36,"w":88,"h":42}]}';
+    mockAnnotationWorkItems.splice(0, mockAnnotationWorkItems.length,
+      { ...mockAnnotationWorkItems[0], workItemId: 'AWI-WELD-001', sampleKey: 'weld/0001.jpg', sampleFileId: null, status: 'DRAFT', annotationJson: completedAnnotationJson },
+      { ...mockAnnotationWorkItems[0], workItemId: 'AWI-WELD-002', sampleKey: 'weld/0002.jpg', sampleFileId: null, status: 'DRAFT', annotationJson: completedAnnotationJson },
+      { ...mockAnnotationWorkItems[0], workItemId: 'AWI-WELD-003', sampleKey: 'weld/0003.jpg', sampleFileId: null, status: 'REVIEW_PENDING', annotationJson: completedAnnotationJson },
+    );
+
+    try {
+      renderApp(['/annwork']);
+
+      expect(await screen.findByRole('heading', { name: '标注工作台' })).toBeInTheDocument();
+      const batchSave = await screen.findByRole('button', { name: '批量保存' });
+      const batchSubmit = await screen.findByRole('button', { name: '批量提交' });
+      await waitFor(() => expect(batchSave).toBeEnabled());
+      await waitFor(() => expect(batchSubmit).toBeEnabled());
+
+      postMock.mockClear();
+      await user.click(batchSave);
+      await waitFor(() => {
+        expect(postMock).toHaveBeenCalledWith('/api/v1/annotation/work-items/AWI-WELD-001/draft', expect.objectContaining({ annotationJson: expect.any(String) }));
+        expect(postMock).toHaveBeenCalledWith('/api/v1/annotation/work-items/AWI-WELD-002/draft', expect.objectContaining({ annotationJson: expect.any(String) }));
+      });
+      expect(postMock).not.toHaveBeenCalledWith('/api/v1/annotation/work-items/AWI-WELD-003/draft', expect.anything());
+
+      postMock.mockClear();
+      await user.click(batchSubmit);
+      await waitFor(() => {
+        expect(postMock).toHaveBeenCalledWith('/api/v1/annotation/work-items/AWI-WELD-001/submit', expect.objectContaining({ annotationJson: expect.any(String) }));
+        expect(postMock).toHaveBeenCalledWith('/api/v1/annotation/work-items/AWI-WELD-002/submit', expect.objectContaining({ annotationJson: expect.any(String) }));
+      });
+      expect(postMock).not.toHaveBeenCalledWith('/api/v1/annotation/work-items/AWI-WELD-003/submit', expect.anything());
+    } finally {
+      mockAnnotationWorkItems.splice(0, mockAnnotationWorkItems.length, ...originalItems);
+    }
+  });
+
   it('opens annotation task wizard with dataset preselected when jumping from dataset page', async () => {
     mockState.token = 'token-f014';
     mockState.user = { id: 'USR-001', username: 'admin', displayName: '平台管理员', tenantId: 'TENANT-YF', tenantName: '延锋汽车内饰系统', buCode: 'YF', status: 'ACTIVE', roles: ['SUPER_ADMIN'], roleNames: ['超级管理员'], permissions: ['menu:dash', 'menu:ann', 'menu:annwork', 'menu:annreview', 'menu:tagmgmt', 'menu:ds', 'data:annotation:read', 'data:annotation:write', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish'], menuPermissions: ['dash', 'ann', 'annwork', 'annreview', 'tagmgmt', 'ds'], sessionVersion: 1 };

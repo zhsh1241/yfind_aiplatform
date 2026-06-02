@@ -911,6 +911,10 @@ const normalizeAnnotationPayload = (scene?: string, rawJson?: string | null, lab
   const parsed = parseAnnotationPayload(scene, rawJson, labels);
   return serializeAnnotationPayload(scene, parsed.boxes, parsed.polygons);
 };
+const hasCompletedAnnotationPayload = (scene?: string, rawJson?: string | null, labels: string[] = annotationClasses) => {
+  const parsed = parseAnnotationPayload(scene, rawJson, labels);
+  return scene === 'IMAGE_SEGMENTATION' ? parsed.polygons.length > 0 : parsed.boxes.length > 0;
+};
 const initialAnnotationEditorState: AnnotationEditorState = {
   boxes: [],
   polygons: [],
@@ -1323,10 +1327,10 @@ export function AnnotationWorkbenchPage() {
     const upper = Math.min(workbenchLabels.length, 9);
     return upper <= 1 ? '1' : `1-${upper}`;
   }, [workbenchLabels.length]);
-  const items = workItemsPage.data?.items ?? [];
-  const queueItems = items.length
+  const items = useMemo(() => workItemsPage.data?.items ?? [], [workItemsPage.data?.items]);
+  const queueItems = useMemo(() => items.length
     ? items
-    : [{ workItemId: 'EMPTY', taskId, sampleKey: '暂无样本', sampleFileId: null, annotatorId: null, annotatorName: null, status: 'DRAFT', predictionJson: null, annotationJson: null, submittedAt: null, updatedAt: '' }];
+    : [{ workItemId: 'EMPTY', taskId, sampleKey: '暂无样本', sampleFileId: null, annotatorId: null, annotatorName: null, status: 'DRAFT', predictionJson: null, annotationJson: null, submittedAt: null, updatedAt: '' }], [items, taskId]);
   const pageOffset = (currentPage - 1) * ANNOTATION_WORKBENCH_PAGE_SIZE;
   const pageSelectedIndex = Math.max(0, selectedIndex - pageOffset);
   const effectiveSelectedIndex = pageSelectedIndex;
@@ -1384,6 +1388,52 @@ export function AnnotationWorkbenchPage() {
   const annotationPayload = useMemo(() => serializeAnnotationPayload(scene, boxes, polygons), [boxes, polygons, scene]);
   const selectedItemSavedPayload = useMemo(() => normalizeAnnotationPayload(scene, selectedItem?.annotationJson, workbenchLabels), [scene, selectedItem?.annotationJson, workbenchLabels]);
   const hasUnsavedChanges = canEditSelectedItem && Boolean(selectedItem?.workItemId) && annotationPayload !== selectedItemSavedPayload;
+  const batchSaveTargets = useMemo(() => items
+    .map((item) => ({
+      id: item.workItemId,
+      payload: item.workItemId === selectedItem?.workItemId ? annotationPayload : normalizeAnnotationPayload(scene, item.annotationJson, workbenchLabels),
+      status: item.status,
+    }))
+    .filter((item) => canEditWorkItem(item.status) && hasCompletedAnnotationPayload(scene, item.payload, workbenchLabels)), [annotationPayload, items, scene, selectedItem?.workItemId, workbenchLabels]);
+  const batchSubmitTargets = useMemo(() => items
+    .map((item) => ({
+      id: item.workItemId,
+      payload: item.workItemId === selectedItem?.workItemId ? annotationPayload : normalizeAnnotationPayload(scene, item.annotationJson, workbenchLabels),
+      status: item.status,
+    }))
+    .filter((item) => item.status !== 'APPROVED' && item.status !== 'REVIEW_PENDING' && hasCompletedAnnotationPayload(scene, item.payload, workbenchLabels)), [annotationPayload, items, scene, selectedItem?.workItemId, workbenchLabels]);
+  const batchSave = useMutation({
+    mutationFn: async () => Promise.all(batchSaveTargets.map((item) => dataApi.saveAnnotationDraft(item.id, item.payload))),
+    onSuccess: async (saved) => {
+      await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] });
+      await qc.invalidateQueries({ queryKey: ['annotation-work-items', taskId] });
+      msg.success(`已批量保存 ${saved.length} 条已完成标注`);
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const batchSubmit = useMutation({
+    mutationFn: async () => Promise.all(batchSubmitTargets.map((item) => dataApi.submitAnnotationWorkItem(item.id, item.payload))),
+    onSuccess: async (submitted) => {
+      await qc.invalidateQueries({ queryKey: ['annotation-detail', taskId] });
+      await qc.invalidateQueries({ queryKey: ['annotation-work-items', taskId] });
+      msg.success(`已批量提交 ${submitted.length} 条已完成标注，等待审核`);
+    },
+    onError: (e: Error) => msg.error(e.message),
+  });
+  const runBatchSave = useCallback(() => {
+    if (!batchSaveTargets.length) {
+      msg.warning('当前页没有可批量保存的已完成标注');
+      return;
+    }
+    batchSave.mutate();
+  }, [batchSave, batchSaveTargets.length, msg]);
+  const runBatchSubmit = useCallback(() => {
+    if (!batchSubmitTargets.length) {
+      msg.warning('当前页没有可批量提交的已完成标注');
+      return;
+    }
+    batchSubmit.mutate();
+  }, [batchSubmit, batchSubmitTargets.length, msg]);
   const commitBoxes = useCallback((updater: AnnotationBox[] | ((items: AnnotationBox[]) => AnnotationBox[]), nextSelectedId?: string) => {
     const next = typeof updater === 'function' ? updater(boxes) : updater;
     dispatchEditor({ type: 'commit', boxes: next, polygons, selectedShapeId: nextSelectedId });
@@ -1894,6 +1944,8 @@ export function AnnotationWorkbenchPage() {
             <Button size="small" onClick={redo} disabled={editor.historyIndex >= editor.history.length - 1}>重做 Ctrl+Y</Button>
             <Button size="small" onClick={() => { void saveCurrent(); }} loading={save.isPending} disabled={!selectedItem || !canEditSelectedItem}>保存标注</Button>
             <Button size="small" type="primary" onClick={submitCurrent} loading={submit.isPending} disabled={!canSubmit}>提交审核</Button>
+            <Button size="small" onClick={runBatchSave} loading={batchSave.isPending} disabled={!batchSaveTargets.length}>批量保存</Button>
+            <Button size="small" type="primary" ghost onClick={runBatchSubmit} loading={batchSubmit.isPending} disabled={!batchSubmitTargets.length}>批量提交</Button>
           </Space>
         </div>
 
