@@ -37,7 +37,7 @@ export const appPages: ModuleOverviewPage[] = [
   { key: 'train', label: '训练监控', domain: '模型开发' },
   { key: 'exp', label: '实验管理', domain: '模型开发' },
   { key: 'eval', label: '模型评估', domain: '模型开发' },
-  { key: 'hub', label: '模型市场', domain: '模型开发' },
+  { key: 'hub', label: '模型中心', domain: '模型开发' },
   { key: 'infer', label: '推理服务', domain: '模型开发' },
   { key: 'batch', label: '批量推理', domain: '模型开发' },
   { key: 'sched', label: '调度中心', domain: '运营中心' },

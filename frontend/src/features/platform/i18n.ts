@@ -72,7 +72,7 @@ const pageLabels = {
   train: { 'zh-CN': '训练监控', 'en-US': 'Training Monitor' },
   exp: { 'zh-CN': '实验管理', 'en-US': 'Experiments' },
   eval: { 'zh-CN': '模型评估', 'en-US': 'Model Evaluation' },
-  hub: { 'zh-CN': '模型市场', 'en-US': 'Model Hub' },
+  hub: { 'zh-CN': '模型中心', 'en-US': 'Model Center' },
   infer: { 'zh-CN': '推理服务', 'en-US': 'Inference Services' },
   batch: { 'zh-CN': '批量推理', 'en-US': 'Batch Inference' },
   sched: { 'zh-CN': '调度中心', 'en-US': 'Scheduler' },

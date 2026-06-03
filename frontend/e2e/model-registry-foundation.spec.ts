@@ -5,7 +5,7 @@ test('TASK-model-registry-foundation AC-01 AC-02 AC-03 AC-05 AC-06 AC-07 AC-09 A
   test.setTimeout(90000);
   await seedAuthenticatedSession(page);
 
-  await openNav(page, '模型市场');
+  await openNav(page, '模型中心');
   await expect(page.getByRole('heading', { name: '模型中心' })).toBeVisible();
   await expect(page.getByText('统一纳管模型、模型版本、下载审计与跨 BU 复用入口。')).toBeVisible();
   await expect(page.getByText('焊缝缺陷检测 YOLOv8')).toBeVisible();
