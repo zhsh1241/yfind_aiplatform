@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
-import { seedAuthenticatedSession } from './helpers';
+import { openNav, seedAuthenticatedSession } from './helpers';
 
 const textTemplate = {
   templateId: 'LT-TEXT-E2E',
@@ -19,7 +19,7 @@ async function mockTextTemplatePersistence(page: Page) {
   let created = false;
   let requestBody: unknown;
 
-  await page.route(/\/api\/v1\/annotation\/label-templates\/LT-TEXT-E2E\/publish(?:\?.*)?$/, async (route: Route) => {
+  await page.route(/\/api\/v1\/annotation\/label-templates\/[^/]+\/publish(?:\?.*)?$/, async (route: Route) => {
     created = true;
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e-text-template', timestamp: new Date().toISOString(), data: textTemplate } });
   });
@@ -42,7 +42,7 @@ test('DEMO 创建并发布文本标注标签模板', async ({ page }) => {
   await seedAuthenticatedSession(page);
   const state = await mockTextTemplatePersistence(page);
 
-  await page.getByText('标注任务').click();
+  await openNav(page, '标注任务');
   await expect(page.getByRole('heading', { name: '标注任务管理' })).toBeVisible();
 
   await page.getByRole('button', { name: '标签模板' }).click();

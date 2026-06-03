@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { seedAuthenticatedSession } from './helpers';
+import { openNav, seedAuthenticatedSession, selectAnnotationTags } from './helpers';
 
 test('TASK-local-dataset-upload AC-01 AC-02 无可用数据源时展示本地上传入口', async ({ page }) => {
   await seedAuthenticatedSession(page);
   await page.route('**/api/v1/data-sources', async (route) => {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e-f015', timestamp: new Date().toISOString(), data: [] } });
   });
-  await page.getByText('数据集管理').click();
+  await openNav(page, '数据集管理');
   await page.getByRole('button', { name: '＋ 新建数据集' }).click();
   await expect(page.getByRole('heading', { name: '新建数据集 / 上传向导' })).toBeVisible();
   await expect(page.getByText('当前无可用数据源')).toBeVisible();
@@ -20,7 +20,7 @@ test('TASK-local-dataset-upload AC-05 本地上传提交后可在详情页继续
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e-f015', timestamp: new Date().toISOString(), data: [] } });
   });
 
-  await page.getByText('数据集管理').click();
+  await openNav(page, '数据集管理');
   await page.getByRole('button', { name: '＋ 新建数据集' }).click();
   await expect(page.getByRole('heading', { name: '新建数据集 / 上传向导' })).toBeVisible();
   await page.locator('input.ant-input').first().fill('F015 本地上传数据集');
@@ -42,8 +42,11 @@ test('TASK-local-dataset-upload AC-05 本地上传提交后可在详情页继续
   await expect(page.getByRole('button', { name: '创建标注任务', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: '创建标注任务', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '从数据集创建标注任务' })).toBeVisible();
+  await selectAnnotationTags(page, ['裂纹']);
+  const createTask = page.waitForResponse((response) => response.url().includes('/api/v1/datasets/DATASET-UPLOAD-E2E/annotation-tasks') && response.request().method() === 'POST');
   await page.getByRole('button', { name: '创建任务' }).click();
-  await expect(page.getByText('已从数据集创建标注任务')).toBeVisible();
+  expect((await (await createTask).json()).data.task.sourceDatasetId).toBeTruthy();
+  await expect(page.getByRole('dialog', { name: '从数据集创建标注任务' })).toBeHidden();
 });
 
 test('TASK-local-dataset-upload AC-02 AC-03 前端直接上传 mp4 建立视频数据集', async ({ page }) => {
@@ -52,7 +55,7 @@ test('TASK-local-dataset-upload AC-02 AC-03 前端直接上传 mp4 建立视频�
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e-f015-video', timestamp: new Date().toISOString(), data: [] } });
   });
 
-  await page.getByText('数据集管理').click();
+  await openNav(page, '数据集管理');
   await page.getByRole('button', { name: '＋ 新建数据集' }).click();
   await expect(page.getByRole('heading', { name: '新建数据集 / 上传向导' })).toBeVisible();
   await page.locator('input.ant-input').first().fill('F015 本地上传视频数据集');
@@ -81,7 +84,7 @@ test('TASK-local-dataset-upload AC-02 AC-03 前端直接上传 mp4 建立视频�
 
 test('TASK-local-dataset-upload AC-01 AC-03 AC-05 数据源导入旧路径仍可继续使用', async ({ page }) => {
   await seedAuthenticatedSession(page);
-  await page.getByText('数据集管理').click();
+  await openNav(page, '数据集管理');
   await page.getByRole('button', { name: '＋ 新建数据集' }).click();
   await expect(page.getByRole('heading', { name: '新建数据集 / 上传向导' })).toBeVisible();
   await expect(page.getByText('来源数据源')).toBeVisible();
@@ -173,7 +176,7 @@ test('TASK-local-dataset-upload AC-04 高风险内容提交后展示安全待处
     });
   });
 
-  await page.getByText('数据集管理').click();
+  await openNav(page, '数据集管理');
   await page.getByRole('button', { name: '＋ 新建数据集' }).click();
   await page.locator('input.ant-input').first().fill('F015 高风险内容');
   await page.getByRole('button', { name: '下一步：创建上传会话' }).click();

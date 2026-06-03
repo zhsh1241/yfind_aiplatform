@@ -49,14 +49,14 @@ export function ModuleOverviewPage({ page, language }: { page: AppPageInfo; lang
         {items.map((item, index) => (
           <Col xs={24} md={8} key={item}>
             <Card className="module-summary-card">
-              <Statistic title={item} value={index === 0 ? '准备中' : '—'} valueStyle={{ fontSize: 22 }} />
+              <Statistic title={item} value={index === 0 ? '准备中' : '—'} styles={{ content: { fontSize: 22 } }} />
               <Typography.Text type="secondary">暂无数据时显示为空，接入后会自动刷新。</Typography.Text>
             </Card>
           </Col>
         ))}
       </Row>
       <Card className="page-card" title="模块概览">
-        <Space direction="vertical" size={12} className="full-width">
+        <Space orientation="vertical" size={12} className="full-width">
           <Typography.Paragraph>
             当前模块用于集中呈现业务状态、操作入口与审计信息。
           </Typography.Paragraph>

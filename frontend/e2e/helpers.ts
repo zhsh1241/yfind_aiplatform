@@ -1,4 +1,17 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page, type Request } from '@playwright/test';
+
+function readPostDataJson<T extends object = Record<string, unknown>>(request: Request): T {
+  const payload = request.postData();
+  if (!payload) {
+    return {} as T;
+  }
+
+  try {
+    return JSON.parse(payload) as T;
+  } catch {
+    return {} as T;
+  }
+}
 
 export const e2eUser = {
   id: 'USR-ADMIN',
@@ -27,6 +40,7 @@ const platformConfigs = [
   { key: 'tag.defaultScenario', groupName: 'tag', displayName: '默认业务标签', valueType: 'STRING', scopeAllowed: ['GLOBAL', 'BU'], sensitive: false, defaultValue: '质量检测', scopeType: 'GLOBAL', scopeId: 'TENANT-YF', scopeValue: '质量检测', effectiveValue: '质量检测', inheritedFrom: 'GLOBAL:TENANT-YF', version: 1, status: 'ACTIVE' },
 ];
 const fileObjects = { items: [{ fileId: 'FILE-001', assetType: 'DATASET', tenantId: 'TENANT-CABIN', projectId: 'TENANT-VISION', bucket: 'TODO_CONFIRM_MINIO_BUCKET', objectKey: 'TENANT-CABIN/DATASET/FILE-001.bin', expectedSha256: 'abc', sha256: 'abc', expectedSizeBytes: 1024, sizeBytes: 1024, contentType: 'application/octet-stream', storageTier: 'STANDARD', status: 'AVAILABLE', ownerId: 'USR-001', createdAt: '2026-05-17T00:00:00Z', updatedAt: '2026-05-17T00:00:00Z' }], total: 1, page: 1, pageSize: 1 };
+const modelFileObjects = { items: [{ fileId: 'FILE-MODEL-001', assetType: 'MODEL', tenantId: 'TENANT-CABIN', projectId: null, bucket: 'smp-models', objectKey: 'TENANT-CABIN/models/MODEL-YOLO-001/v1.0/weld-yolo-v1.onnx', expectedSha256: 'sha256-model-001', sha256: 'sha256-model-001', expectedSizeBytes: 104857600, sizeBytes: 104857600, contentType: 'application/octet-stream', storageTier: 'STANDARD', status: 'AVAILABLE', ownerId: 'USR-ADMIN', createdAt: '2026-06-03T00:00:00Z', updatedAt: '2026-06-03T00:00:00Z' }] };
 const notificationChannels = [{ channelId: 'NC-GLOBAL-EMAIL', channelType: 'EMAIL', scopeType: 'GLOBAL', scopeId: 'TENANT-YF', name: '邮件通知', enabled: true, configMasked: 'host=TODO_CONFIRM_SMTP_HOST;sender=TODO_CONFIRM_SMTP_SENDER', status: 'UNCONFIGURED', diagnostic: 'TODO_CONFIRM_SMTP_HOST', lastTestAt: null }];
 const apiKeys = [{ id: 'AK-001', name: 'CI/CD 集成 Key', prefix: 'smp_live_abcd', maskedKey: 'smp_live_abcd********c91e', plainTextKey: null, scopeType: 'BU', scopeId: 'TENANT-CABIN', permissions: ['INFERENCE_READ'], status: 'ACTIVE', expiresAt: '2026-08-15T00:00:00Z', revokedAt: null, createdAt: '2026-05-17T00:00:00Z', lastUsedAt: null }];
 
@@ -111,6 +125,12 @@ const blockedAnnotationSourceDatasets = { items: [{ datasetId: 'DATASET-WELD-DEF
 
 const annotationTask = { taskId: 'ANN-WELD-Q2', name: '焊缝缺陷检测标注任务', scene: 'IMAGE_TAGGING', sceneLabel: '图片打标', sourceDatasetId: 'DATASET-WELD-FRAMES-001', sourceDatasetName: '焊缝视频抽帧预处理结果', templateId: 'LT-WELD-BBOX', templateName: '焊缝 BBox 模板', tenantId: 'TENANT-CABIN', status: 'IN_PROGRESS', reviewEnabled: true, prelabelEnabled: true, labelStudioEnabled: false, totalCount: 6, annotatedCount: 4, reviewedCount: 2, qualityScore: null, assignees: [{ userId: 'USR-ANNOTATOR', displayName: '标注工程师', role: 'ANNOTATOR' }, { userId: 'USR-BU-CABIN', displayName: '座舱审核员', role: 'REVIEWER' }], deadline: '2026-06-02T00:00:00Z', updatedAt: '2026-05-19T00:00:00Z' };
 const annotationTemplate = { templateId: 'LT-WELD-BBOX', name: '焊缝 BBox 模板', scene: 'IMAGE_TAGGING', labelType: 'BOUNDING_BOX', labelSchemaJson: '{"labels":["焊接气孔","裂纹","夹渣","未熔合"]}', labelStudioConfigXml: '<View><Image name="image" value="$image"/></View>', status: 'PUBLISHED', tenantId: 'TENANT-CABIN', createdBy: 'USR-ADMIN', updatedAt: '2026-05-19T00:00:00Z' };
+const annotationTags = [
+  { tagId: 'TAG-WELD-POROSITY', name: '焊接气孔', color: '#faad14', status: 'ACTIVE', tenantId: 'TENANT-CABIN', description: '焊缝气孔缺陷' },
+  { tagId: 'TAG-WELD-CRACK', name: '裂纹', color: '#f5222d', status: 'ACTIVE', tenantId: 'TENANT-CABIN', description: '焊缝裂纹缺陷' },
+  { tagId: 'TAG-WELD-SLAG', name: '夹渣', color: '#722ed1', status: 'ACTIVE', tenantId: 'TENANT-CABIN', description: '焊缝夹渣缺陷' },
+  { tagId: 'TAG-WELD-FUSION', name: '未熔合', color: '#1677ff', status: 'ACTIVE', tenantId: 'TENANT-CABIN', description: '焊缝未熔合缺陷' },
+];
 const annotationBinding = { bindingId: 'AEXT-WELD-Q2', taskId: 'ANN-WELD-Q2', provider: 'LABEL_STUDIO', externalProjectId: null, externalUrl: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL', externalTaskId: null, externalTaskUrl: null, configStatus: 'UNCONFIGURED', lastSyncStatus: 'UNCONFIGURED', diagnosticCode: 'LABEL_STUDIO_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_LABEL_STUDIO_BASE_URL;TODO_CONFIRM_LABEL_STUDIO_TOKEN_SECRET', launchUrl: null, retryable: false, lastSyncAt: null };
 const annotationProjectBinding = { ...annotationBinding, externalProjectId: '123', externalUrl: 'http://localhost:8083/projects/123', configStatus: 'CONFIGURED', lastSyncStatus: 'PROJECT_SYNCED', diagnosticCode: 'LABEL_STUDIO_PROJECT_SYNCED', diagnosticMessage: '外部同步已停用', launchUrl: 'http://localhost:8083/projects/123', lastSyncAt: '2026-05-19T00:00:00Z' };
 const annotationTaskBinding = { ...annotationProjectBinding, externalTaskId: '456', externalTaskUrl: 'http://localhost:8083/projects/123/data?task=456', lastSyncStatus: 'TASK_SYNCED', diagnosticCode: 'LABEL_STUDIO_TASK_SYNCED', diagnosticMessage: '外部同步已停用', launchUrl: 'http://localhost:8083/projects/123/data?task=456' };
@@ -123,6 +143,159 @@ const annotationDetail = { task: annotationTask, assignments: [], workItems: ann
 const datasetAnnotationCreateDetail = { ...annotationDetail, task: { ...annotationTask, sourceDatasetId: 'DATASET-WELD-DEFECT', sourceDatasetName: '焊缝缺陷检测数据集' } };
 const annotationExport = { exportId: 'AEXP-WELD-Q2-SMP', taskId: 'ANN-WELD-Q2', format: 'SMP_JSONL', formatVersion: 'v1', status: 'AVAILABLE', diagnosticCode: 'AUTHENTICATED_CONTENT_ENDPOINT_READY', diagnosticMessage: '训练包可通过平台鉴权接口下载', fileId: 'FILE-AEXP-WELD-Q2-SMP', downloadUrl: null, sizeBytes: 1048576, asyncRequired: false, packageIncludesImages: true, requestedAt: '2026-05-19T00:00:00Z', generatedAt: '2026-05-19T00:05:00Z', expiresAt: '2026-08-19T00:00:00Z' };
 
+const modelRegistryList = {
+  items: [
+    {
+      modelId: 'MODEL-YOLO-001',
+      name: '焊缝缺陷检测 YOLOv8',
+      description: '用于焊缝表面缺陷检测',
+      framework: 'PYTORCH',
+      taskType: 'OBJECT_DETECTION',
+      inputFormat: 'image:640x640 RGB',
+      outputFormat: 'bbox[class,score,x1,y1,x2,y2]',
+      tags: ['焊缝', '缺陷检测', '预训练'],
+      scope: 'PLATFORM',
+      source: 'PLATFORM_BUILT_IN',
+      ownerUserId: 'USER-SYSTEM',
+      ownerOrgId: 'TENANT-YF',
+      tenantId: 'TENANT-YF',
+      currentVersionId: 'MVER-YOLO-001-V1',
+      currentVersionNo: 'v1.0',
+      currentVersionStatus: 'PRODUCTION',
+      evaluationStatus: 'IMPORTED_PROOF',
+      permissionSummary: { canView: true, canDownload: true, canUseForTraining: true, canDeploy: false, canManage: true, canEditModel: true, canCreateVersion: true, canDeleteVersion: true, canApproveAccess: true },
+      createdAt: '2026-06-03T00:00:00Z',
+      updatedAt: '2026-06-03T00:00:00Z',
+    },
+    {
+      modelId: 'MODEL-BERT-003',
+      name: '工单文本分类 BERT',
+      description: '用于工单文本分类',
+      framework: 'ONNX',
+      taskType: 'NLP_TEXT_CLASSIFICATION',
+      inputFormat: 'text:utf-8',
+      outputFormat: 'label[class,score]',
+      tags: ['NLP', '预训练'],
+      scope: 'PLATFORM',
+      source: 'EXTERNAL_IMPORT',
+      ownerUserId: 'USER-SYSTEM',
+      ownerOrgId: 'TENANT-YF',
+      tenantId: 'TENANT-YF',
+      currentVersionId: 'MVER-BERT-003-V3',
+      currentVersionNo: 'v3.0',
+      currentVersionStatus: 'DEPRECATED',
+      evaluationStatus: 'PASSED',
+      permissionSummary: { canView: true, canDownload: true, canUseForTraining: true, canDeploy: false, canManage: false, canEditModel: false, canCreateVersion: false, canDeleteVersion: false, canApproveAccess: false },
+      createdAt: '2026-06-02T00:00:00Z',
+      updatedAt: '2026-06-03T00:00:00Z',
+    },
+    {
+      modelId: 'MODEL-SEG-002',
+      name: '缺陷分割实验模型',
+      description: '测试版本只限 BU',
+      framework: 'ONNX',
+      taskType: 'SEMANTIC_SEGMENTATION',
+      inputFormat: 'image:1024x1024 RGB',
+      outputFormat: 'mask[class]',
+      tags: ['分割'],
+      scope: 'BU',
+      source: 'LOCAL_UPLOAD',
+      ownerUserId: 'USER-TRAINER',
+      ownerOrgId: 'TENANT-CABIN',
+      tenantId: 'TENANT-CABIN',
+      currentVersionId: 'MVER-SEG-002-V1',
+      currentVersionNo: 'v1.2',
+      currentVersionStatus: 'DEPRECATED',
+      evaluationStatus: 'NONE',
+      permissionSummary: { canView: true, canDownload: false, canUseForTraining: false, canDeploy: false, canManage: false, canEditModel: false, canCreateVersion: false, canDeleteVersion: false, canApproveAccess: false },
+      createdAt: '2026-06-03T00:00:00Z',
+      updatedAt: '2026-06-03T00:00:00Z',
+    },
+  ],
+  total: 3,
+  page: 1,
+  pageSize: 20,
+};
+
+const modelRegistryDetail = {
+  modelId: 'MODEL-YOLO-001',
+  name: '焊缝缺陷检测 YOLOv8',
+  description: '用于焊缝表面缺陷检测',
+  framework: 'PYTORCH',
+  taskType: 'OBJECT_DETECTION',
+  inputFormat: 'image:640x640 RGB',
+  outputFormat: 'bbox[class,score,x1,y1,x2,y2]',
+  runtimeRequirements: '{"python":"3.10"}',
+  tags: ['焊缝', '缺陷检测', '预训练'],
+  scope: 'PLATFORM',
+  source: 'PLATFORM_BUILT_IN',
+  ownerUserId: 'USER-SYSTEM',
+  ownerOrgId: 'TENANT-YF',
+  tenantId: 'TENANT-YF',
+  currentVersionId: 'MVER-YOLO-001-V1',
+  permissionSummary: { canView: true, canDownload: true, canUseForTraining: true, canDeploy: false, canManage: true, canEditModel: true, canCreateVersion: true, canDeleteVersion: true, canApproveAccess: true },
+  versions: [
+    {
+      versionId: 'MVER-YOLO-001-V1',
+      modelId: 'MODEL-YOLO-001',
+      versionNo: 'v1.0',
+      fileObjectId: 'FILE-MODEL-001',
+      fileName: 'weld-yolo-v1.onnx',
+      fileExtension: '.onnx',
+      fileSizeBytes: 104857600,
+      checksum: 'sha256...',
+      storageBucket: 'smp-models',
+      storageKey: 'TENANT-CABIN/models/MODEL-YOLO-001/v1.0/weld-yolo-v1.onnx',
+      runtimeRequirements: '{"python":"3.10"}',
+      metricsSummary: { mAP50: 0.91, latencyMs: 18 },
+      securityScanStatus: 'PENDING',
+      evaluationStatus: 'IMPORTED_PROOF',
+      evaluationRecordId: 'EXT-EVAL-001',
+      evaluationProof: '外部评估报告 EXT-EVAL-001，管理员导入',
+      status: 'PRODUCTION',
+      activeDeploymentCount: 0,
+      activeReferences: [],
+      permissionSummary: { canView: true, canDownload: true, canUseForTraining: true, canDeploy: false, canManage: true, canEditModel: true, canCreateVersion: true, canDeleteVersion: true, canApproveAccess: true },
+      downloadAvailable: true,
+      transitionActions: ['DEPRECATED'],
+      createdBy: 'USER-TRAINER',
+      createdAt: '2026-06-03T00:00:00Z',
+    },
+    {
+      versionId: 'MVER-YOLO-001-V2',
+      modelId: 'MODEL-YOLO-001',
+      versionNo: 'v2.0',
+      fileObjectId: 'FILE-MODEL-002',
+      fileName: 'weld-yolo-v2.onnx',
+      fileExtension: '.onnx',
+      fileSizeBytes: 114857600,
+      checksum: 'sha256-v2',
+      storageBucket: 'smp-models',
+      storageKey: 'TENANT-CABIN/models/MODEL-YOLO-001/v2.0/weld-yolo-v2.onnx',
+      runtimeRequirements: '{"python":"3.10"}',
+      metricsSummary: { mAP50: 0.94, latencyMs: 16 },
+      securityScanStatus: 'PENDING',
+      evaluationStatus: 'NONE',
+      evaluationRecordId: null,
+      evaluationProof: null,
+      status: 'TESTING',
+      activeDeploymentCount: 1,
+      activeReferences: [{ serviceId: 'INF-SVC-001', serviceName: '焊缝在线检测', status: 'RUNNING' }],
+      permissionSummary: { canView: true, canDownload: true, canUseForTraining: true, canDeploy: false, canManage: true, canEditModel: true, canCreateVersion: true, canDeleteVersion: true, canApproveAccess: true },
+      downloadAvailable: true,
+      transitionActions: ['PRODUCTION', 'DEPRECATED'],
+      createdBy: 'USER-TRAINER',
+      createdAt: '2026-06-04T00:00:00Z',
+    },
+  ],
+  auditEvents: [
+    { eventId: 'AUD-1', action: 'MODEL_CREATED', operatorName: '模型训练工程师', occurredAt: '2026-06-03T00:00:00Z', result: 'SUCCESS' },
+    { eventId: 'AUD-2', action: 'MODEL_VERSION_PUBLISH_BLOCKED', operatorName: '模型训练工程师', occurredAt: '2026-06-04T00:00:00Z', result: 'BLOCKED' },
+  ],
+  createdAt: '2026-06-03T00:00:00Z',
+  updatedAt: '2026-06-04T00:00:00Z',
+};
+
 const paiStatus = { status: 'UNCONFIGURED', configured: false, enabled: false, regionId: 'TODO_CONFIRM_PAI_REGION', endpoint: 'TODO_CONFIRM_PAI_ENDPOINT', workspaceId: 'TODO_CONFIRM_PAI_WORKSPACE_ID', quotaId: 'TODO_CONFIRM_PAI_QUOTA_ID', resourceGroupId: 'TODO_CONFIRM_PAI_RESOURCE_GROUP_ID', credentialMode: 'RAM_ROLE', credentialRefMasked: 'TODO_CONFIRM_PAI_RAM_ROLE_ARN', diagnosticCode: 'PAI_UNCONFIGURED', diagnosticMessage: 'TODO_CONFIRM_PAI_REGION;TODO_CONFIRM_PAI_WORKSPACE_ID;TODO_CONFIRM_PAI_QUOTA_ID', lastSyncAt: null, stale: false };
 const paiOverview = { status: 'READY', scopeType: 'BU', scopeId: 'TENANT-CABIN', bindingId: 'PAI-BIND-CABIN', workspaceId: 'pai-ws-cabin-sandbox', quotaId: 'quota-cabin-sandbox', resourceGroupId: 'rg-cabin-general', lastSyncAt: '2026-05-17T00:00:00Z', stale: false, diagnosticCode: 'OK', diagnosticMessage: 'PAI resource sandbox snapshot synchronized', updatedFrom: 'PAI_SNAPSHOT', cards: [{ key: 'gpu', label: 'GPU 总量', used: 36, total: 48, unit: '卡', percent: 75, status: 'WARNING' }, { key: 'npu', label: 'NPU 算力', used: 6, total: 16, unit: '卡', percent: 38, status: 'READY' }, { key: 'cpu', label: 'CPU 核心', used: 128, total: 192, unit: '核', percent: 67, status: 'READY' }, { key: 'storage', label: 'PAI/OSS 存储', used: 145408, total: 204800, unit: 'GB', percent: 71, status: 'READY' }] };
 const paiWorkspaces = { items: [{ bindingId: 'PAI-BIND-CABIN', organizationId: 'TENANT-CABIN', organizationName: '智能座舱事业部', scopeType: 'BU', workspaceId: 'pai-ws-cabin-sandbox', workspaceName: 'PAI-CABIN-SANDBOX', quotaId: 'quota-cabin-sandbox', quotaName: '训练资源配额 Sandbox', resourceGroupId: 'rg-cabin-general', status: 'ACTIVE', diagnosticCode: 'OK', diagnosticMessage: 'SANDBOX_PAI_BINDING_FOR_CONTRACT_TEST_ONLY', lastSyncAt: '2026-05-17T00:00:00Z' }], total: 1, page: 1, pageSize: 1 };
@@ -132,6 +305,8 @@ const paiStorage = { items: [{ storageId: 'oss-pai-workspace-cabin', name: 'PAI 
 
 export async function mockPlatformApis(page: Page) {
   let trainingExportState = annotationExport;
+  let modelRegistryState = structuredClone(modelRegistryDetail);
+  let modelAccessRequests = [] as Array<Record<string, unknown>>;
   await page.route('**/api/v1/foundation/status', async (route) => {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { service: 'smp-backend', status: 'READY', domains: ['DATA', 'MODEL', 'INFERENCE', 'RESOURCE', 'PLATFORM'], enabledCapabilities: ['identity', 'permission', 'audit'] } } });
   });
@@ -176,7 +351,306 @@ export async function mockPlatformApis(page: Page) {
     });
   });
   await page.route('**/api/v1/platform/files**', async (route) => {
-    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: fileObjects } });
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { ...fileObjects, items: [...fileObjects.items, ...modelFileObjects.items], total: fileObjects.total + modelFileObjects.total } } });
+  });
+  await page.route(/\/api\/v1\/models(?:\?.*)?$/, async (route) => {
+    const method = route.request().method();
+    if (method === 'POST') {
+      const body = readPostDataJson(route.request());
+      await route.fulfill({
+        json: {
+          code: 0,
+          message: 'success',
+          traceId: 'e2e',
+          timestamp: new Date().toISOString(),
+          data: {
+            ...modelRegistryList.items[0],
+            modelId: 'MODEL-NEW-001',
+            name: String(body?.name ?? '新建模型'),
+            currentVersionId: null,
+            currentVersionNo: null,
+            currentVersionStatus: null,
+          },
+        },
+      });
+      return;
+    }
+    const url = new URL(route.request().url());
+    const keyword = url.searchParams.get('keyword')?.trim().toLowerCase();
+    const tag = url.searchParams.get('tag')?.trim();
+    const ownerOrgId = url.searchParams.get('ownerOrgId')?.trim();
+    const framework = url.searchParams.get('framework')?.trim();
+    const taskType = url.searchParams.get('taskType')?.trim();
+    const scope = url.searchParams.get('scope')?.trim();
+    const status = url.searchParams.get('status')?.trim();
+    const items = modelRegistryList.items.filter((item) => {
+      const matchesKeyword = !keyword || [item.name, item.description ?? '', ...item.tags].some((value) => String(value).toLowerCase().includes(keyword));
+      return matchesKeyword
+        && (!tag || item.tags.includes(tag))
+        && (!ownerOrgId || item.ownerOrgId === ownerOrgId)
+        && (!framework || item.framework === framework)
+        && (!taskType || item.taskType === taskType)
+        && (!scope || item.scope === scope)
+        && (!status || item.currentVersionStatus === status);
+    });
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { ...modelRegistryList, items, total: items.length } } });
+  });
+  await page.route(/\/api\/v1\/models\/MODEL-BERT-003\/versions(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      json: {
+        code: 0,
+        message: 'success',
+        traceId: 'e2e',
+        timestamp: new Date().toISOString(),
+        data: [
+          {
+            ...modelRegistryState.versions[0],
+            versionId: 'MVER-BERT-003-V2',
+            modelId: 'MODEL-BERT-003',
+            versionNo: 'v2.1',
+            fileObjectId: 'FILE-MODEL-BERT-002',
+            fileName: 'ticket-bert-v2.onnx',
+            fileExtension: '.onnx',
+            status: 'PRODUCTION',
+            permissionSummary: { canView: true, canDownload: true, canUseForTraining: true, canDeploy: false, canManage: false, canEditModel: false, canCreateVersion: false, canDeleteVersion: false, canApproveAccess: false },
+          },
+          {
+            ...modelRegistryState.versions[0],
+            versionId: 'MVER-BERT-003-V3',
+            modelId: 'MODEL-BERT-003',
+            versionNo: 'v3.0',
+            fileObjectId: 'FILE-MODEL-BERT-003',
+            fileName: 'ticket-bert-v3.onnx',
+            fileExtension: '.onnx',
+            status: 'DEPRECATED',
+            permissionSummary: { canView: true, canDownload: true, canUseForTraining: true, canDeploy: false, canManage: false, canEditModel: false, canCreateVersion: false, canDeleteVersion: false, canApproveAccess: false },
+          },
+        ],
+      },
+    });
+  });
+  await page.route(/\/api\/v1\/models\/MODEL-SEG-002\/versions(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      json: {
+        code: 0,
+        message: 'success',
+        traceId: 'e2e',
+        timestamp: new Date().toISOString(),
+        data: [
+          {
+            ...modelRegistryState.versions[0],
+            versionId: 'MVER-SEG-002-V1',
+            modelId: 'MODEL-SEG-002',
+            versionNo: 'v1.2',
+            fileObjectId: 'FILE-MODEL-SEG-001',
+            fileName: 'defect-seg-v1.onnx',
+            status: 'DEPRECATED',
+            permissionSummary: { canView: true, canDownload: false, canUseForTraining: false, canDeploy: false, canManage: false, canEditModel: false, canCreateVersion: false, canDeleteVersion: false, canApproveAccess: false },
+          },
+        ],
+      },
+    });
+  });
+  await page.route(/\/api\/v1\/models\/[^/]+$/, async (route) => {
+    const method = route.request().method();
+    if (method === 'PATCH') {
+      const body = readPostDataJson(route.request());
+      await route.fulfill({
+        json: {
+          code: 0,
+          message: 'success',
+          traceId: 'e2e',
+          timestamp: new Date().toISOString(),
+          data: { ...modelRegistryList.items[0], name: String(body?.name ?? modelRegistryList.items[0].name) },
+        },
+      });
+      return;
+    }
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: modelRegistryState } });
+  });
+  await page.route(/\/api\/v1\/models\/[^/]+\/versions(?:\?.*)?$/, async (route) => {
+    if (route.request().method() === 'POST') {
+      const body = readPostDataJson(route.request());
+      const createdVersion = {
+        versionId: 'MVER-YOLO-001-V3',
+        modelId: 'MODEL-YOLO-001',
+        versionNo: String(body?.versionNo ?? 'v3.0'),
+        fileObjectId: String(body?.fileObjectId ?? 'FILE-MODEL-001'),
+        fileName: 'weld-yolo-v3.onnx',
+        fileExtension: '.onnx',
+        fileSizeBytes: 124857600,
+        checksum: 'sha256-v3',
+        storageBucket: 'smp-models',
+        storageKey: 'TENANT-CABIN/models/MODEL-YOLO-001/v3.0/weld-yolo-v3.onnx',
+        runtimeRequirements: String(body?.runtimeRequirements ?? '{"python":"3.10"}'),
+        metricsSummary: { mAP50: 0.95, latencyMs: 15 },
+        securityScanStatus: 'PENDING',
+        evaluationStatus: String(body?.evaluationStatus ?? 'NONE'),
+        evaluationRecordId: null,
+        evaluationProof: body?.evaluationProof ? String(body.evaluationProof) : null,
+        status: 'DEVELOPMENT',
+        activeDeploymentCount: 0,
+        activeReferences: [],
+        permissionSummary: { canView: true, canDownload: true, canUseForTraining: true, canDeploy: false, canManage: true, canEditModel: true, canCreateVersion: true, canDeleteVersion: true, canApproveAccess: true },
+        downloadAvailable: true,
+        transitionActions: ['TESTING'],
+        createdBy: 'USER-TRAINER',
+        createdAt: '2026-06-05T00:00:00Z',
+      };
+      modelRegistryState = { ...modelRegistryState, versions: [...modelRegistryState.versions, createdVersion] };
+      await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: createdVersion } });
+      return;
+    }
+    const modelId = route.request().url().match(/\/api\/v1\/models\/([^/]+)\/versions/)?.[1] ?? 'MODEL-YOLO-001';
+    const versions = modelId === 'MODEL-BERT-003'
+      ? [
+          {
+            ...modelRegistryState.versions[0],
+            versionId: 'MVER-BERT-003-V2',
+            modelId: 'MODEL-BERT-003',
+            versionNo: 'v2.1',
+            fileObjectId: 'FILE-MODEL-BERT-002',
+            fileName: 'ticket-bert-v2.onnx',
+            fileExtension: '.onnx',
+            status: 'PRODUCTION',
+            permissionSummary: { canView: true, canDownload: true, canUseForTraining: true, canDeploy: false, canManage: false, canEditModel: false, canCreateVersion: false, canDeleteVersion: false, canApproveAccess: false },
+          },
+          {
+            ...modelRegistryState.versions[0],
+            versionId: 'MVER-BERT-003-V3',
+            modelId: 'MODEL-BERT-003',
+            versionNo: 'v3.0',
+            fileObjectId: 'FILE-MODEL-BERT-003',
+            fileName: 'ticket-bert-v3.onnx',
+            fileExtension: '.onnx',
+            status: 'DEPRECATED',
+            permissionSummary: { canView: true, canDownload: true, canUseForTraining: true, canDeploy: false, canManage: false, canEditModel: false, canCreateVersion: false, canDeleteVersion: false, canApproveAccess: false },
+          },
+        ]
+      : modelId === 'MODEL-SEG-002'
+        ? [
+            {
+              ...modelRegistryState.versions[0],
+              versionId: 'MVER-SEG-002-V1',
+              modelId: 'MODEL-SEG-002',
+              versionNo: 'v1.2',
+              fileObjectId: 'FILE-MODEL-SEG-001',
+              fileName: 'defect-seg-v1.onnx',
+              status: 'DEPRECATED',
+              permissionSummary: { canView: true, canDownload: false, canUseForTraining: false, canDeploy: false, canManage: false, canEditModel: false, canCreateVersion: false, canDeleteVersion: false, canApproveAccess: false },
+            },
+          ]
+        : modelRegistryState.versions;
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: versions } });
+  });
+  await page.route(/\/api\/v1\/models\/[^/]+\/versions\/[^/]+\/transition(?:\?.*)?$/, async (route) => {
+    const body = readPostDataJson(route.request());
+    const versionId = route.request().url().match(/\/versions\/([^/]+)\/transition/)?.[1] ?? 'MVER-YOLO-001-V2';
+    const version = modelRegistryState.versions.find((item) => item.versionId === versionId) ?? modelRegistryState.versions[0];
+    if (versionId === 'MVER-YOLO-001-V2' && body?.targetStatus === 'PRODUCTION') {
+      await route.fulfill({
+        json: {
+          code: 422,
+          message: '该模型版本尚未通过评估，请先执行模型评估或导入评估证明',
+          traceId: 'e2e',
+          timestamp: new Date().toISOString(),
+          data: null,
+        },
+      });
+      return;
+    }
+    const transitioned = { ...version, status: String(body?.targetStatus ?? version.status) };
+    modelRegistryState = { ...modelRegistryState, versions: modelRegistryState.versions.map((item) => (item.versionId === versionId ? transitioned : item)) };
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: transitioned } });
+  });
+  await page.route(/\/api\/v1\/models\/[^/]+\/versions\/[^/]+\/download-url(?:\?.*)?$/, async (route) => {
+    const versionId = route.request().url().match(/\/versions\/([^/]+)\/download-url/)?.[1] ?? 'MVER-YOLO-001-V1';
+    await route.fulfill({
+      json: {
+        code: 0,
+        message: 'success',
+        traceId: 'e2e',
+        timestamp: new Date().toISOString(),
+        data: {
+          modelId: 'MODEL-YOLO-001',
+          versionId,
+          fileObjectId: 'FILE-MODEL-001',
+          downloadUrl: 'http://127.0.0.1:9000/smp-models/model.onnx?X-Amz-Expires=600',
+          expiresInSeconds: 600,
+          diagnostic: 'PRESIGNED_URL_READY',
+        },
+      },
+    });
+  });
+  await page.route(/\/api\/v1\/models\/[^/]+\/versions\/[^/]+$/, async (route) => {
+    if (route.request().method() === 'DELETE') {
+      await route.fulfill({
+        status: 409,
+        json: {
+          code: 40932,
+          message: '该模型版本当前被推理服务引用，请先下线相关服务',
+          traceId: 'e2e',
+          timestamp: new Date().toISOString(),
+          data: {
+            versionId: 'MVER-YOLO-001-V2',
+            deleted: false,
+            blocked: true,
+            activeReferences: [{ serviceId: 'INF-SVC-001', serviceName: '焊缝在线检测', status: 'RUNNING' }],
+          },
+        },
+      });
+      return;
+    }
+    const versionId = route.request().url().match(/\/versions\/([^/]+)$/)?.[1] ?? 'MVER-YOLO-001-V1';
+    const version = modelRegistryState.versions.find((item) => item.versionId === versionId) ?? modelRegistryState.versions[0];
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: version } });
+  });
+  await page.route(/\/api\/v1\/models\/[^/]+\/access-requests(?:\?.*)?$/, async (route) => {
+    if (route.request().method() === 'GET') {
+      const status = new URL(route.request().url()).searchParams.get('status');
+      const data = status ? modelAccessRequests.filter((item) => item.status === status) : modelAccessRequests;
+      await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data } });
+      return;
+    }
+    const body = readPostDataJson(route.request());
+    const created = {
+      requestId: 'MACC-001',
+      modelId: 'MODEL-YOLO-001',
+      versionId: String(body?.versionId ?? 'MVER-YOLO-001-V1'),
+      requesterUserId: 'USER-QE',
+      requesterOrgId: 'TENANT-QE',
+      ownerOrgId: 'TENANT-CABIN',
+      permission: String(body?.permission ?? 'USE_FOR_TRAINING'),
+      reason: String(body?.reason ?? '用于座舱缺陷检测训练对比'),
+      status: 'PENDING',
+      reviewComment: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      expiresAt: String(body?.expiresAt ?? '2026-12-31T23:59:59Z'),
+    };
+    modelAccessRequests = [created, ...modelAccessRequests.filter((item) => item.requestId !== created.requestId)];
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: created } });
+  });
+  await page.route(/\/api\/v1\/model-access-requests\/[^/]+\/(?:approve|reject)(?:\?.*)?$/, async (route) => {
+    const requestId = route.request().url().match(/\/model-access-requests\/([^/]+)\//)?.[1] ?? 'MACC-001';
+    const approved = route.request().url().includes('/approve');
+    const reviewed = {
+      requestId,
+      modelId: 'MODEL-YOLO-001',
+      versionId: 'MVER-YOLO-001-V1',
+      requesterUserId: 'USER-QE',
+      requesterOrgId: 'TENANT-QE',
+      ownerOrgId: 'TENANT-CABIN',
+      permission: 'USE_FOR_TRAINING',
+      reason: '用于座舱缺陷检测训练对比',
+      status: approved ? 'APPROVED' : 'REJECTED',
+      reviewComment: approved ? '页面审批通过' : '页面审批拒绝',
+      reviewedBy: 'USR-ADMIN',
+      reviewedAt: '2026-06-03T01:00:00Z',
+      expiresAt: '2026-12-31T23:59:59Z',
+    };
+    modelAccessRequests = modelAccessRequests.map((item) => item.requestId === requestId ? reviewed : item);
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: reviewed } });
   });
   await page.route('**/api/v1/platform/notification-channels/*/test', async (route) => {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { channelId: 'NC-GLOBAL-EMAIL', result: 'UNCONFIGURED', diagnostic: 'TODO_CONFIRM_SMTP_HOST', testedAt: '2026-05-17T00:00:00Z' } } });
@@ -198,7 +672,7 @@ export async function mockPlatformApis(page: Page) {
 
   await page.route('**/api/v1/data-sources', async (route) => {
     if (route.request().method() === 'POST') {
-      const body = await route.request().postDataJSON().catch(() => ({}));
+      const body = readPostDataJson(route.request());
       const rtsp = body?.sourceType === 'RTSP_STREAM';
       await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: rtsp ? { ...dataSources[dataSources.length - 1], sourceId: 'DSRC-NEW-RTSP', name: body.name ?? '新建 RTSP 视频流', endpoint: body.endpoint ?? 'rtsp://camera.sandbox.internal/live/weld' } : { ...dataSources[1], sourceId: 'DSRC-NEW', name: '新建数据源' } } });
       return;
@@ -213,7 +687,7 @@ export async function mockPlatformApis(page: Page) {
   await page.route('**/api/v1/data-sources/*/disable', async (route) => { await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: { ...dataSources[0], status: 'DISABLED' } } }); });
   await page.route('**/api/v1/data-source-sync-tasks', async (route) => {
     if (route.request().method() === 'POST') {
-      const body = await route.request().postDataJSON().catch(() => ({}));
+      const body = readPostDataJson(route.request());
       const rtsp = body?.sourceId === 'DSRC-CABIN-RTSP';
       await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: rtsp ? { ...syncTasks[1], taskId: 'DSYNC-NEW-RTSP', name: body.name ?? syncTasks[1].name, syncScope: body.syncScope ?? syncTasks[1].syncScope } : { ...syncTasks[0], taskId: 'DSYNC-NEW' } } });
       return;
@@ -476,6 +950,9 @@ export async function mockPlatformApis(page: Page) {
   await page.route(/\/api\/v1\/annotation\/label-templates(?:\?.*)?$/, async (route) => {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: route.request().method() === 'POST' ? { ...annotationTemplate, templateId: 'LT-E2E-NEW' } : [annotationTemplate] } });
   });
+  await page.route(/\/api\/v1\/annotation\/tags(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationTags } });
+  });
   await page.route(/\/api\/v1\/annotation\/work-items\/[^/]+\/label-studio\/sync-task(?:\?.*)?$/, async (route) => {
     await route.fulfill({ json: { code: 0, message: 'success', traceId: 'e2e', timestamp: new Date().toISOString(), data: annotationTaskBinding } });
   });
@@ -500,4 +977,18 @@ export async function seedAuthenticatedSession(page: Page) {
   await page.getByLabel('密码').fill('Smp@123456');
   await page.getByRole('button', { name: /登\s*录/ }).click();
   await page.getByText('SMP 工业 AI 小模型平台').waitFor({ state: 'visible' });
+}
+
+export async function openNav(page: Page, name: string | RegExp) {
+  await page.getByRole('menuitem', { name }).last().click();
+  await expect(page.getByRole('banner').getByText('SMP 工业 AI 小模型平台')).toBeVisible();
+}
+
+export async function selectAnnotationTags(page: Page, names: string[]) {
+  const selector = page.getByLabel('选择标签');
+  for (const name of names) {
+    await selector.click();
+    await page.keyboard.type(name);
+    await page.keyboard.press('Enter');
+  }
 }

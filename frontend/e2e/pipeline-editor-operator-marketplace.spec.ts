@@ -1,10 +1,10 @@
 ﻿import { test, expect } from '@playwright/test';
-import { seedAuthenticatedSession } from './helpers';
+import { openNav, seedAuthenticatedSession } from './helpers';
 
 test('TASK-visual-preprocess-operators-pipeline AC-01 AC-02 AC-03 AC-06 AC-07 AC-08 AC-09 pipeline editor and operator marketplace', async ({ page }) => {
   await seedAuthenticatedSession(page);
 
-  await page.getByText('Pipeline编辑器').click();
+  await openNav(page, 'Pipeline编辑器');
   await page.getByRole('button', { name: '进入Pipeline编辑器' }).click();
   await expect(page.getByRole('heading', { name: 'Pipeline编辑器' })).toBeVisible();
   await expect(page.getByText('算子库', { exact: true })).toBeVisible();
@@ -51,7 +51,7 @@ test('TASK-visual-preprocess-operators-pipeline AC-01 AC-02 AC-03 AC-06 AC-07 AC
   await page.keyboard.press('Escape');
   await expect(page.getByLabel('运行详情')).toBeHidden();
 
-  await page.getByText('算子广场').click();
+  await openNav(page, '算子广场');
   await expect(page.getByRole('heading', { name: '算子广场' })).toBeVisible();
   await expect(page.getByText('视觉预处理冻结能力说明')).toBeVisible();
   await expect(page.getByText('多 Tab 算子目录')).toBeVisible();

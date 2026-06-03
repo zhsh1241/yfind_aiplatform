@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedAuthenticatedSession } from './helpers';
+import { openNav, seedAuthenticatedSession, selectAnnotationTags } from './helpers';
 
 const datasets = [
   {
@@ -23,7 +23,7 @@ test.describe('已完成功能跨模块串联演示', () => {
       await seedAuthenticatedSession(page);
 
       await test.step('1. 数据源接入与同步任务', async () => {
-        await page.getByText('数据源管理').click();
+        await openNav(page, '数据源管理');
         await expect(page.getByRole('heading', { name: '数据源管理' })).toBeVisible();
         await expect(page.getByText('数据集导入方式')).toBeVisible();
         await page.getByRole('button', { name: '测试连接' }).first().click();
@@ -35,7 +35,7 @@ test.describe('已完成功能跨模块串联演示', () => {
       });
 
       await test.step(`2. 打开数据集并检查版本、文件、血缘：${dataset.name}`, async () => {
-        await page.getByText('数据集管理').click();
+        await openNav(page, '数据集管理');
         await expect(page.getByRole('heading', { name: '数据集管理' })).toBeVisible();
         await page.getByPlaceholder('搜索数据集名称...').fill(dataset.name);
         await page.keyboard.press('Enter');
@@ -118,14 +118,19 @@ test.describe('已完成功能跨模块串联演示', () => {
       });
 
       await test.step(`3. Pipeline 数据集读取节点绑定当前数据集：${dataset.name}`, async () => {
-        await page.getByText('Pipeline编辑器').click();
+        await openNav(page, 'Pipeline编辑器');
+        await page.getByRole('button', { name: '进入Pipeline编辑器' }).click();
         await expect(page.getByRole('heading', { name: 'Pipeline编辑器' })).toBeVisible();
         await expect(page.getByText('视觉预处理闭环')).toBeVisible();
         await expect(page.getByText('DAG 画布', { exact: true })).toBeVisible();
         await expect(page.getByText('图片质量提高').first()).toBeVisible();
-        await page.locator('.node-config-card textarea').fill(JSON.stringify({ datasetId: dataset.id }, null, 2));
+        await page.getByRole('button', { name: '配置算子参数' }).click();
+        await expect(page.getByLabel('算子参数配置')).toBeVisible();
+        await page.getByLabel('算子参数配置').locator('textarea').fill(JSON.stringify({ datasetId: dataset.id }, null, 2));
+        await page.keyboard.press('Escape');
+        await expect(page.getByLabel('算子参数配置')).toBeHidden();
         await page.getByRole('button', { name: '💾 保存' }).click();
-        await expect(page.getByText('Pipeline DAG 已保存并通过校验')).toBeVisible();
+        await expect(page.getByText('Pipeline 算子流程已保存并通过校验')).toBeVisible();
       });
 
       await test.step(`4. Pipeline DAG 配置、快照与运行：${dataset.name}`, async () => {
@@ -136,6 +141,8 @@ test.describe('已完成功能跨模块串联演示', () => {
         await page.getByRole('button', { name: '保存快照' }).click();
         await expect(page.getByText('版本快照已保存')).toBeVisible();
         await page.getByRole('button', { name: /配置并运行|配置调试运行/ }).click();
+        await expect(page.getByLabel('配置本次运行').getByText('运行前确认输出数据集名称')).toBeVisible();
+        await page.getByRole('button', { name: '确认运行并生成数据集' }).click();
         await expect(page.getByText('加工任务运行完成，已生成加工记录和预处理数据集。')).toBeVisible();
         await expect(page.getByLabel('运行详情').getByText('VISUAL_PREPROCESS_RUN_SUCCEEDED')).toBeVisible();
         await page.keyboard.press('Escape');
@@ -144,11 +151,11 @@ test.describe('已完成功能跨模块串联演示', () => {
 
       if (dataset.shouldAnnotate) {
         await test.step('5. 标注任务、本地工作台、审核、质量检查与发布', async () => {
-          await page.getByText('标注任务').click();
+          await openNav(page, '标注任务');
           await expect(page.getByRole('heading', { name: '标注任务管理' })).toBeVisible();
           await page.getByRole('button', { name: '＋ 新建标注任务' }).click();
           await expect(page.getByRole('dialog', { name: '＋ 新建标注任务' })).toBeVisible();
-          await page.getByRole('textbox', { name: '标签列表' }).fill('裂纹，气孔，夹渣');
+          await selectAnnotationTags(page, ['裂纹', '焊接气孔']);
           await page.getByRole('button', { name: '创建任务' }).click();
           await expect(page.getByRole('dialog', { name: '＋ 新建标注任务' })).toBeHidden();
           await page.getByRole('button', { name: '进入标注' }).first().click();
@@ -159,7 +166,7 @@ test.describe('已完成功能跨模块串联演示', () => {
           await page.getByRole('button', { name: '提交审核' }).click();
           await expect(page.getByText('标注结果已提交，等待审核')).toBeVisible();
 
-          await page.getByText('标注审核').click();
+          await openNav(page, '标注审核');
           await expect(page.getByRole('heading', { name: '标注审核' })).toBeVisible();
           await page.getByRole('button', { name: '质量检查' }).click();
           await expect(page.getByText(/DAT-010 quality passed/)).toBeVisible();
@@ -168,7 +175,7 @@ test.describe('已完成功能跨模块串联演示', () => {
         });
       } else {
         await test.step('5. 文本数据集不进入图像标注，演示停在加工后可供下游模型使用', async () => {
-          await page.getByText('算子广场').click();
+          await openNav(page, '算子广场');
           await expect(page.getByRole('heading', { name: '算子广场' })).toBeVisible();
           await expect(page.getByText('视觉预处理冻结能力说明')).toBeVisible();
           await expect(page.getByText('视频抽帧').first()).toBeVisible();

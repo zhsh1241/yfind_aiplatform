@@ -181,6 +181,14 @@ body {
   align-items: start;
 }
 
+.model-registry-layout {
+  position: relative;
+}
+
+.model-registry-layout .ant-drawer-content-wrapper {
+  max-width: 100%;
+}
+
 .dataset-upload-drop .ant-upload-drag {
   padding: 18px;
   border-color: #91caff;

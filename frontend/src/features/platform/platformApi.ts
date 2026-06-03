@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { apiClient, type ApiResponse } from '../foundation/apiClient';
 
 export type CurrentUser = {
@@ -279,6 +280,217 @@ export type FileContentDownload = {
   filename?: string;
 };
 
+export type ModelFramework = 'PYTORCH' | 'TENSORFLOW' | 'PADDLE' | 'ONNX' | string;
+export type ModelTaskType =
+  | 'IMAGE_CLASSIFICATION'
+  | 'OBJECT_DETECTION'
+  | 'SEMANTIC_SEGMENTATION'
+  | 'NLP_TEXT_CLASSIFICATION'
+  | 'TIME_SERIES_FORECAST'
+  | 'ANOMALY_DETECTION'
+  | string;
+export type ModelScope = 'PLATFORM' | 'BU' | 'PRIVATE' | string;
+export type ModelSource = 'PLATFORM_BUILT_IN' | 'LOCAL_UPLOAD' | 'TRAINING_OUTPUT' | 'EXTERNAL_IMPORT' | string;
+export type ModelVersionStatus = 'DEVELOPMENT' | 'TESTING' | 'PRODUCTION' | 'DEPRECATED' | string;
+export type ModelEvaluationStatus = 'NONE' | 'PASSED' | 'FAILED' | 'IMPORTED_PROOF' | string;
+export type ModelAccessPermission = 'VIEW' | 'DOWNLOAD' | 'USE_FOR_TRAINING' | 'DEPLOY' | string;
+
+export type ModelPermissionSummary = {
+  canView: boolean;
+  canDownload: boolean;
+  canUseForTraining: boolean;
+  canDeploy: boolean;
+  canManage?: boolean;
+  canEditModel?: boolean;
+  canCreateVersion?: boolean;
+  canDeleteVersion?: boolean;
+  canApproveAccess?: boolean;
+};
+
+export type ModelSummary = {
+  modelId: string;
+  name: string;
+  description: string | null;
+  framework: ModelFramework;
+  taskType: ModelTaskType;
+  inputFormat: string;
+  outputFormat: string;
+  tags: string[];
+  scope: ModelScope;
+  source: ModelSource;
+  ownerUserId: string;
+  ownerOrgId: string;
+  tenantId: string;
+  currentVersionId: string | null;
+  currentVersionNo?: string | null;
+  currentVersionStatus?: ModelVersionStatus | null;
+  evaluationStatus?: ModelEvaluationStatus | null;
+  permissionSummary: ModelPermissionSummary;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ModelActiveReference = {
+  serviceId: string;
+  serviceName: string;
+  status: string;
+};
+
+export type ModelVersion = {
+  versionId: string;
+  modelId: string;
+  versionNo: string;
+  fileObjectId: string;
+  fileName: string;
+  fileExtension: string;
+  fileSizeBytes: number;
+  checksum: string | null;
+  storageBucket: string;
+  storageKey: string;
+  runtimeRequirements?: string | null;
+  metricsSummary?: Record<string, unknown> | null;
+  securityScanStatus: string;
+  evaluationStatus: ModelEvaluationStatus;
+  evaluationRecordId?: string | null;
+  evaluationProof?: string | null;
+  status: ModelVersionStatus;
+  activeDeploymentCount: number;
+  activeReferences?: ModelActiveReference[];
+  permissionSummary: ModelPermissionSummary;
+  downloadAvailable: boolean;
+  transitionActions: ModelVersionStatus[];
+  createdBy: string;
+  createdAt: string;
+};
+
+export type ModelAuditEvent = {
+  eventId: string;
+  action: string;
+  operatorName: string;
+  occurredAt: string;
+  result: string;
+};
+
+export type ModelDetail = {
+  modelId: string;
+  name: string;
+  description: string | null;
+  framework: ModelFramework;
+  taskType: ModelTaskType;
+  inputFormat: string;
+  outputFormat: string;
+  runtimeRequirements: string | null;
+  tags: string[];
+  scope: ModelScope;
+  source: ModelSource;
+  ownerUserId: string;
+  ownerOrgId: string;
+  tenantId: string;
+  currentVersionId: string | null;
+  permissionSummary: ModelPermissionSummary;
+  versions: ModelVersion[];
+  auditEvents: ModelAuditEvent[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ModelListResponse = PageResponse<ModelSummary>;
+
+export type ModelCreateInput = {
+  name: string;
+  description?: string;
+  framework: ModelFramework;
+  taskType: ModelTaskType;
+  inputFormat: string;
+  outputFormat: string;
+  runtimeRequirements?: string;
+  tags?: string[];
+  scope: ModelScope;
+  source: ModelSource;
+};
+
+export type ModelUpdateInput = {
+  name?: string;
+  description?: string;
+  inputFormat?: string;
+  outputFormat?: string;
+  runtimeRequirements?: string;
+  tags?: string[];
+  scope?: ModelScope;
+  scopeChangeReason?: string;
+};
+
+export type ModelVersionCreateInput = {
+  versionNo: string;
+  fileObjectId: string;
+  runtimeRequirements?: string;
+  metricsSummary?: Record<string, unknown>;
+  evaluationStatus?: ModelEvaluationStatus;
+  evaluationProof?: string;
+  setAsCurrent?: boolean;
+};
+
+export type ModelVersionTransitionInput = {
+  targetStatus: ModelVersionStatus;
+  reason?: string;
+};
+
+export type ModelVersionDeleteResponse = {
+  versionId: string;
+  deleted: boolean;
+  blocked: boolean;
+  activeReferences: ModelActiveReference[];
+};
+
+export type ModelAccessRequest = {
+  requestId: string;
+  modelId: string;
+  versionId: string | null;
+  requesterUserId: string;
+  requesterOrgId: string;
+  ownerOrgId: string;
+  permission: ModelAccessPermission;
+  reason: string | null;
+  status: string;
+  reviewComment: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  expiresAt: string | null;
+};
+
+export type ModelAccessRequestCreateInput = {
+  versionId?: string | null;
+  permission: ModelAccessPermission;
+  reason?: string;
+  expiresAt?: string | null;
+};
+
+export type ModelAccessReviewInput = {
+  reviewComment?: string;
+  expiresAt?: string | null;
+};
+
+export type ModelDownloadResponse = {
+  modelId: string;
+  versionId: string;
+  fileObjectId: string;
+  downloadUrl: string;
+  expiresInSeconds: number;
+  diagnostic: string;
+};
+
+export type ModelListQuery = {
+  keyword?: string;
+  tag?: string;
+  framework?: string;
+  taskType?: string;
+  scope?: string;
+  status?: string;
+  ownerOrgId?: string;
+  page?: number;
+  pageSize?: number;
+};
+
 export type NotificationChannel = {
   channelId: string;
   channelType: string;
@@ -507,6 +719,17 @@ async function unwrap<T>(promise: Promise<{ data: ApiResponse<T> }>): Promise<T>
   return response.data.data;
 }
 
+async function unwrapDeleteModelVersion(promise: Promise<{ data: ApiResponse<ModelVersionDeleteResponse> }>): Promise<ModelVersionDeleteResponse> {
+  try {
+    return await unwrap<ModelVersionDeleteResponse>(promise);
+  } catch (error) {
+    if (axios.isAxiosError<ApiResponse<ModelVersionDeleteResponse>>(error) && error.response?.status === 409 && error.response.data?.data?.blocked) {
+      return error.response.data.data;
+    }
+    throw error;
+  }
+}
+
 export const platformApi = {
   async login(input: { username: string; password: string; tenantCode: string }) {
     return unwrap<LoginResponse>(apiClient.post('/api/v1/auth/login', input));
@@ -627,6 +850,48 @@ export const platformApi = {
   fileContentUrl(fileId: string) {
     const base = apiClient?.defaults?.baseURL ?? '';
     return `${base}/api/v1/platform/files/${fileId}/content`;
+  },
+  async models(params: ModelListQuery = {}) {
+    return unwrap<ModelListResponse>(apiClient.get('/api/v1/models', { params }));
+  },
+  async createModel(input: ModelCreateInput) {
+    return unwrap<ModelSummary>(apiClient.post('/api/v1/models', input));
+  },
+  async modelDetail(modelId: string) {
+    return unwrap<ModelDetail>(apiClient.get(`/api/v1/models/${modelId}`));
+  },
+  async updateModel(modelId: string, input: ModelUpdateInput) {
+    return unwrap<ModelSummary>(apiClient.patch(`/api/v1/models/${modelId}`, input));
+  },
+  async modelVersions(modelId: string) {
+    return unwrap<ModelVersion[]>(apiClient.get(`/api/v1/models/${modelId}/versions`));
+  },
+  async createModelVersion(modelId: string, input: ModelVersionCreateInput) {
+    return unwrap<ModelVersion>(apiClient.post(`/api/v1/models/${modelId}/versions`, input));
+  },
+  async modelVersionDetail(modelId: string, versionId: string) {
+    return unwrap<ModelVersion>(apiClient.get(`/api/v1/models/${modelId}/versions/${versionId}`));
+  },
+  async transitionModelVersion(modelId: string, versionId: string, input: ModelVersionTransitionInput) {
+    return unwrap<ModelVersion>(apiClient.post(`/api/v1/models/${modelId}/versions/${versionId}/transition`, input));
+  },
+  async deleteModelVersion(modelId: string, versionId: string) {
+    return unwrapDeleteModelVersion(apiClient.delete(`/api/v1/models/${modelId}/versions/${versionId}`));
+  },
+  async modelAccessRequests(modelId: string, params: { status?: string } = {}) {
+    return unwrap<ModelAccessRequest[]>(apiClient.get(`/api/v1/models/${modelId}/access-requests`, { params }));
+  },
+  async requestModelAccess(modelId: string, input: ModelAccessRequestCreateInput) {
+    return unwrap<ModelAccessRequest>(apiClient.post(`/api/v1/models/${modelId}/access-requests`, input));
+  },
+  async approveModelAccessRequest(requestId: string, input: ModelAccessReviewInput = {}) {
+    return unwrap<ModelAccessRequest>(apiClient.put(`/api/v1/model-access-requests/${requestId}/approve`, input));
+  },
+  async rejectModelAccessRequest(requestId: string, input: ModelAccessReviewInput = {}) {
+    return unwrap<ModelAccessRequest>(apiClient.put(`/api/v1/model-access-requests/${requestId}/reject`, input));
+  },
+  async modelDownloadUrl(modelId: string, versionId: string) {
+    return unwrap<ModelDownloadResponse>(apiClient.post(`/api/v1/models/${modelId}/versions/${versionId}/download-url`));
   },
   async notificationChannels() {
     return unwrap<NotificationChannel[]>(apiClient.get('/api/v1/platform/notification-channels'));

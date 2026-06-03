@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test';
-import { seedAuthenticatedSession } from './helpers';
+import { openNav, seedAuthenticatedSession } from './helpers';
 
 test('TASK-dataset-lifecycle-management AC-01 AC-05 数据集详情支持版本切换、版本数展示与历史版本只读', async ({ page }) => {
   await seedAuthenticatedSession(page);
-  await page.getByText('数据集管理').click();
+  await openNav(page, '数据集管理');
   await expect(page.getByRole('cell', { name: '焊缝缺陷检测数据集' })).toBeVisible();
   await expect(page.getByRole('cell', { name: '2' }).first()).toBeVisible();
   await page.getByText('详情').first().click();
@@ -19,7 +19,7 @@ test('TASK-dataset-lifecycle-management AC-01 AC-05 数据集详情支持版本�
 
 test('TASK-dataset-lifecycle-management AC-06 数据集列表区分归档与管理员硬删除入口', async ({ page }) => {
   await seedAuthenticatedSession(page);
-  await page.getByText('数据集管理').click();
+  await openNav(page, '数据集管理');
   await expect(page.getByText('归档').first()).toBeVisible();
   await expect(page.getByText('彻底删除').first()).toBeVisible();
   await page.getByRole('row', { name: /工单文本分类语料库/ }).getByText('彻底删除').click();
@@ -28,7 +28,7 @@ test('TASK-dataset-lifecycle-management AC-06 数据集列表区分归档与管�
 
 test('TASK-dataset-lifecycle-management AC-07 上传向导支持 APPEND_VERSION 并回到目标版本详情', async ({ page }) => {
   await seedAuthenticatedSession(page);
-  await page.getByText('数据集管理').click();
+  await openNav(page, '数据集管理');
   await page.getByText('详情').first().click();
   await page.getByRole('button', { name: '上传向导追加' }).click();
   await expect(page.getByRole('heading', { name: '新建数据集 / 上传向导' })).toBeVisible();
@@ -44,5 +44,6 @@ test('TASK-dataset-lifecycle-management AC-07 上传向导支持 APPEND_VERSION 
   await expect(page.getByText(/目标 dataset\/version：DATASET-WELD-DEFECT \/ DVER-WELD-002/)).toBeVisible();
   await page.getByRole('button', { name: '提交并追加到既有版本' }).click();
   await expect(page.getByRole('heading', { name: '焊缝缺陷检测数据集' })).toBeVisible();
-  await expect(page.getByText(/versionStatus=SECURITY_PENDING/)).toBeVisible();
+  await expect(page.getByText(/上传向导追加已完成/)).toBeVisible();
+  await expect(page.getByText(/SECURITY_PENDING/)).toBeVisible();
 });

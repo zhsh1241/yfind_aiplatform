@@ -20,8 +20,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(PlatformException.class)
     ResponseEntity<ApiResponse<Void>> handlePlatformException(PlatformException exception) {
-        return ResponseEntity.status(exception.error().httpStatus())
-            .body(ApiResponse.failure(exception.error().businessCode(), exception.getMessage(), traceId()));
+        return ResponseEntity.status(exception.httpStatus())
+            .body(ApiResponse.failure(exception.businessCode(), exception.getMessage(), traceId()));
     }
 
     @ExceptionHandler(BusinessException.class)

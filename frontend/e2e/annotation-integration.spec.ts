@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { seedAuthenticatedSession } from './helpers';
+import { openNav, seedAuthenticatedSession, selectAnnotationTags } from './helpers';
 
 test('TASK-annotation-integration AC-01 AC-02 AC-03 annotation task list and local workbench entry', async ({ page }) => {
   await seedAuthenticatedSession(page);
-  await page.getByText('标注任务').click();
+  await openNav(page, '标注任务');
   await expect(page.getByRole('heading', { name: '标注任务管理' })).toBeVisible();
   await expect(page.getByText('焊缝缺陷检测标注任务')).toBeVisible();
   await expect(page.getByRole('button', { name: '标签模板' })).toBeVisible();
@@ -22,7 +22,7 @@ test('TASK-annotation-integration AC-01 AC-02 AC-03 annotation task list and loc
 
 test('TASK-visual-preprocess-operators-pipeline AC-04 AC-05 AC-08 AC-09 preprocessed dataset annotation source eligibility', async ({ page }) => {
   await seedAuthenticatedSession(page);
-  await page.getByText('标注任务').click();
+  await openNav(page, '标注任务');
   await expect(page.getByRole('heading', { name: '标注任务管理' })).toBeVisible();
 
   await page.getByRole('button', { name: '＋ 新建标注任务' }).click();
@@ -34,13 +34,17 @@ test('TASK-visual-preprocess-operators-pipeline AC-04 AC-05 AC-08 AC-09 preproce
 
   await page.getByLabel('源数据集（仅 ACTIVE 且可标注图片数据集）').click();
   await page.getByText('焊缝视频抽帧预处理结果').last().click();
+  await selectAnnotationTags(page, ['裂纹']);
+  const createTask = page.waitForResponse((response) => response.url().includes('/api/v1/annotation/tasks') && response.request().method() === 'POST');
   await page.getByRole('button', { name: '创建任务' }).click();
-  await expect(page.getByText('标注任务已创建')).toBeVisible();
+  const createTaskBody = await (await createTask).json();
+  expect(createTaskBody.data.taskId ?? createTaskBody.data.task?.taskId).toBeTruthy();
+  await expect(page.getByRole('dialog', { name: '＋ 新建标注任务' })).toBeHidden();
 });
 
 test('TASK-annotation-integration AC-04 AC-05 workbench draft submit flow', async ({ page }) => {
   await seedAuthenticatedSession(page);
-  await page.getByText('标注工作台').click();
+  await openNav(page, '标注工作台');
   await expect(page.getByRole('heading', { name: '标注工作台' })).toBeVisible();
   await expect(page.getByLabel('样本队列')).toBeVisible();
   await expect(page.getByLabel('原生标注画布')).toBeVisible();
@@ -115,7 +119,7 @@ test('TASK-annotation-integration AC-04 AC-05 workbench draft submit flow', asyn
 
 test('TASK-annotation-integration AC-06 AC-07 AC-08 AC-09 review quality and publication flow', async ({ page }) => {
   await seedAuthenticatedSession(page);
-  await page.getByText('标注审核').click();
+  await openNav(page, '标注审核');
   await expect(page.getByRole('heading', { name: '标注审核' })).toBeVisible();
   await expect(page.getByText(/DAT-004/)).toBeVisible();
   await expect(page.getByRole('button', { name: /导入/ })).toHaveCount(0);

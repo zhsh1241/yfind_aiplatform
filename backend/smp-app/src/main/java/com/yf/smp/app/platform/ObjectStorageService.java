@@ -66,17 +66,22 @@ class ObjectStorageService {
     }
 
     String presignedDownloadUrl(String bucket, String objectKey, String downloadFilename) {
+        return presignedDownloadUrl(bucket, objectKey, downloadFilename, presignedExpirySeconds);
+    }
+
+    String presignedDownloadUrl(String bucket, String objectKey, String downloadFilename, int expirySeconds) {
         MinioClient client = minioClientProvider.getIfAvailable();
         if (client == null) {
             return null;
         }
+        int normalizedExpiry = Math.max(60, Math.min(expirySeconds, 3600));
         try {
             String signedUrl = client.getPresignedObjectUrl(
                 GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
                     .bucket(bucket)
                     .object(objectKey)
-                    .expiry(presignedExpirySeconds)
+                    .expiry(normalizedExpiry)
                     .extraQueryParams(downloadFilename == null || downloadFilename.isBlank() ? Map.of() : Map.of("response-content-disposition", "attachment; filename=\"" + safeDownloadFilename(downloadFilename) + "\""))
                     .build()
             );
