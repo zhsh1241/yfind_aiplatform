@@ -211,7 +211,16 @@ class ObjectStorageService {
         try {
             java.net.URI signed = java.net.URI.create(signedUrl);
             java.net.URI publicBase = java.net.URI.create(publicEndpoint.replaceAll("/+$", ""));
-            return new java.net.URI(publicBase.getScheme(), publicBase.getAuthority(), signed.getPath(), signed.getQuery(), signed.getFragment()).toString();
+            StringBuilder rewritten = new StringBuilder();
+            rewritten.append(publicBase.getScheme()).append("://").append(publicBase.getRawAuthority());
+            rewritten.append(signed.getRawPath());
+            if (signed.getRawQuery() != null && !signed.getRawQuery().isBlank()) {
+                rewritten.append('?').append(signed.getRawQuery());
+            }
+            if (signed.getRawFragment() != null && !signed.getRawFragment().isBlank()) {
+                rewritten.append('#').append(signed.getRawFragment());
+            }
+            return rewritten.toString();
         } catch (Exception ignored) {
             return signedUrl;
         }

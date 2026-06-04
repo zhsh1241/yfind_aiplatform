@@ -251,6 +251,12 @@ export type FileObjectSummary = {
   updatedAt: string;
 };
 
+export type FileObjectListQuery = {
+  assetType?: string;
+  status?: string;
+  organizationId?: string;
+};
+
 export type FileObjectInitInput = {
   assetType: string;
   tenantId: string;
@@ -814,6 +820,9 @@ export const platformApi = {
   },
   async files() {
     return unwrap<PageResponse<FileObjectSummary>>(apiClient.get('/api/v1/platform/files'));
+  },
+  async filesByQuery(params: FileObjectListQuery = {}) {
+    return unwrap<PageResponse<FileObjectSummary>>(apiClient.get('/api/v1/platform/files', { params }));
   },
   async initFile(input: FileObjectInitInput) {
     return unwrap<FileObjectSummary>(apiClient.post('/api/v1/platform/files/init', input));

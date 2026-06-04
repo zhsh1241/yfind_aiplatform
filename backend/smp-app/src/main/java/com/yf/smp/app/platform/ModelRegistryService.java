@@ -124,7 +124,7 @@ public class ModelRegistryService {
         return toSummary(principal, created);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public ModelDetailResponse modelDetail(PlatformPrincipal principal, String modelId) {
         identityService.requirePermission(principal, "model:model:read");
         ModelRecord model = modelById(modelId);
@@ -198,7 +198,7 @@ public class ModelRegistryService {
     public ModelVersionResponse createVersion(PlatformPrincipal principal, String modelId, ModelVersionCreateRequest request) {
         ModelRecord model = requireModelPermission(principal, modelId, "model:version:write");
         validateVersionCreateRequest(principal, request);
-        FileObjectRecord file = accessibleFile(model.tenantId(), request.fileObjectId());
+        FileObjectRecord file = accessibleModelFile(model.tenantId(), request.fileObjectId());
         String extension = extension(file.objectKey());
         if (!MODEL_FILE_EXTENSIONS.contains(extension)) {
             throw new PlatformException(42234, 422, "仅支持 .pt/.pth/.onnx/.zip 模型文件");
@@ -1018,11 +1018,11 @@ public class ModelRegistryService {
         );
     }
 
-    private FileObjectRecord accessibleFile(String tenantId, String fileObjectId) {
+    private FileObjectRecord accessibleModelFile(String tenantId, String fileObjectId) {
         FileObjectRecord file;
         try {
             file = jdbc.queryForObject("""
-                SELECT * FROM platform_file_object WHERE file_id=? AND status='AVAILABLE'
+                SELECT * FROM platform_file_object WHERE file_id=? AND asset_type='MODEL' AND status='AVAILABLE'
                 """, (rs, rowNum) -> new FileObjectRecord(
                 rs.getString("file_id"),
                 rs.getString("tenant_id"),

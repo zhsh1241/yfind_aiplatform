@@ -11,6 +11,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
+import java.util.Locale;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -73,6 +74,12 @@ class ModelRegistryControllerTest {
         assertThat(listed.at("/data/total").asInt()).isEqualTo(1);
         assertThat(listed.at("/data/items/0/modelId").asText()).isEqualTo(modelId);
         assertThat(listed.at("/data/items/0/currentVersionId").isNull()).isTrue();
+
+        JsonNode detailBeforeVersion = getJson("/api/v1/models/" + modelId, "trace-f019-detail-before-version", cabinBuAdmin);
+        assertThat(detailBeforeVersion.at("/code").asInt()).isZero();
+        assertThat(detailBeforeVersion.at("/data/modelId").asText()).isEqualTo(modelId);
+        assertThat(detailBeforeVersion.at("/data/versions").isEmpty()).isTrue();
+        assertThat(detailBeforeVersion.at("/data/auditEvents").toString()).contains("MODEL_VIEWED");
 
         JsonNode invalidEnumModel = postJson("/api/v1/models", "trace-f019-create-model-invalid-enum", """
             {
@@ -635,6 +642,50 @@ class ModelRegistryControllerTest {
     }
 
     @Test
+    void taskModelRegistryFoundationShouldRejectNonModelFileObjectsForVersionCreation() throws Exception {
+        String cabinBuAdmin = login("buadmin", "CABIN");
+        String suffix = UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        String datasetZipFileId = "FILE-DATASET-MODEL-GUARD-" + suffix;
+        seedFileObject(
+            datasetZipFileId,
+            "DATASET",
+            "TENANT-CABIN",
+            "USR-BU-CABIN",
+            "dataset-training-package.zip",
+            2097152L,
+            "application/zip"
+        );
+
+        JsonNode createdModel = postJson("/api/v1/models", "trace-f019-create-model-file-type-guard", """
+            {
+              "name":"TASK-model-registry-foundation 文件类型防线 %s",
+              "description":"验证模型版本只能绑定 MODEL 文件对象",
+              "framework":"PYTORCH",
+              "taskType":"OBJECT_DETECTION",
+              "inputFormat":"image:640x640 RGB",
+              "outputFormat":"bbox[class,score,x1,y1,x2,y2]",
+              "runtimeRequirements":"{}",
+              "tags":["文件防线"],
+              "scope":"PRIVATE",
+              "source":"LOCAL_UPLOAD"
+            }
+            """.formatted(suffix), cabinBuAdmin);
+        assertThat(createdModel.at("/code").asInt()).isZero();
+        String modelId = createdModel.at("/data/modelId").asText();
+
+        JsonNode rejectedVersion = postJson("/api/v1/models/" + modelId + "/versions", "trace-f019-create-version-dataset-file-rejected", """
+            {
+              "versionNo":"v0.1",
+              "fileObjectId":"%s",
+              "runtimeRequirements":"{}",
+              "evaluationStatus":"NONE",
+              "setAsCurrent":true
+            }
+            """.formatted(datasetZipFileId), cabinBuAdmin);
+        assertThat(rejectedVersion.at("/code").asInt()).isEqualTo(42233);
+    }
+
+    @Test
     void taskModelRegistryFoundationShouldGuardAccessReviewStateAndMapMissingResources() throws Exception {
         // TASK-model-registry-foundation AC-03 AC-04 AC-09 AC-10
         String keywordToken = "TASK-model-registry-foundation-review-" + UUID.randomUUID().toString().substring(0, 8);
@@ -849,16 +900,21 @@ class ModelRegistryControllerTest {
     }
 
     private void seedModelFile(String fileId, String tenantId, String ownerId, String fileName, long sizeBytes, String contentType) {
+        seedFileObject(fileId, "MODEL", tenantId, ownerId, fileName, sizeBytes, contentType);
+    }
+
+    private void seedFileObject(String fileId, String assetType, String tenantId, String ownerId, String fileName, long sizeBytes, String contentType) {
         String bucket = "smp-datasets";
-        String objectKey = tenantId + "/models/" + fileId + "/" + fileName;
+        String objectKey = tenantId + "/" + assetType.toLowerCase(Locale.ROOT) + "/" + fileId + "/" + fileName;
         jdbc.update("""
             INSERT INTO platform_file_object (
                 file_id, asset_type, tenant_id, project_id, bucket, object_key,
                 expected_sha256, sha256, expected_size_bytes, size_bytes, content_type,
                 storage_tier, status, owner_id, created_at, updated_at
-            ) VALUES (?, 'MODEL', ?, NULL, ?, ?, NULL, ?, ?, ?, ?, 'STANDARD', 'AVAILABLE', ?, ?, ?)
+            ) VALUES (?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, 'STANDARD', 'AVAILABLE', ?, ?, ?)
             """,
             fileId,
+            assetType,
             tenantId,
             bucket,
             objectKey,

@@ -75,6 +75,8 @@ const ACCESS_PERMISSION_OPTIONS: { value: ModelAccessPermission; label: string }
   { value: 'DEPLOY', label: '部署' },
 ];
 
+const MODEL_FILE_EXTENSIONS = ['.pt', '.pth', '.onnx', '.zip'];
+
 const STATUS_ACTIONS: Record<ModelVersionStatus, { label: string; targetStatus: ModelVersionStatus }[]> = {
   DEVELOPMENT: [{ label: '提交测试', targetStatus: 'TESTING' }],
   TESTING: [{ label: '发布 Production', targetStatus: 'PRODUCTION' }, { label: '标记废弃', targetStatus: 'DEPRECATED' }],
@@ -93,6 +95,32 @@ function formatBytes(value?: number | null) {
   if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
   if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${value} B`;
+}
+
+function fileExtension(objectKey?: string | null) {
+  const name = objectKey?.split('/').pop()?.toLowerCase() ?? '';
+  const dotIndex = name.lastIndexOf('.');
+  return dotIndex >= 0 ? name.slice(dotIndex) : '';
+}
+
+function isModelFileObject(file: FileObjectSummary) {
+  return file.assetType.toUpperCase() === 'MODEL'
+    && file.status.toUpperCase() === 'AVAILABLE'
+    && MODEL_FILE_EXTENSIONS.includes(fileExtension(file.objectKey));
+}
+
+function OneLineText({ value, width = 220, type }: { value?: string | null; width?: number | string; type?: 'secondary' }) {
+  const text = value || '-';
+  return (
+    <Typography.Text
+      type={type}
+      title={text}
+      ellipsis
+      style={{ display: 'inline-block', maxWidth: width, verticalAlign: 'bottom' }}
+    >
+      {text}
+    </Typography.Text>
+  );
 }
 
 function statusColor(status?: string | null) {
@@ -251,8 +279,8 @@ export function ModelRegistryPage() {
   });
 
   const fileQuery = useQuery({
-    queryKey: ['platform-files', 'model-registry'],
-    queryFn: platformApi.files,
+    queryKey: ['platform-files', 'model-registry', 'MODEL', 'AVAILABLE'],
+    queryFn: () => platformApi.filesByQuery({ assetType: 'MODEL', status: 'AVAILABLE' }),
   });
 
   const activeDetail = selectedModel.data;
@@ -424,6 +452,7 @@ export function ModelRegistryPage() {
     {
       title: '版本',
       dataIndex: 'versionNo',
+      width: 96,
       render: (_, record) => (
         <Button type="link" onClick={() => setSelectedVersionId(record.versionId)}>
           {record.versionNo}
@@ -432,27 +461,33 @@ export function ModelRegistryPage() {
     },
     {
       title: '文件',
+      width: 260,
       render: (_, record) => (
-        <Space orientation="vertical" size={0}>
-          <Typography.Text>{record.fileName}</Typography.Text>
-          <Typography.Text type="secondary">{record.fileObjectId}</Typography.Text>
-        </Space>
+        <div style={{ maxWidth: 240 }}>
+          <OneLineText value={record.fileName} width={240} />
+          <br />
+          <OneLineText value={record.fileObjectId} width={180} type="secondary" />
+        </div>
       ),
     },
     {
       title: '状态',
+      width: 92,
       render: (_, record) => <Tag color={statusColor(record.status)}>{record.status}</Tag>,
     },
     {
       title: '评估',
+      width: 128,
       render: (_, record) => <Tag color={statusColor(record.evaluationStatus)}>{record.evaluationStatus}</Tag>,
     },
     {
       title: '大小',
+      width: 88,
       render: (_, record) => formatBytes(record.fileSizeBytes),
     },
     {
       title: '动作',
+      width: 180,
       render: (_, record) => (
         <Space wrap>
           {(record.transitionActions ?? []).map((targetStatus) => ({
@@ -517,10 +552,12 @@ export function ModelRegistryPage() {
     },
   ];
 
-  const fileOptions = (fileQuery.data?.items ?? []).map((item: FileObjectSummary) => ({
-    value: item.fileId,
-    label: `${item.fileId} · ${item.objectKey} · ${formatBytes(item.sizeBytes)}`,
-  }));
+  const fileOptions = (fileQuery.data?.items ?? [])
+    .filter(isModelFileObject)
+    .map((item: FileObjectSummary) => ({
+      value: item.fileId,
+      label: `${item.fileId} · ${item.objectKey} · ${formatBytes(item.sizeBytes)}`,
+    }));
 
   const summaryStats = {
     total: modelQuery.data?.total ?? 0,
@@ -678,6 +715,7 @@ export function ModelRegistryPage() {
                 <Table
                   rowKey="versionId"
                   size="small"
+                  tableLayout="fixed"
                   columns={versionColumns}
                   dataSource={activeDetail.versions}
                   pagination={false}
@@ -690,8 +728,19 @@ export function ModelRegistryPage() {
                   <Descriptions bordered size="small" column={1}>
                     <Descriptions.Item label="版本状态"><Tag color={statusColor(activeVersion.status)}>{activeVersion.status}</Tag></Descriptions.Item>
                     <Descriptions.Item label="评估状态"><Tag color={statusColor(activeVersion.evaluationStatus)}>{activeVersion.evaluationStatus}</Tag></Descriptions.Item>
-                    <Descriptions.Item label="文件">{activeVersion.fileName} · {activeVersion.fileExtension} · {formatBytes(activeVersion.fileSizeBytes)}</Descriptions.Item>
-                    <Descriptions.Item label="对象存储">{activeVersion.storageBucket} / {activeVersion.storageKey}</Descriptions.Item>
+                    <Descriptions.Item label="文件">
+                      <Space size={4} wrap={false}>
+                        <OneLineText value={activeVersion.fileName} width={320} />
+                        <Typography.Text type="secondary">· {activeVersion.fileExtension} · {formatBytes(activeVersion.fileSizeBytes)}</Typography.Text>
+                      </Space>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="对象存储">
+                      <Space size={4} wrap={false} style={{ maxWidth: '100%' }}>
+                        <OneLineText value={activeVersion.storageBucket} width={110} />
+                        <Typography.Text type="secondary">/</Typography.Text>
+                        <OneLineText value={activeVersion.storageKey} width={360} />
+                      </Space>
+                    </Descriptions.Item>
                     <Descriptions.Item label="指标摘要">{activeVersion.metricsSummary ? JSON.stringify(activeVersion.metricsSummary) : '暂无'}</Descriptions.Item>
                     <Descriptions.Item label="评估证明">{activeVersion.evaluationProof ?? '暂无'}</Descriptions.Item>
                     <Descriptions.Item label="活跃引用">{activeVersion.activeDeploymentCount}</Descriptions.Item>
@@ -826,7 +875,14 @@ export function ModelRegistryPage() {
             <Input placeholder="v1.0" />
           </Form.Item>
           <Form.Item name="fileObjectId" label="平台文件对象" rules={[{ required: true, message: '请选择模型文件对象' }]}>
-            <Select showSearch optionFilterProp="label" options={fileOptions} placeholder="选择已存在的 platform_file_object" />
+            <Select
+              showSearch
+              optionFilterProp="label"
+              loading={fileQuery.isLoading}
+              options={fileOptions}
+              placeholder="只能选择已上传且可用的模型文件（.pt/.pth/.onnx/.zip）"
+              notFoundContent={fileQuery.isLoading ? '加载模型文件...' : '暂无可用模型文件'}
+            />
           </Form.Item>
           <Form.Item name="runtimeRequirements" label="运行要求"><Input.TextArea rows={2} /></Form.Item>
           <Form.Item name="metricsSummary" label="指标摘要 JSON"><Input.TextArea rows={3} placeholder='{"mAP50":0.91,"latencyMs":18}' /></Form.Item>

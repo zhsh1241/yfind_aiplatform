@@ -201,6 +201,12 @@ vi.mock('../platform/platformApi', async () => {
       }),
       updateModel: vi.fn().mockImplementation(async (_modelId: string, input: { name?: string }) => ({ ...models.items[0], name: input.name ?? models.items[0].name })),
       files: vi.fn().mockResolvedValue({
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 20,
+      }),
+      filesByQuery: vi.fn().mockResolvedValue({
         items: [
           {
             fileId: 'FILE-MODEL-001',
@@ -216,6 +222,60 @@ vi.mock('../platform/platformApi', async () => {
             contentType: 'application/octet-stream',
             storageTier: 'STANDARD',
             status: 'AVAILABLE',
+            ownerId: 'USER-TRAINER',
+            createdAt: '2026-06-03T00:00:00Z',
+            updatedAt: '2026-06-03T00:00:00Z',
+          },
+          {
+            fileId: 'FILE-DATASET-001',
+            assetType: 'DATASET',
+            tenantId: 'TENANT-CABIN',
+            projectId: null,
+            bucket: 'smp-datasets',
+            objectKey: 'TENANT-CABIN/datasets/weld-images.zip',
+            expectedSha256: null,
+            sha256: 'sha256-dataset',
+            expectedSizeBytes: 4096,
+            sizeBytes: 4096,
+            contentType: 'application/zip',
+            storageTier: 'STANDARD',
+            status: 'AVAILABLE',
+            ownerId: 'USER-TRAINER',
+            createdAt: '2026-06-03T00:00:00Z',
+            updatedAt: '2026-06-03T00:00:00Z',
+          },
+          {
+            fileId: 'FILE-MODEL-TXT-001',
+            assetType: 'MODEL',
+            tenantId: 'TENANT-CABIN',
+            projectId: null,
+            bucket: 'smp-models',
+            objectKey: 'TENANT-CABIN/models/readme.txt',
+            expectedSha256: null,
+            sha256: 'sha256-txt',
+            expectedSizeBytes: 512,
+            sizeBytes: 512,
+            contentType: 'text/plain',
+            storageTier: 'STANDARD',
+            status: 'AVAILABLE',
+            ownerId: 'USER-TRAINER',
+            createdAt: '2026-06-03T00:00:00Z',
+            updatedAt: '2026-06-03T00:00:00Z',
+          },
+          {
+            fileId: 'FILE-MODEL-DELETED-001',
+            assetType: 'MODEL',
+            tenantId: 'TENANT-CABIN',
+            projectId: null,
+            bucket: 'smp-models',
+            objectKey: 'TENANT-CABIN/models/deleted.onnx',
+            expectedSha256: null,
+            sha256: 'sha256-deleted',
+            expectedSizeBytes: 1024,
+            sizeBytes: 1024,
+            contentType: 'application/octet-stream',
+            storageTier: 'STANDARD',
+            status: 'DELETED',
             ownerId: 'USER-TRAINER',
             createdAt: '2026-06-03T00:00:00Z',
             updatedAt: '2026-06-03T00:00:00Z',
@@ -359,7 +419,8 @@ describe('TASK-model-registry-foundation ModelRegistryPage', () => {
     await userEvent.click(screen.getByRole('button', { name: '焊缝缺陷检测 YOLOv8' }));
 
     expect(await screen.findByText(/MODEL_CREATED/)).toBeInTheDocument();
-    expect(screen.getByText('weld-yolo-v1.onnx · .onnx · 100.0 MB')).toBeInTheDocument();
+    expect(screen.getAllByText('weld-yolo-v1.onnx').length).toBeGreaterThan(0);
+    expect(screen.getByText(/· \.onnx · 100\.0 MB/)).toBeInTheDocument();
     expect(screen.getByText('可生成 10 分钟下载链接')).toBeInTheDocument();
     expect(screen.getAllByText('DEPRECATED').length).toBeGreaterThan(0);
   });
@@ -447,6 +508,23 @@ describe('TASK-model-registry-foundation ModelRegistryPage', () => {
     await waitFor(() => {
       expect(platformApi.models).toHaveBeenCalledWith(expect.objectContaining({ tag: '预训练', ownerOrgId: 'TENANT-YF' }));
     });
+  });
+
+  it('limits create-version file selector to available model artifacts only', async () => {
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: '焊缝缺陷检测 YOLOv8' }));
+    expect(await screen.findByText(/MODEL_CREATED/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getAllByRole('button', { name: /创建版本/ })[0]);
+    await waitFor(() => {
+      expect(platformApi.filesByQuery).toHaveBeenCalledWith({ assetType: 'MODEL', status: 'AVAILABLE' });
+    });
+
+    await userEvent.click(screen.getByLabelText('平台文件对象'));
+    expect(await screen.findByText(/FILE-MODEL-001 · TENANT-CABIN\/models\/weld-yolo-v1\.onnx/)).toBeInTheDocument();
+    expect(screen.queryByText(/FILE-DATASET-001/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/FILE-MODEL-TXT-001/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/FILE-MODEL-DELETED-001/)).not.toBeInTheDocument();
   });
 
 
