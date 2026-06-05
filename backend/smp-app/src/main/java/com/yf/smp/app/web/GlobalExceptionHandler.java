@@ -10,9 +10,13 @@ import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.validation.BindException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -30,10 +34,16 @@ public class GlobalExceptionHandler {
             .body(ApiResponse.failure(exception.errorCode().code(), exception.getMessage(), traceId()));
     }
 
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException exception) {
+    @ExceptionHandler({
+        MethodArgumentNotValidException.class,
+        HttpMessageNotReadableException.class,
+        MethodArgumentTypeMismatchException.class,
+        MissingServletRequestParameterException.class,
+        BindException.class,
+    })
+    ResponseEntity<ApiResponse<Void>> handleBadRequest(Exception exception) {
         return ResponseEntity.badRequest()
-            .body(ApiResponse.failure(ErrorCode.INVALID_PARAM.code(), ErrorCode.INVALID_PARAM.defaultMessage(), traceId()));
+            .body(ApiResponse.failure(40000, ErrorCode.INVALID_PARAM.defaultMessage(), traceId()));
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)

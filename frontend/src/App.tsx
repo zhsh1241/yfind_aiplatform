@@ -14,6 +14,7 @@ import { UserManagementPage } from './features/platform/UserManagementPage';
 import { AnnotationReviewPage, AnnotationTasksPage, AnnotationWorkbenchPage, DataPipelineStandardPage, DataSourceManagementPage, DatasetDetailPage, DatasetManagementPage, DatasetUploadPage, OperatorMarketplacePage, TagManagementPage } from './features/data/DataPages';
 import { ModelRegistryPage } from './features/model-registry/ModelRegistryPage';
 import { ModelEvaluationPage } from './features/model-evaluation/ModelEvaluationPage';
+import { EdgeManagementPage } from './features/edge/EdgeManagementPage';
 import { languageOptions, t } from './features/platform/i18n';
 import { useLocaleStore } from './features/platform/localeStore';
 import { useSessionStore } from './features/platform/sessionStore';
@@ -119,8 +120,9 @@ export default function App() {
             <Route path="/opmarket" element={canAccess('opmarket') ? <OperatorMarketplacePage /> : <NoPermission language={language} />} />
             <Route path="/hub" element={canAccess('hub') ? <ModelRegistryPage /> : <NoPermission language={language} />} />
             <Route path="/eval" element={canAccess('eval') ? <ModelEvaluationPage /> : <NoPermission language={language} />} />
+            <Route path="/edge" element={canAccess('edge') ? <EdgeManagementPage /> : <NoPermission language={language} />} />
             {appPages.map((page) => (
-              page.key === 'hub' || page.key === 'eval'
+              page.key === 'hub' || page.key === 'eval' || page.key === 'edge'
                 ? null
                 : <Route key={page.key} path={`/${page.key}`} element={canAccess(page.key) ? <ModuleOverviewPage page={page} language={language} /> : <NoPermission language={language} />} />
             ))}

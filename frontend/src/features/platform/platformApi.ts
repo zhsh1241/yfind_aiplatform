@@ -805,6 +805,128 @@ export type PaiConnectionUpdateInput = {
   diagnosticMessage?: string;
 };
 
+
+export type EdgePermissionSummary = {
+  canRead: boolean;
+  canWrite: boolean;
+  canRequestDeployment: boolean;
+  canApproveDeployment: boolean;
+  canExecuteDeployment: boolean;
+};
+
+export type EdgeServer = {
+  edgeServerId: string;
+  serverName: string;
+  location: string;
+  organizationId: string;
+  ownerUserId: string;
+  ownerName: string;
+  hostAddress: string;
+  agentVersion: string;
+  hardwareSummary: Record<string, unknown>;
+  resourceSummary: Record<string, unknown>;
+  status: string;
+  diagnostic: string;
+  tenantId: string;
+  createdAt: string;
+  updatedAt: string;
+  lastHeartbeatAt: string | null;
+  decommissionedAt: string | null;
+  permissionSummary: EdgePermissionSummary;
+};
+
+export type EdgeServerCreateInput = {
+  serverName: string;
+  location: string;
+  organizationId: string;
+  ownerUserId: string;
+  hostAddress: string;
+  agentVersion: string;
+  hardwareSummary?: Record<string, unknown>;
+};
+
+export type EdgeServerUpdateInput = Partial<EdgeServerCreateInput>;
+
+export type EdgeHeartbeatInput = {
+  status: string;
+  agentVersion?: string;
+  resourceSummary?: Record<string, unknown>;
+  diagnostic?: string;
+};
+
+export type EdgeDeployment = {
+  deploymentId: string;
+  edgeServerId: string;
+  edgeServerName: string;
+  modelId: string;
+  modelName: string;
+  versionId: string;
+  versionNo: string;
+  artifactFileObjectId: string;
+  artifactSha256: string;
+  strategy: string;
+  status: string;
+  approvalStatus: string;
+  requestedBy: string;
+  approvedBy: string | null;
+  executedBy: string | null;
+  tenantId: string;
+  organizationId: string;
+  diagnostic: string;
+  failureReason: string | null;
+  retryCount: number;
+  scheduledAt: string | null;
+  requestedAt: string;
+  approvedAt: string | null;
+  executedAt: string | null;
+  verifiedAt: string | null;
+  deployedAt: string | null;
+  rolledBackAt: string | null;
+  rollbackTargetDeploymentId: string | null;
+  permissionSummary: EdgePermissionSummary;
+};
+
+export type EdgeDeploymentApproval = {
+  approvalId: string;
+  deploymentId: string;
+  approverUserId: string;
+  decision: string;
+  comment: string | null;
+  decidedAt: string;
+};
+
+export type EdgeDeploymentDetail = {
+  deployment: EdgeDeployment;
+  server: EdgeServer;
+  approvals: EdgeDeploymentApproval[];
+};
+
+export type EdgeDeploymentCreateInput = {
+  edgeServerId: string;
+  modelId: string;
+  versionId: string;
+  strategy: string;
+  scheduledAt?: string | null;
+  notes?: string;
+};
+
+export type EdgeDeploymentListQuery = {
+  edgeServerId?: string;
+  modelId?: string;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+export type EdgeServerListQuery = {
+  keyword?: string;
+  status?: string;
+  organizationId?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+
 let accessToken: string | null = null;
 
 export function getAccessToken() {
@@ -827,20 +949,40 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+function platformErrorMessage(errorResponse: ApiResponse<unknown>) {
+  return errorResponse.traceId
+    ? `${errorResponse.message}（code=${errorResponse.code}, traceId=${errorResponse.traceId}）`
+    : `${errorResponse.message}（code=${errorResponse.code}）`;
+}
+
 async function unwrap<T>(promise: Promise<{ data: ApiResponse<T> }>): Promise<T> {
-  const response = await promise;
-  if (response.data.code !== 0) {
-    throw new Error(response.data.message);
+  try {
+    const response = await promise;
+    if (response.data.code !== 0) {
+      throw new Error(platformErrorMessage(response.data));
+    }
+    return response.data.data;
+  } catch (error) {
+    if (axios.isAxiosError<ApiResponse<unknown>>(error) && error.response?.data?.message && typeof error.response.data.code === 'number') {
+      throw new Error(platformErrorMessage(error.response.data));
+    }
+    throw error;
   }
-  return response.data.data;
 }
 
 async function unwrapDeleteModelVersion(promise: Promise<{ data: ApiResponse<ModelVersionDeleteResponse> }>): Promise<ModelVersionDeleteResponse> {
   try {
-    return await unwrap<ModelVersionDeleteResponse>(promise);
+    const response = await promise;
+    if (response.data.code !== 0) {
+      throw new Error(platformErrorMessage(response.data));
+    }
+    return response.data.data;
   } catch (error) {
     if (axios.isAxiosError<ApiResponse<ModelVersionDeleteResponse>>(error) && error.response?.status === 409 && error.response.data?.data?.blocked) {
       return error.response.data.data;
+    }
+    if (axios.isAxiosError<ApiResponse<unknown>>(error) && error.response?.data?.message && typeof error.response.data.code === 'number') {
+      throw new Error(platformErrorMessage(error.response.data));
     }
     throw error;
   }
@@ -1032,6 +1174,48 @@ export const platformApi = {
   },
   async modelEvaluationArtifactDownloadUrl(evaluationRunId: string, artifactId: string) {
     return unwrap<ModelEvaluationArtifactDownload>(apiClient.get(`/api/v1/model-evaluations/${evaluationRunId}/artifacts/${artifactId}/download-url`));
+  },
+  async edgeServers(params: EdgeServerListQuery = {}) {
+    return unwrap<PageResponse<EdgeServer>>(apiClient.get('/api/v1/edge-servers', { params }));
+  },
+  async createEdgeServer(input: EdgeServerCreateInput) {
+    return unwrap<EdgeServer>(apiClient.post('/api/v1/edge-servers', input));
+  },
+  async edgeServerDetail(edgeServerId: string) {
+    return unwrap<EdgeServer>(apiClient.get(`/api/v1/edge-servers/${edgeServerId}`));
+  },
+  async updateEdgeServer(edgeServerId: string, input: EdgeServerUpdateInput) {
+    return unwrap<EdgeServer>(apiClient.patch(`/api/v1/edge-servers/${edgeServerId}`, input));
+  },
+  async heartbeatEdgeServer(edgeServerId: string, input: EdgeHeartbeatInput) {
+    return unwrap<EdgeServer>(apiClient.post(`/api/v1/edge-servers/${edgeServerId}/heartbeat`, input));
+  },
+  async decommissionEdgeServer(edgeServerId: string) {
+    return unwrap<EdgeServer>(apiClient.post(`/api/v1/edge-servers/${edgeServerId}/actions:decommission`));
+  },
+  async edgeDeployments(params: EdgeDeploymentListQuery = {}) {
+    return unwrap<PageResponse<EdgeDeployment>>(apiClient.get('/api/v1/edge-deployments', { params }));
+  },
+  async createEdgeDeployment(input: EdgeDeploymentCreateInput) {
+    return unwrap<EdgeDeployment>(apiClient.post('/api/v1/edge-deployments', input));
+  },
+  async edgeDeploymentDetail(deploymentId: string) {
+    return unwrap<EdgeDeploymentDetail>(apiClient.get(`/api/v1/edge-deployments/${deploymentId}`));
+  },
+  async approveEdgeDeployment(deploymentId: string, comment?: string) {
+    return unwrap<EdgeDeployment>(apiClient.post(`/api/v1/edge-deployments/${deploymentId}/approvals:approve`, { comment }));
+  },
+  async rejectEdgeDeployment(deploymentId: string, comment?: string) {
+    return unwrap<EdgeDeployment>(apiClient.post(`/api/v1/edge-deployments/${deploymentId}/approvals:reject`, { comment }));
+  },
+  async executeEdgeDeployment(deploymentId: string) {
+    return unwrap<EdgeDeployment>(apiClient.post(`/api/v1/edge-deployments/${deploymentId}/actions:execute`));
+  },
+  async verifyEdgeDeploymentIntegrity(deploymentId: string, input: { receivedSha256: string; diagnostic?: string }) {
+    return unwrap<EdgeDeploymentDetail>(apiClient.post(`/api/v1/edge-deployments/${deploymentId}/actions:verify-integrity`, input));
+  },
+  async rollbackEdgeDeployment(deploymentId: string, input: { targetDeploymentId?: string; reason?: string }) {
+    return unwrap<EdgeDeployment>(apiClient.post(`/api/v1/edge-deployments/${deploymentId}/actions:rollback`, input));
   },
   async notificationChannels() {
     return unwrap<NotificationChannel[]>(apiClient.get('/api/v1/platform/notification-channels'));
