@@ -5,6 +5,7 @@ import {
   DeploymentUnitOutlined,
   PlusOutlined,
   RollbackOutlined,
+  SafetyCertificateOutlined,
   StopOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -246,6 +247,37 @@ export function EdgeManagementPage() {
     return { total: serverQuery.data?.total ?? servers.length, online, activeDeployment, failed };
   }, [deployments, serverQuery.data?.total, servers]);
 
+  const summaryCards = [
+    {
+      title: '纳管边端',
+      value: summary.total,
+      hint: '已登记的工厂边端节点',
+      icon: <DeploymentUnitOutlined />,
+      accent: 'blue',
+    },
+    {
+      title: '在线节点',
+      value: summary.online,
+      hint: '最近心跳为 ONLINE',
+      icon: <CloudSyncOutlined />,
+      accent: 'green',
+    },
+    {
+      title: '进行中下发',
+      value: summary.activeDeployment,
+      hint: '待授权 / 执行 / 验证任务',
+      icon: <ApiOutlined />,
+      accent: 'purple',
+    },
+    {
+      title: '失败待处理',
+      value: summary.failed,
+      hint: '需排查 hash 或边端诊断',
+      icon: <StopOutlined />,
+      accent: 'gold',
+    },
+  ];
+
   const serverColumns: ColumnsType<EdgeServer> = [
     {
       title: '服务器',
@@ -311,16 +343,29 @@ export function EdgeManagementPage() {
   const canRollback = (deployment?: EdgeDeployment | null) => Boolean(deployment?.permissionSummary.canExecuteDeployment && ['DEPLOYED', 'FAILED'].includes(deployment.status));
 
   return (
-    <div className="page-stack">
+    <div className="content-page">
       {messageContext}
-      <div className="page-heading">
-        <div>
-          <Typography.Title level={2}>边端管理</Typography.Title>
-          <Typography.Paragraph type="secondary">
+      <div className="page-hero console-hero">
+        <div className="console-hero-copy">
+          <Space wrap size={8} className="console-hero-kickers">
+            <Tag color="blue">EDGE DELIVERY</Tag>
+            <Tag color="purple">Owner 授权</Tag>
+            <Tag color="gold">Hash 校验</Tag>
+          </Space>
+          <Typography.Title level={3}>边端管理</Typography.Title>
+          <Typography.Text type="secondary">
             纳管工厂边端服务器，并将 Production 模型版本按 owner 授权、hash 完整性校验与审计规则下发到边端。
-          </Typography.Paragraph>
+          </Typography.Text>
+          <Space wrap size={8} className="console-hero-metrics">
+            <span>纳管边端 <strong>{summary.total}</strong></span>
+            <span>在线节点 <strong>{summary.online}</strong></span>
+            <span>进行中下发 <strong>{summary.activeDeployment}</strong></span>
+          </Space>
         </div>
-        <Space>
+        <Space wrap className="console-hero-actions">
+          <Button icon={<SafetyCertificateOutlined />} disabled={!selectedDeploymentId} onClick={() => selectedDeploymentId && selectedDeploymentQuery.refetch()}>
+            刷新下发详情
+          </Button>
           <Tag color="blue">TASK-edge-management-delivery</Tag>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => {
             registerForm.setFieldsValue({ organizationId: currentUser?.tenantId ?? 'TENANT-CABIN', ownerUserId: currentUser?.id ?? 'USR-BU-CABIN', agentVersion: '1.0.0', hardwareSummaryJson: '{"gpu":"NVIDIA T4 x1"}' });
@@ -329,21 +374,46 @@ export function EdgeManagementPage() {
         </Space>
       </div>
 
-      <Row gutter={16}>
-        <Col span={6}><Card><Statistic title="纳管边端" value={summary.total} prefix={<DeploymentUnitOutlined />} /></Card></Col>
-        <Col span={6}><Card><Statistic title="在线" value={summary.online} styles={{ content: { color: '#3f8600' } }} /></Card></Col>
-        <Col span={6}><Card><Statistic title="进行中下发" value={summary.activeDeployment} /></Card></Col>
-        <Col span={6}><Card><Statistic title="失败待处理" value={summary.failed} styles={{ content: { color: summary.failed ? '#cf1322' : undefined } }} /></Card></Col>
-      </Row>
+      <div className="console-summary-grid">
+        {summaryCards.map((item) => (
+          <Card key={item.title} className={`console-summary-card console-summary-card-${item.accent}`}>
+            <div className="console-summary-card-header">
+              <span className="console-summary-icon">{item.icon}</span>
+              <Typography.Text type="secondary">{item.title}</Typography.Text>
+            </div>
+            <Statistic value={item.value} />
+            <Typography.Text type="secondary" className="console-summary-hint">{item.hint}</Typography.Text>
+          </Card>
+        ))}
+      </div>
 
-      <Alert
-        showIcon
-        type="info"
-        title="边端 Agent seam"
-        description="本期仅记录 MANUAL_AGENT_SEAM 与 TODO_CONFIRM_EDGE_AGENT_PROTOCOL，不宣称已接入真实 Agent、mTLS 或外部工单系统。"
-      />
+      <Card
+        className="page-card console-panel-card"
+        title={<Space><SafetyCertificateOutlined />边端 Agent seam</Space>}
+        extra={<Tag color="green">边界透明</Tag>}
+      >
+        <div className="console-panel">
+          <div>
+            <Typography.Title level={5}>真实边端通道尚未接入</Typography.Title>
+            <Typography.Text type="secondary">
+              本期仅记录 MANUAL_AGENT_SEAM 与 TODO_CONFIRM_EDGE_AGENT_PROTOCOL，不宣称已接入真实 Agent、mTLS 或外部工单系统。
+            </Typography.Text>
+          </div>
+          <div className="console-panel-control">
+            <Alert showIcon type="info" title="执行、完整性校验和回滚均为平台侧可替换 seam；真实工厂 Agent 协议确认后再替换。" />
+          </div>
+        </div>
+      </Card>
 
-      <Card title="边端服务器" extra={<Space><Input.Search allowClear placeholder="按名称/位置/主机检索" onSearch={(keyword) => setFilters((prev) => ({ ...prev, keyword, page: 1 }))} /><Select allowClear placeholder="状态" style={{ width: 160 }} options={SERVER_STATUS_OPTIONS.map((item) => ({ value: item, label: item }))} onChange={(status) => setFilters((prev) => ({ ...prev, status, page: 1 }))} /></Space>}>
+      <Card
+        className="page-card console-catalog-card"
+        title={<Space><DeploymentUnitOutlined />边端服务器</Space>}
+        extra={<Space wrap><Tag color="cyan">{serverQuery.data?.total ?? 0} 条</Tag></Space>}
+      >
+        <div className="console-filter-toolbar">
+          <Input.Search allowClear placeholder="按名称/位置/主机检索" style={{ width: 280 }} onSearch={(keyword) => setFilters((prev) => ({ ...prev, keyword, page: 1 }))} />
+          <Select allowClear placeholder="状态" style={{ width: 160 }} options={SERVER_STATUS_OPTIONS.map((item) => ({ value: item, label: item }))} onChange={(status) => setFilters((prev) => ({ ...prev, status, page: 1 }))} />
+        </div>
         <Table
           rowKey="edgeServerId"
           loading={serverQuery.isLoading}
@@ -354,7 +424,14 @@ export function EdgeManagementPage() {
         />
       </Card>
 
-      <Card title="下发历史" extra={<Select allowClear placeholder="下发状态" style={{ width: 180 }} options={DEPLOYMENT_STATUS_OPTIONS.map((item) => ({ value: item, label: item }))} onChange={setDeploymentStatus} />}>
+      <Card
+        className="page-card console-catalog-card"
+        title={<Space><ApiOutlined />下发历史</Space>}
+        extra={<Tag color="blue">{deployments.length} 条</Tag>}
+      >
+        <div className="console-filter-toolbar">
+          <Select allowClear placeholder="下发状态" style={{ width: 180 }} options={DEPLOYMENT_STATUS_OPTIONS.map((item) => ({ value: item, label: item }))} onChange={setDeploymentStatus} />
+        </div>
         <Table rowKey="deploymentId" loading={deploymentQuery.isLoading} columns={deploymentColumns} dataSource={deployments} pagination={false} locale={{ emptyText: '请选择服务器查看下发历史，或创建新的下发申请。' }} />
       </Card>
 

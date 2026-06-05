@@ -189,6 +189,7 @@ body {
   max-width: 100%;
 }
 
+.console-hero,
 .model-registry-hero {
   position: relative;
   overflow: hidden;
@@ -201,6 +202,7 @@ body {
   box-shadow: 0 18px 45px rgb(15 23 42 / 8%);
 }
 
+.console-hero::after,
 .model-registry-hero::after {
   position: absolute;
   right: -40px;
@@ -212,22 +214,27 @@ body {
   content: "";
 }
 
+.console-hero-copy,
+.console-hero-actions,
 .model-hero-copy,
 .model-hero-actions {
   position: relative;
   z-index: 1;
 }
 
+.console-hero-kickers,
 .model-hero-kickers {
   margin-bottom: 8px;
 }
 
+.console-hero-metrics,
 .model-hero-metrics {
   margin-top: 14px;
   color: #64748b;
   font-size: 13px;
 }
 
+.console-hero-metrics span,
 .model-hero-metrics span {
   padding: 5px 10px;
   border: 1px solid rgb(22 119 255 / 12%);
@@ -235,10 +242,12 @@ body {
   background: rgb(255 255 255 / 72%);
 }
 
+.console-hero-metrics strong,
 .model-hero-metrics strong {
   color: #0f172a;
 }
 
+.console-summary-grid,
 .model-summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -246,6 +255,7 @@ body {
   margin-bottom: 16px;
 }
 
+.console-summary-card,
 .model-summary-card {
   overflow: hidden;
   border: 0;
@@ -253,11 +263,13 @@ body {
   box-shadow: 0 10px 28px rgb(15 23 42 / 7%);
 }
 
+.console-summary-card .ant-card-body,
 .model-summary-card .ant-card-body {
   position: relative;
   padding: 18px;
 }
 
+.console-summary-card .ant-card-body::after,
 .model-summary-card .ant-card-body::after {
   position: absolute;
   top: 14px;
@@ -269,22 +281,27 @@ body {
   content: "";
 }
 
+.console-summary-card-blue .ant-card-body::after,
 .model-summary-card-blue .ant-card-body::after {
   background: #1677ff;
 }
 
+.console-summary-card-green .ant-card-body::after,
 .model-summary-card-green .ant-card-body::after {
   background: #52c41a;
 }
 
+.console-summary-card-purple .ant-card-body::after,
 .model-summary-card-purple .ant-card-body::after {
   background: #722ed1;
 }
 
+.console-summary-card-gold .ant-card-body::after,
 .model-summary-card-gold .ant-card-body::after {
   background: #faad14;
 }
 
+.console-summary-card-header,
 .model-summary-card-header {
   display: flex;
   align-items: center;
@@ -292,6 +309,7 @@ body {
   margin-bottom: 8px;
 }
 
+.console-summary-icon,
 .model-summary-icon {
   display: inline-flex;
   width: 30px;
@@ -303,31 +321,37 @@ body {
   color: #1677ff;
 }
 
+.console-summary-card-green .console-summary-icon,
 .model-summary-card-green .model-summary-icon {
   background: rgb(82 196 26 / 12%);
   color: #389e0d;
 }
 
+.console-summary-card-purple .console-summary-icon,
 .model-summary-card-purple .model-summary-icon {
   background: rgb(114 46 209 / 12%);
   color: #722ed1;
 }
 
+.console-summary-card-gold .console-summary-icon,
 .model-summary-card-gold .model-summary-icon {
   background: rgb(250 173 20 / 16%);
   color: #d48806;
 }
 
+.console-summary-hint,
 .model-summary-hint {
   display: block;
   margin-top: 4px;
   font-size: 12px;
 }
 
+.console-panel-card .ant-card-body,
 .model-selector-card .ant-card-body {
   background: linear-gradient(135deg, rgb(22 119 255 / 5%), rgb(82 196 26 / 5%));
 }
 
+.console-panel,
 .model-selector-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, .9fr);
@@ -335,6 +359,7 @@ body {
   align-items: center;
 }
 
+.console-panel-control,
 .model-selector-control {
   display: flex;
   flex-direction: column;
@@ -342,6 +367,7 @@ body {
   min-width: 0;
 }
 
+.console-filter-toolbar,
 .model-filter-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -354,11 +380,13 @@ body {
   background: #f8fafc;
 }
 
+.console-catalog-card .ant-table-thead > tr > th,
 .model-catalog-card .ant-table-thead > tr > th {
   color: #475569;
   background: #f8fafc !important;
 }
 
+.console-catalog-card .ant-table-tbody > tr:hover > td,
 .model-catalog-card .ant-table-tbody > tr:hover > td {
   background: #f5faff !important;
 }
@@ -885,6 +913,7 @@ body {
   .pipeline-grid,
   .pipeline-panels,
   .opmarket-layout,
+  .console-panel,
   .model-selector-panel,
   .annotation-workbench-layout {
     grid-template-columns: 1fr;
@@ -894,20 +923,26 @@ body {
 
 @media (max-width: 768px) {
   .page-hero,
+  .console-hero,
   .model-registry-hero {
     flex-direction: column;
     gap: 16px;
   }
 
+  .console-hero-actions,
   .model-hero-actions {
     width: 100%;
   }
 
+  .console-hero-actions .ant-space-item,
+  .console-hero-actions button,
   .model-hero-actions .ant-space-item,
   .model-hero-actions button {
     width: 100%;
   }
 
+  .console-filter-toolbar .ant-input-search,
+  .console-filter-toolbar .ant-select,
   .model-filter-toolbar .ant-input-search,
   .model-filter-toolbar .ant-select {
     width: 100% !important;
