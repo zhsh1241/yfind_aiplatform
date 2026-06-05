@@ -15,6 +15,7 @@ import { AnnotationReviewPage, AnnotationTasksPage, AnnotationWorkbenchPage, Dat
 import { ModelRegistryPage } from './features/model-registry/ModelRegistryPage';
 import { ModelEvaluationPage } from './features/model-evaluation/ModelEvaluationPage';
 import { EdgeManagementPage } from './features/edge/EdgeManagementPage';
+import { AlertCenterPage, DashboardPage, ReportCenterPage, SchedulerCenterPage } from './features/operations/OperationsPages';
 import { languageOptions, t } from './features/platform/i18n';
 import { useLocaleStore } from './features/platform/localeStore';
 import { useSessionStore } from './features/platform/sessionStore';
@@ -121,8 +122,12 @@ export default function App() {
             <Route path="/hub" element={canAccess('hub') ? <ModelRegistryPage /> : <NoPermission language={language} />} />
             <Route path="/eval" element={canAccess('eval') ? <ModelEvaluationPage /> : <NoPermission language={language} />} />
             <Route path="/edge" element={canAccess('edge') ? <EdgeManagementPage /> : <NoPermission language={language} />} />
+            <Route path="/dash" element={canAccess('dash') ? <DashboardPage /> : <NoPermission language={language} />} />
+            <Route path="/sched" element={canAccess('sched') ? <SchedulerCenterPage /> : <NoPermission language={language} />} />
+            <Route path="/alert" element={canAccess('alert') ? <AlertCenterPage /> : <NoPermission language={language} />} />
+            <Route path="/report" element={canAccess('report') ? <ReportCenterPage /> : <NoPermission language={language} />} />
             {appPages.map((page) => (
-              page.key === 'hub' || page.key === 'eval' || page.key === 'edge'
+              ['hub', 'eval', 'edge', 'dash', 'sched', 'alert', 'report'].includes(page.key)
                 ? null
                 : <Route key={page.key} path={`/${page.key}`} element={canAccess(page.key) ? <ModuleOverviewPage page={page} language={language} /> : <NoPermission language={language} />} />
             ))}

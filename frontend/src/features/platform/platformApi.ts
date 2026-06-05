@@ -927,6 +927,155 @@ export type EdgeServerListQuery = {
 };
 
 
+export type OperationsMetric = {
+  key: string;
+  name: string;
+  value: number;
+  unit: string;
+  trend: string;
+  status: string;
+};
+
+export type DomainHealth = {
+  domain: string;
+  status: string;
+  total: number;
+  warnings: number;
+  diagnostic: string;
+};
+
+export type OperationsDashboardOverview = {
+  metrics: OperationsMetric[];
+  alertsBySeverity: Record<string, number>;
+  domainHealth: DomainHealth[];
+  diagnostic: string;
+};
+
+export type OperationsTodo = {
+  todoId: string;
+  type: string;
+  title: string;
+  priority: string;
+  status: string;
+  sourceType: string;
+  sourceId: string;
+  tenantId: string;
+  createdAt: string;
+  dueAt: string | null;
+  actionPath: string;
+};
+
+export type OperationsActivity = {
+  activityId: string;
+  action: string;
+  resourceType: string;
+  resourceId: string | null;
+  operatorName: string;
+  result: string;
+  riskLevel: string;
+  occurredAt: string;
+  detail: string | null;
+};
+
+export type SchedulerQueueSummary = {
+  taskType: string;
+  total: number;
+  running: number;
+  failed: number;
+  waiting: number;
+};
+
+export type SchedulerOverview = {
+  metrics: OperationsMetric[];
+  queues: SchedulerQueueSummary[];
+  diagnostic: string;
+};
+
+export type SchedulerTask = {
+  taskId: string;
+  taskType: string;
+  name: string;
+  status: string;
+  tenantId: string;
+  ownerId: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationMs: number | null;
+  diagnostic: string | null;
+  sourcePath: string;
+};
+
+export type SchedulerAssistantResponse = {
+  status: string;
+  diagnostic: string;
+  suggestions: string[];
+  generatedAt: string;
+};
+
+export type OperationAlert = {
+  alertId: string;
+  title: string;
+  severity: string;
+  status: string;
+  sourceType: string;
+  sourceId: string;
+  tenantId: string;
+  ownerUserId: string | null;
+  diagnostic: string | null;
+  createdAt: string;
+  acknowledgedAt: string | null;
+  resolvedAt: string | null;
+};
+
+export type OperationAlertRule = {
+  ruleId: string;
+  name: string;
+  severity: string;
+  sourceType: string;
+  conditionExpression: string;
+  enabled: boolean;
+  notificationChannel: string;
+  status: string;
+  diagnostic: string;
+};
+
+export type OperationAlertDetail = {
+  alert: OperationAlert;
+  rule: OperationAlertRule | null;
+  timeline: OperationsActivity[];
+  relatedResource: Record<string, string>;
+};
+
+export type OperationsReportOverview = {
+  metrics: OperationsMetric[];
+  reportTypes: string[];
+  diagnostic: string;
+};
+
+export type OperationsReportDetail = {
+  reportType: string;
+  title: string;
+  filters: Record<string, string>;
+  metrics: OperationsMetric[];
+  rows: Record<string, unknown>[];
+  drillDownSeam: string;
+};
+
+export type ReportExportRecord = {
+  exportId: string;
+  reportType: string;
+  status: string;
+  requestedBy: string;
+  tenantId: string;
+  format: string;
+  filtersJson: string;
+  downloadUrlMasked: string | null;
+  diagnostic: string;
+  requestedAt: string;
+  completedAt: string | null;
+};
+
+
 let accessToken: string | null = null;
 
 export function getAccessToken() {
@@ -1216,6 +1365,51 @@ export const platformApi = {
   },
   async rollbackEdgeDeployment(deploymentId: string, input: { targetDeploymentId?: string; reason?: string }) {
     return unwrap<EdgeDeployment>(apiClient.post(`/api/v1/edge-deployments/${deploymentId}/actions:rollback`, input));
+  },
+  async operationsDashboardOverview(tenantId?: string) {
+    return unwrap<OperationsDashboardOverview>(apiClient.get('/api/v1/operations/dashboard/overview', { params: tenantId ? { tenantId } : undefined }));
+  },
+  async operationsDashboardTodos(params: { type?: string; status?: string; page?: number; pageSize?: number } = {}) {
+    return unwrap<PageResponse<OperationsTodo>>(apiClient.get('/api/v1/operations/dashboard/todos', { params }));
+  },
+  async operationsDashboardActivities(params: { page?: number; pageSize?: number } = {}) {
+    return unwrap<PageResponse<OperationsActivity>>(apiClient.get('/api/v1/operations/dashboard/activities', { params }));
+  },
+  async operationsSchedulerOverview(tenantId?: string) {
+    return unwrap<SchedulerOverview>(apiClient.get('/api/v1/operations/scheduler/overview', { params: tenantId ? { tenantId } : undefined }));
+  },
+  async operationsSchedulerTasks(params: { taskType?: string; status?: string; tenantId?: string; page?: number; pageSize?: number } = {}) {
+    return unwrap<PageResponse<SchedulerTask>>(apiClient.get('/api/v1/operations/scheduler/tasks', { params }));
+  },
+  async diagnoseScheduler(input: { taskId?: string; question?: string } = {}) {
+    return unwrap<SchedulerAssistantResponse>(apiClient.post('/api/v1/operations/scheduler/assistant:diagnose', input));
+  },
+  async operationAlerts(params: { severity?: string; status?: string; sourceType?: string; tenantId?: string; page?: number; pageSize?: number } = {}) {
+    return unwrap<PageResponse<OperationAlert>>(apiClient.get('/api/v1/operations/alerts', { params }));
+  },
+  async operationAlertDetail(alertId: string) {
+    return unwrap<OperationAlertDetail>(apiClient.get(`/api/v1/operations/alerts/${alertId}`));
+  },
+  async acknowledgeOperationAlert(alertId: string, comment?: string) {
+    return unwrap<OperationAlert>(apiClient.post(`/api/v1/operations/alerts/${alertId}/acknowledge`, { comment }));
+  },
+  async resolveOperationAlert(alertId: string, comment?: string) {
+    return unwrap<OperationAlert>(apiClient.post(`/api/v1/operations/alerts/${alertId}/resolve`, { comment }));
+  },
+  async operationAlertRules() {
+    return unwrap<OperationAlertRule[]>(apiClient.get('/api/v1/operations/alerts/rules'));
+  },
+  async operationsReportsOverview(tenantId?: string) {
+    return unwrap<OperationsReportOverview>(apiClient.get('/api/v1/operations/reports/overview', { params: tenantId ? { tenantId } : undefined }));
+  },
+  async operationsReportDetail(reportType: string, tenantId?: string) {
+    return unwrap<OperationsReportDetail>(apiClient.get(`/api/v1/operations/reports/${reportType}`, { params: tenantId ? { tenantId } : undefined }));
+  },
+  async createOperationsReportExport(reportType: string, input: { format?: string; filters?: Record<string, string> } = {}) {
+    return unwrap<ReportExportRecord>(apiClient.post(`/api/v1/operations/reports/${reportType}/exports`, input));
+  },
+  async operationsReportExports(params: { status?: string; page?: number; pageSize?: number } = {}) {
+    return unwrap<PageResponse<ReportExportRecord>>(apiClient.get('/api/v1/operations/reports/exports', { params }));
   },
   async notificationChannels() {
     return unwrap<NotificationChannel[]>(apiClient.get('/api/v1/platform/notification-channels'));

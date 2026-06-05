@@ -23,8 +23,8 @@ export const e2eUser = {
   status: 'ACTIVE',
   roles: ['SUPER_ADMIN'],
   roleNames: ['超级管理员'],
-  permissions: ['menu:dash', 'menu:hub', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:pipeline', 'menu:opmarket', 'data:pipeline:read', 'data:pipeline:write', 'data:pipeline:run', 'data:operator:read', 'data:operator:write', 'data:operator:review', 'data:standard:read', 'data:standard:write', 'data:standard:run', 'menu:ann', 'menu:annwork', 'menu:annreview', 'data:annotation:read', 'data:annotation:write', 'data:annotation:assign', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish', 'data:label-template:read', 'data:label-template:write', 'data:label-template:publish'],
-  menuPermissions: ['dash', 'hub', 'eval', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'pipeline', 'opmarket', 'ann', 'annwork', 'annreview'],
+  permissions: ['menu:dash', 'menu:hub', 'menu:usermgmt', 'menu:perm', 'menu:org', 'menu:sys', 'menu:resource', 'menu:datasrc', 'menu:ds', 'menu:portal', 'menu:lineage', 'menu:pipeline', 'menu:opmarket', 'menu:sched', 'menu:report', 'menu:alert', 'operations:dashboard:read', 'operations:scheduler:read', 'operations:alert:read', 'operations:alert:handle', 'operations:report:read', 'operations:report:export', 'data:pipeline:read', 'data:pipeline:write', 'data:pipeline:run', 'data:operator:read', 'data:operator:write', 'data:operator:review', 'data:standard:read', 'data:standard:write', 'data:standard:run', 'menu:ann', 'menu:annwork', 'menu:annreview', 'data:annotation:read', 'data:annotation:write', 'data:annotation:assign', 'data:annotation:submit', 'data:annotation:review', 'data:annotation:publish', 'data:label-template:read', 'data:label-template:write', 'data:label-template:publish'],
+  menuPermissions: ['dash', 'hub', 'eval', 'usermgmt', 'perm', 'org', 'sys', 'resource', 'datasrc', 'ds', 'portal', 'lineage', 'pipeline', 'opmarket', 'sched', 'report', 'alert', 'ann', 'annwork', 'annreview'],
   sessionVersion: 1,
 };
 
