@@ -1,4 +1,5 @@
-import { Alert, Button, Card, ColorPicker, Descriptions, Drawer, Form, Input, InputNumber, Modal, Select, Space, Steps, Table, Tabs, Tag, Typography, Upload, message } from 'antd';
+import { Alert, Button, Card, ColorPicker, Descriptions, Drawer, Form, Input, InputNumber, Modal, Select, Space, Statistic, Steps, Table, Tabs, Tag, Typography, Upload, message } from 'antd';
+import { ApiOutlined, AppstoreOutlined, CloudServerOutlined, DatabaseOutlined, FolderOpenOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ChangeEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
@@ -3226,19 +3227,65 @@ export function DataSourceManagementPage() {
   const disable = useMutation({ mutationFn: dataApi.disableDataSource, onSuccess: inv, onError: (e: Error) => msg.error(e.message) });
   const createTask = useMutation({ mutationFn: dataApi.createSyncTask, onSuccess: async (created) => { setSyncOpen(false); await inv(); msg.success(isRtspSource(created.sourceId) ? 'RTSP 采样任务已保存' : '同步任务已保存'); }, onError: (e: Error) => msg.error(e.message) });
   const runTask = useMutation({ mutationFn: dataApi.runSyncTask, onSuccess: async (r) => { await inv(); (r.status === 'SUCCEEDED' ? msg.success : msg.warning)(`${r.status}: ${r.diagnosticMessage}`); }, onError: (e: Error) => msg.error(e.message) });
+  const dataSourceSummaryCards = [
+    { title: '数据源总数', value: sources.data?.length ?? 0, hint: '已登记连接与采集入口', icon: <DatabaseOutlined />, accent: 'blue' },
+    { title: '已激活', value: activeTestedSources.length, hint: '连接测试通过且可导入', icon: <SafetyCertificateOutlined />, accent: 'green' },
+    { title: '同步/采样任务', value: tasks.data?.length ?? 0, hint: '数据库、API、RTSP 等导入任务', icon: <ApiOutlined />, accent: 'purple' },
+    { title: '待诊断', value: (sources.data ?? []).filter((source) => source.diagnosticCode !== 'OK').length, hint: '需补齐凭据或连接参数', icon: <CloudServerOutlined />, accent: 'gold' },
+  ];
 
   return (
     <div className="content-page">
       {holder}
-      <div className="page-hero">
-        <div><Typography.Title level={3}>数据源管理</Typography.Title><Typography.Text type="secondary">管理文件、数据库、API、流、RTSP 视频流、时序库与工业协议数据源连接、同步导入与采样任务</Typography.Text></div>
-        <Space><Button onClick={() => setSyncOpen(true)}>＋ 新建同步任务</Button><Button type="primary" onClick={() => setOpen(true)}>＋ 新建数据源</Button></Space>
+      <div className="page-hero console-hero">
+        <div className="console-hero-copy">
+          <Space wrap size={8} className="console-hero-kickers">
+            <Tag color="blue">DATA SOURCE</Tag>
+            <Tag color="purple">同步导入</Tag>
+            <Tag color="gold">连接诊断</Tag>
+          </Space>
+          <Typography.Title level={3}>数据源管理</Typography.Title>
+          <Typography.Text type="secondary">管理文件、数据库、API、流、RTSP 视频流、时序库与工业协议数据源连接、同步导入与采样任务。</Typography.Text>
+          <Space wrap size={8} className="console-hero-metrics">
+            <span>数据源 <strong>{sources.data?.length ?? 0}</strong></span>
+            <span>可导入 <strong>{activeTestedSources.length}</strong></span>
+            <span>任务 <strong>{tasks.data?.length ?? 0}</strong></span>
+          </Space>
+        </div>
+        <Space wrap className="console-hero-actions">
+          <Button onClick={() => setSyncOpen(true)}>＋ 新建同步任务</Button>
+          <Button type="primary" onClick={() => setOpen(true)}>＋ 新建数据源</Button>
+        </Space>
       </div>
-      <Alert type="info" showIcon title="数据集导入方式" description="支持文件/对象存储登记导入，也支持关系型数据库、外部 API、流数据、RTSP 视频流、时序库、工业协议通过已激活数据源与同步/采样任务导入；平台会生成可追踪的数据集版本、文件元数据与血缘。RTSP 采样生成视频样本，抽帧处理可在预处理流程中完成。" style={{ marginBottom: 16 }} />
-      <Tabs items={[
-        { key: 'sources', label: '数据源列表', children: <div className="data-source-grid">{(sources.data ?? []).map((s) => <Card key={s.sourceId} title={<Space><Tag color="blue">{txt(s.sourceType)}</Tag>{s.name}</Space>} extra={<Tag color={color(s.status)}>{s.status}</Tag>}><Space direction="vertical" className="full-width"><Typography.Text className="mono">{displayText(s.endpoint)}{s.port ? `:${s.port}` : ''}</Typography.Text><Typography.Text type="secondary">SecretRef: {displayText(s.secretRefMasked, '凭据待配置')}</Typography.Text><Typography.Text type="secondary">诊断：{s.diagnosticCode ?? 'NOT_TESTED'} · {displayText(s.diagnosticMessage)}</Typography.Text><Space wrap><Button size="small" onClick={() => test.mutate(s.sourceId)}>测试连接</Button><Button size="small" onClick={() => setDetail(s)}>详情/编辑</Button><Button size="small" type="primary" onClick={() => activate.mutate(s.sourceId)}>激活</Button><Button size="small" danger onClick={() => disable.mutate(s.sourceId)}>禁用</Button></Space></Space></Card>)}</div> },
-        { key: 'tasks', label: '同步任务', children: <Table<DataSourceSyncTask> rowKey="taskId" dataSource={tasks.data ?? []} pagination={false} columns={[{ title: '任务名称', dataIndex: 'name' }, { title: '数据源', dataIndex: 'sourceName' }, { title: '目标数据集', dataIndex: 'targetDatasetName', render: (v) => v ?? '待绑定' }, { title: '调度周期', dataIndex: 'scheduleMode' }, { title: '范围/采样参数', dataIndex: 'syncScope', render: (v) => v ?? '-' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '诊断', dataIndex: 'diagnosticMessage', render: (value: string | null) => displayText(value) }, { title: '操作', render: (_, r) => <Button size="small" onClick={() => runTask.mutate(r.taskId)}>{isRtspSource(r.sourceId) ? '立即采样' : '立即同步'}</Button> }]} /> },
-      ]} />
+      <div className="console-summary-grid">
+        {dataSourceSummaryCards.map((item) => (
+          <Card key={item.title} className={`console-summary-card console-summary-card-${item.accent}`}>
+            <div className="console-summary-card-header">
+              <span className="console-summary-icon">{item.icon}</span>
+              <Typography.Text type="secondary">{item.title}</Typography.Text>
+            </div>
+            <Statistic value={item.value} />
+            <Typography.Text type="secondary" className="console-summary-hint">{item.hint}</Typography.Text>
+          </Card>
+        ))}
+      </div>
+      <Card className="page-card console-panel-card" title={<Space><FolderOpenOutlined />数据集导入方式</Space>} extra={<Tag color="green">血缘可追踪</Tag>}>
+        <div className="console-panel">
+          <div>
+            <Typography.Title level={5}>多源接入统一生成数据集版本</Typography.Title>
+            <Typography.Text type="secondary">支持文件/对象存储登记导入，也支持关系型数据库、外部 API、流数据、RTSP 视频流、时序库、工业协议通过已激活数据源与同步/采样任务导入。</Typography.Text>
+          </div>
+          <div className="console-panel-control">
+            <Alert type="info" showIcon title="RTSP 采样生成视频样本，抽帧处理可在预处理流程中完成；平台会生成可追踪的数据集版本、文件元数据与血缘。" />
+          </div>
+        </div>
+      </Card>
+      <Card className="page-card console-catalog-card" title={<Space><DatabaseOutlined />数据源与同步任务</Space>} extra={<Tag color="cyan">{sources.data?.length ?? 0} 个数据源</Tag>}>
+        <Tabs items={[
+          { key: 'sources', label: '数据源列表', children: <div className="data-source-grid">{(sources.data ?? []).map((s) => <Card className="page-card" key={s.sourceId} title={<Space><Tag color="blue">{txt(s.sourceType)}</Tag>{s.name}</Space>} extra={<Tag color={color(s.status)}>{s.status}</Tag>}><Space direction="vertical" className="full-width"><Typography.Text className="mono">{displayText(s.endpoint)}{s.port ? `:${s.port}` : ''}</Typography.Text><Typography.Text type="secondary">SecretRef: {displayText(s.secretRefMasked, '凭据待配置')}</Typography.Text><Typography.Text type="secondary">诊断：{s.diagnosticCode ?? 'NOT_TESTED'} · {displayText(s.diagnosticMessage)}</Typography.Text><Space wrap><Button size="small" onClick={() => test.mutate(s.sourceId)}>测试连接</Button><Button size="small" onClick={() => setDetail(s)}>详情/编辑</Button><Button size="small" type="primary" onClick={() => activate.mutate(s.sourceId)}>激活</Button><Button size="small" danger onClick={() => disable.mutate(s.sourceId)}>禁用</Button></Space></Space></Card>)}</div> },
+          { key: 'tasks', label: '同步任务', children: <Table<DataSourceSyncTask> rowKey="taskId" dataSource={tasks.data ?? []} pagination={false} columns={[{ title: '任务名称', dataIndex: 'name' }, { title: '数据源', dataIndex: 'sourceName' }, { title: '目标数据集', dataIndex: 'targetDatasetName', render: (v) => v ?? '待绑定' }, { title: '调度周期', dataIndex: 'scheduleMode' }, { title: '范围/采样参数', dataIndex: 'syncScope', render: (v) => v ?? '-' }, { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> }, { title: '诊断', dataIndex: 'diagnosticMessage', render: (value: string | null) => displayText(value) }, { title: '操作', render: (_, r) => <Button size="small" onClick={() => runTask.mutate(r.taskId)}>{isRtspSource(r.sourceId) ? '立即采样' : '立即同步'}</Button> }]} /> },
+        ]} />
+      </Card>
       <Modal title="新建数据源" open={open} onCancel={() => setOpen(false)} footer={null} destroyOnHidden>
         <Form layout="vertical" onFinish={(v) => create.mutate({ tenantId: currentTenantId, ...v })} initialValues={{ sourceType: 'OBJECT_STORAGE', endpoint: '', credentialMode: 'SECRET_REF', secretRef: '', sharedScope: 'BU' }}>
           <Form.Item name="name" label="数据源名称" rules={[{ required: true }]}><Input /></Form.Item>
@@ -3317,6 +3364,12 @@ export function DatasetManagementPage() {
     { key: 'PREPROCESSED', label: '预处理后' },
     { key: 'ANNOTATED', label: '已标注' },
   ];
+  const datasetSummaryCards = [
+    { title: '数据集总数', value: q.data?.stats.total ?? 0, hint: 'RAW / PREPROCESSED / ANNOTATED', icon: <DatabaseOutlined />, accent: 'blue' },
+    { title: '原始数据', value: q.data?.stats.raw ?? 0, hint: '数据源导入或本地上传', icon: <FolderOpenOutlined />, accent: 'green' },
+    { title: '预处理后', value: q.data?.stats.preprocessed ?? 0, hint: '流水线加工输出数据集', icon: <ApiOutlined />, accent: 'purple' },
+    { title: '已标注', value: q.data?.stats.annotated ?? 0, hint: `受限 ${q.data?.stats.restricted ?? 0} · ${fmtSize(q.data?.stats.totalSizeBytes)}`, icon: <AppstoreOutlined />, accent: 'gold' },
+  ];
   const resetFilters = () => {
     setKeyword('');
     setDatasetType(undefined);
@@ -3326,91 +3379,116 @@ export function DatasetManagementPage() {
   return (
     <div className="content-page">
       {holder}
-      <div className="page-hero">
-        <div>
+      <div className="page-hero console-hero">
+        <div className="console-hero-copy">
+          <Space wrap size={8} className="console-hero-kickers">
+            <Tag color="blue">DATASET HUB</Tag>
+            <Tag color="purple">版本治理</Tag>
+            <Tag color="gold">血缘追踪</Tag>
+          </Space>
           <Typography.Title level={3}>数据集管理</Typography.Title>
           <Typography.Text type="secondary">共 {q.data?.stats.total ?? 0} 个数据集 · 合计 {fmtSize(q.data?.stats.totalSizeBytes)}</Typography.Text>
+          <Space wrap size={8} className="console-hero-metrics">
+            <span>原始数据 <strong>{q.data?.stats.raw ?? 0}</strong></span>
+            <span>预处理后 <strong>{q.data?.stats.preprocessed ?? 0}</strong></span>
+            <span>已标注 <strong>{q.data?.stats.annotated ?? 0}</strong></span>
+          </Space>
         </div>
-        <Space><Button onClick={() => nav('/ann')}>查看标注任务</Button><Button type="primary" onClick={() => nav('/up')}>＋ 新建数据集</Button></Space>
+        <Space wrap className="console-hero-actions"><Button onClick={() => nav('/ann')}>查看标注任务</Button><Button type="primary" onClick={() => nav('/up')}>＋ 新建数据集</Button></Space>
       </div>
-      <div className="summary-grid">
-        {[
-          { n: q.data?.stats.total ?? 0, l: '数据集总数' },
-          { n: q.data?.stats.raw ?? 0, l: '原始数据' },
-          { n: q.data?.stats.preprocessed ?? 0, l: '预处理后' },
-          { n: q.data?.stats.annotated ?? 0, l: '已标注' },
-          { n: q.data?.stats.restricted ?? 0, l: '受限数据集' },
-          { n: fmtSize(q.data?.stats.totalSizeBytes), l: '存储使用' },
-        ].map((i) => <Card key={i.l}><Typography.Title level={3}>{i.n}</Typography.Title><Typography.Text type="secondary">{i.l}</Typography.Text></Card>)}
+      <div className="console-summary-grid">
+        {datasetSummaryCards.map((item) => (
+          <Card key={item.title} className={`console-summary-card console-summary-card-${item.accent}`}>
+            <div className="console-summary-card-header">
+              <span className="console-summary-icon">{item.icon}</span>
+              <Typography.Text type="secondary">{item.title}</Typography.Text>
+            </div>
+            <Statistic value={item.value} />
+            <Typography.Text type="secondary" className="console-summary-hint">{item.hint}</Typography.Text>
+          </Card>
+        ))}
       </div>
-      <Alert type="info" showIcon title="如何导入数据集" description="文件导入走上传向导并绑定平台文件对象；数据库、API、流数据、RTSP 视频流、时序库、工业协议导入走数据源管理中的同步/采样任务，成功后自动生成数据集、版本、文件元数据和血缘。" style={{ marginBottom: 16 }} />
-      <Tabs
-        activeKey={datasetType ?? 'ALL'}
-        onChange={(key) => setDatasetType(key === 'ALL' ? undefined : key)}
-        items={tabs.map((i) => ({ ...i, children: null }))}
-      />
-      <Space style={{ marginBottom: 12 }} wrap>
-        <Input.Search
-          placeholder="搜索数据集名称..."
-          value={keyword}
-          onChange={(event) => setKeyword(event.target.value)}
-          onSearch={(value) => setKeyword(value.trim())}
+      <Card className="page-card console-panel-card" title={<Space><FolderOpenOutlined />如何导入数据集</Space>} extra={<Tag color="green">文件事实源</Tag>}>
+        <div className="console-panel">
+          <div>
+            <Typography.Title level={5}>文件导入与数据源导入并行可用</Typography.Title>
+            <Typography.Text type="secondary">文件导入走上传向导并绑定平台文件对象；数据库、API、流数据、RTSP 视频流、时序库、工业协议导入走数据源管理中的同步/采样任务。</Typography.Text>
+          </div>
+          <div className="console-panel-control">
+            <Alert type="info" showIcon title="成功后自动生成数据集、版本、文件元数据和血缘。" />
+          </div>
+        </div>
+      </Card>
+      <Card className="page-card console-catalog-card" title={<Space><DatabaseOutlined />数据集目录</Space>} extra={<Tag color="cyan">{q.data?.stats.total ?? 0} 个数据集</Tag>}>
+        <Tabs
+          activeKey={datasetType ?? 'ALL'}
+          onChange={(key) => setDatasetType(key === 'ALL' ? undefined : key)}
+          items={tabs.map((i) => ({ ...i, children: null }))}
         />
-        <Select
-          allowClear
-          placeholder="全部权限"
-          value={accessLevel}
-          onChange={setAccessLevel}
-          style={{ width: 140 }}
-          options={['PUBLIC', 'TEAM', 'PRIVATE', 'RESTRICTED'].map((v) => ({ value: v, label: v }))}
+        <div className="console-filter-toolbar">
+          <Input.Search
+            placeholder="搜索数据集名称..."
+            value={keyword}
+            onChange={(event) => setKeyword(event.target.value)}
+            onSearch={(value) => setKeyword(value.trim())}
+            style={{ width: 280 }}
+          />
+          <Select
+            allowClear
+            placeholder="全部权限"
+            value={accessLevel}
+            onChange={setAccessLevel}
+            style={{ width: 160 }}
+            options={['PUBLIC', 'TEAM', 'PRIVATE', 'RESTRICTED'].map((v) => ({ value: v, label: v }))}
+          />
+          <Button onClick={resetFilters}>重置筛选</Button>
+        </div>
+        <Table<DatasetSummary>
+          rowKey="datasetId"
+          dataSource={rows}
+          loading={q.isLoading}
+          rowSelection={{}}
+          locale={{ emptyText: '当前筛选条件下暂无数据集' }}
+          columns={[
+            { title: '数据集名称', render: (_, r) => <a onClick={() => nav('/dsdetail', { state: { datasetId: r.datasetId } })}>{r.name}</a> },
+            { title: '类型', render: (_, r) => <Tag>{txt(r.datasetType)} / {txt(r.dataType)}</Tag> },
+            { title: '当前版本', dataIndex: 'currentVersionName' },
+            { title: '版本数', dataIndex: 'versionCount', render: (value) => <Tag color="purple">{value}</Tag> },
+            { title: '样本', dataIndex: 'recordCount' },
+            { title: '大小', render: (_, r) => fmtSize(r.sizeBytes) },
+            { title: '权限', dataIndex: 'accessLevel', render: (v) => <Tag color={v === 'RESTRICTED' ? 'red' : 'blue'}>{v}</Tag> },
+            { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> },
+            {
+              title: '操作',
+              render: (_, r) => (
+                <Space wrap>
+                  <a onClick={() => nav('/dsdetail', { state: { datasetId: r.datasetId } })}>详情</a>
+                  <a onClick={() => setSelected(r)}>版本</a>
+                  <a onClick={() => nav('/ann', { state: { openCreateTask: true, datasetId: r.datasetId } })}>创建标注任务</a>
+                  {r.mutable ? <a onClick={() => setEditing(r)}>编辑</a> : null}
+                  {r.status !== 'ARCHIVED' && r.mutable ? (
+                    <a onClick={() => Modal.confirm({ title: `归档 ${r.name}？`, content: '归档后仅可只读查看，不能再编辑、建版本、追加或解绑文件。', okText: '确认归档', onOk: () => archiveDataset.mutateAsync(r.datasetId) })}>归档</a>
+                  ) : null}
+                  {isSuperAdmin ? (
+                    <a
+                      style={{ color: r.hardDeletable ? '#cf1322' : undefined }}
+                      onClick={() => Modal.confirm({
+                        title: `彻底删除 ${r.name}？`,
+                        content: r.hardDeletable ? '该操作不可恢复，仅用于已归档且无引用的数据集。' : '当前数据集暂不满足彻底删除条件，请先归档并确保无引用。',
+                        okButtonProps: { danger: true, disabled: !r.hardDeletable },
+                        okText: '确认删除',
+                        onOk: () => hardDeleteDataset.mutateAsync(r.datasetId),
+                      })}
+                    >
+                      彻底删除
+                    </a>
+                  ) : null}
+                </Space>
+              ),
+            },
+          ]}
         />
-        <Button onClick={resetFilters}>重置筛选</Button>
-      </Space>
-      <Table<DatasetSummary>
-        rowKey="datasetId"
-        dataSource={rows}
-        loading={q.isLoading}
-        rowSelection={{}}
-        locale={{ emptyText: '当前筛选条件下暂无数据集' }}
-        columns={[
-          { title: '数据集名称', render: (_, r) => <a onClick={() => nav('/dsdetail', { state: { datasetId: r.datasetId } })}>{r.name}</a> },
-          { title: '类型', render: (_, r) => <Tag>{txt(r.datasetType)} / {txt(r.dataType)}</Tag> },
-          { title: '当前版本', dataIndex: 'currentVersionName' },
-          { title: '版本数', dataIndex: 'versionCount', render: (value) => <Tag color="purple">{value}</Tag> },
-          { title: '样本', dataIndex: 'recordCount' },
-          { title: '大小', render: (_, r) => fmtSize(r.sizeBytes) },
-          { title: '权限', dataIndex: 'accessLevel', render: (v) => <Tag color={v === 'RESTRICTED' ? 'red' : 'blue'}>{v}</Tag> },
-          { title: '状态', dataIndex: 'status', render: (v) => <Tag color={color(v)}>{v}</Tag> },
-          {
-            title: '操作',
-            render: (_, r) => (
-              <Space wrap>
-                <a onClick={() => nav('/dsdetail', { state: { datasetId: r.datasetId } })}>详情</a>
-                <a onClick={() => setSelected(r)}>版本</a>
-                <a onClick={() => nav('/ann', { state: { openCreateTask: true, datasetId: r.datasetId } })}>创建标注任务</a>
-                {r.mutable ? <a onClick={() => setEditing(r)}>编辑</a> : null}
-                {r.status !== 'ARCHIVED' && r.mutable ? (
-                  <a onClick={() => Modal.confirm({ title: `归档 ${r.name}？`, content: '归档后仅可只读查看，不能再编辑、建版本、追加或解绑文件。', okText: '确认归档', onOk: () => archiveDataset.mutateAsync(r.datasetId) })}>归档</a>
-                ) : null}
-                {isSuperAdmin ? (
-                  <a
-                    style={{ color: r.hardDeletable ? '#cf1322' : undefined }}
-                    onClick={() => Modal.confirm({
-                      title: `彻底删除 ${r.name}？`,
-                      content: r.hardDeletable ? '该操作不可恢复，仅用于已归档且无引用的数据集。' : '当前数据集暂不满足彻底删除条件，请先归档并确保无引用。',
-                      okButtonProps: { danger: true, disabled: !r.hardDeletable },
-                      okText: '确认删除',
-                      onOk: () => hardDeleteDataset.mutateAsync(r.datasetId),
-                    })}
-                  >
-                    彻底删除
-                  </a>
-                ) : null}
-              </Space>
-            ),
-          },
-        ]}
-      />
+      </Card>
       <Drawer title={`版本 · ${selected?.name}`} open={Boolean(selected)} onClose={() => setSelected(null)} size="default">
         <DatasetVersionList datasetId={selected?.datasetId} />
       </Drawer>
