@@ -124,6 +124,7 @@ class ModelRegistryControllerTest {
             """, cabinBuAdmin);
         assertThat(testingTransition.at("/code").asInt()).isZero();
         assertThat(testingTransition.at("/data/status").asText()).isEqualTo("TESTING");
+        createPassedEvaluation(cabinBuAdmin, modelId, versionId, "trace-f019-evaluation-before-production");
 
         JsonNode productionTransition = postJson("/api/v1/models/" + modelId + "/versions/" + versionId + "/transition", "trace-f019-transition-production", """
             {"targetStatus":"PRODUCTION","reason":"导入证明后发布"}
@@ -409,6 +410,7 @@ class ModelRegistryControllerTest {
         assertThat(postJson("/api/v1/models/" + deprecatedModelId + "/versions/" + deprecatedVersionId + "/transition", "trace-f019-list-filter-to-testing", """
             {"targetStatus":"TESTING","reason":"列表过滤准备"}
             """, cabinBuAdmin).at("/code").asInt()).isZero();
+        createPassedEvaluation(cabinBuAdmin, deprecatedModelId, deprecatedVersionId, "trace-f019-list-filter-evaluation");
         assertThat(postJson("/api/v1/models/" + deprecatedModelId + "/versions/" + deprecatedVersionId + "/transition", "trace-f019-list-filter-to-production", """
             {"targetStatus":"PRODUCTION","reason":"列表过滤准备"}
             """, cabinBuAdmin).at("/code").asInt()).isZero();
@@ -613,7 +615,7 @@ class ModelRegistryControllerTest {
         JsonNode publishBlocked = postJson("/api/v1/models/" + modelId + "/versions/" + versionId + "/transition", "trace-f019-blocked-publish", """
             {"targetStatus":"PRODUCTION","reason":"无评估发布"}
             """, cabinBuAdmin);
-        assertThat(publishBlocked.at("/code").asInt()).isEqualTo(42232);
+        assertThat(publishBlocked.at("/code").asInt()).isEqualTo(42254);
 
         JsonNode privateToBuScopeUpdated = patchJson("/api/v1/models/" + modelId, "trace-f019-private-to-bu-scope-update", """
             {"scope":"BU","scopeChangeReason":"开放给同 BU 使用"}
@@ -831,6 +833,32 @@ class ModelRegistryControllerTest {
             VALUES (?, ?, ?, ?, ?, NULL, ?)
             """, accessToken, refreshToken, userId, sessionVersion == null ? 1 : sessionVersion, OffsetDateTime.now().plusHours(1), OffsetDateTime.now());
         return accessToken;
+    }
+
+    private String createPassedEvaluation(String token, String modelId, String versionId, String tracePrefix) throws Exception {
+        JsonNode created = postJson("/api/v1/model-evaluations", tracePrefix + "-create", """
+            {
+              "modelId":"%s",
+              "versionId":"%s",
+              "datasetVersionId":"DVER-WELD-001",
+              "taskType":"OBJECT_DETECTION",
+              "metricConfig":{"primaryMetric":"mAP50"},
+              "thresholdConfig":{"mAP50":0.85},
+              "executorType":"IMPORTED",
+              "notes":"TASK-model-evaluation-readiness AC-05 AC-06 兼容 F019 发布门禁"
+            }
+            """.formatted(modelId, versionId), token);
+        assertThat(created.at("/code").asInt()).isZero();
+        String evaluationRunId = created.at("/data/evaluationRunId").asText();
+        JsonNode imported = postJson("/api/v1/model-evaluations/" + evaluationRunId + "/results:import", tracePrefix + "-import", """
+            {
+              "metricResults":{"mAP50":0.91,"latencyMs":18},
+              "reportSummary":"TASK-model-evaluation-readiness AC-03 imported evaluation proof"
+            }
+            """, token);
+        assertThat(imported.at("/code").asInt()).isZero();
+        assertThat(imported.at("/data/run/status").asText()).isEqualTo("PASSED");
+        return evaluationRunId;
     }
 
     private String createNoModelReadUserSession() {

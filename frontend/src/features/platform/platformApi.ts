@@ -497,6 +497,116 @@ export type ModelListQuery = {
   pageSize?: number;
 };
 
+
+export type ModelEvaluationRun = {
+  evaluationRunId: string;
+  modelId: string;
+  modelName: string;
+  versionId: string;
+  versionNo: string;
+  datasetId: string;
+  datasetName: string;
+  datasetVersionId: string;
+  datasetVersionName: string;
+  taskType: string;
+  status: 'READY' | 'RUNNING' | 'PASSED' | 'FAILED' | string;
+  metricConfig: Record<string, unknown> | null;
+  thresholdConfig: Record<string, unknown>;
+  resultSummary: Record<string, unknown> | null;
+  reportSummary: string | null;
+  executorType: string;
+  externalRunId: string | null;
+  ownerUserId: string;
+  ownerOrgId: string;
+  tenantId: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+};
+
+export type ModelEvaluationMetric = {
+  metricId: string;
+  evaluationRunId: string;
+  metricName: string;
+  metricValue: number;
+  thresholdValue: number | null;
+  passed: boolean;
+  category: string;
+  createdAt: string;
+};
+
+export type ModelEvaluationArtifact = {
+  artifactId: string;
+  evaluationRunId: string;
+  artifactType: string;
+  fileObjectId: string | null;
+  name: string;
+  downloadPolicy: string;
+  createdAt: string;
+};
+
+export type ModelEvaluationDetail = {
+  run: ModelEvaluationRun;
+  metrics: ModelEvaluationMetric[];
+  artifacts: ModelEvaluationArtifact[];
+  curveData: Record<string, unknown> | null;
+  confusionMatrix: Record<string, unknown> | null;
+  errorCases: unknown[];
+};
+
+export type ModelEvaluationCreateInput = {
+  modelId: string;
+  versionId: string;
+  datasetVersionId: string;
+  taskType?: string;
+  metricConfig?: Record<string, unknown>;
+  thresholdConfig: Record<string, unknown>;
+  executorType?: string;
+  notes?: string;
+};
+
+export type ModelEvaluationImportInput = {
+  metricResults: Record<string, unknown>;
+  reportSummary?: string;
+  curveData?: Record<string, unknown>;
+  confusionMatrix?: Record<string, unknown>;
+  errorCases?: unknown[];
+  artifacts?: Array<{ artifactType: string; fileObjectId?: string | null; name: string }>;
+  externalRunId?: string;
+};
+
+export type ModelEvaluationCompare = {
+  modelId: string;
+  versionIds: string[];
+  rows: Array<{
+    metricName: string;
+    values: Array<{
+      versionId: string;
+      versionNo: string;
+      evaluationRunId: string;
+      status: string;
+      value: number | null;
+      best: boolean;
+    }>;
+  }>;
+};
+
+export type ModelEvaluationArtifactDownload = {
+  artifactId: string;
+  downloadUrl: string;
+  expiresInSeconds: number;
+  diagnostic: string;
+};
+
+export type ModelEvaluationListQuery = {
+  keyword?: string;
+  modelId?: string;
+  versionId?: string;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+};
+
 export type NotificationChannel = {
   channelId: string;
   channelType: string;
@@ -901,6 +1011,27 @@ export const platformApi = {
   },
   async modelDownloadUrl(modelId: string, versionId: string) {
     return unwrap<ModelDownloadResponse>(apiClient.post(`/api/v1/models/${modelId}/versions/${versionId}/download-url`));
+  },
+  async modelEvaluations(params: ModelEvaluationListQuery = {}) {
+    return unwrap<PageResponse<ModelEvaluationRun>>(apiClient.get('/api/v1/model-evaluations', { params }));
+  },
+  async createModelEvaluation(input: ModelEvaluationCreateInput) {
+    return unwrap<ModelEvaluationRun>(apiClient.post('/api/v1/model-evaluations', input));
+  },
+  async modelEvaluationDetail(evaluationRunId: string) {
+    return unwrap<ModelEvaluationDetail>(apiClient.get(`/api/v1/model-evaluations/${evaluationRunId}`));
+  },
+  async importModelEvaluationResults(evaluationRunId: string, input: ModelEvaluationImportInput) {
+    return unwrap<ModelEvaluationDetail>(apiClient.post(`/api/v1/model-evaluations/${evaluationRunId}/results:import`, input));
+  },
+  async modelVersionEvaluations(modelId: string, versionId: string) {
+    return unwrap<ModelEvaluationRun[]>(apiClient.get(`/api/v1/models/${modelId}/versions/${versionId}/evaluations`));
+  },
+  async compareModelEvaluations(modelId: string, versionIds: string[]) {
+    return unwrap<ModelEvaluationCompare>(apiClient.get(`/api/v1/models/${modelId}/versions:compare-evaluations`, { params: { versionIds: versionIds.join(',') } }));
+  },
+  async modelEvaluationArtifactDownloadUrl(evaluationRunId: string, artifactId: string) {
+    return unwrap<ModelEvaluationArtifactDownload>(apiClient.get(`/api/v1/model-evaluations/${evaluationRunId}/artifacts/${artifactId}/download-url`));
   },
   async notificationChannels() {
     return unwrap<NotificationChannel[]>(apiClient.get('/api/v1/platform/notification-channels'));

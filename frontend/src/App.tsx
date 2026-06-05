@@ -13,6 +13,7 @@ import { SystemConfigPage } from './features/platform/SystemConfigPage';
 import { UserManagementPage } from './features/platform/UserManagementPage';
 import { AnnotationReviewPage, AnnotationTasksPage, AnnotationWorkbenchPage, DataPipelineStandardPage, DataSourceManagementPage, DatasetDetailPage, DatasetManagementPage, DatasetUploadPage, OperatorMarketplacePage, TagManagementPage } from './features/data/DataPages';
 import { ModelRegistryPage } from './features/model-registry/ModelRegistryPage';
+import { ModelEvaluationPage } from './features/model-evaluation/ModelEvaluationPage';
 import { languageOptions, t } from './features/platform/i18n';
 import { useLocaleStore } from './features/platform/localeStore';
 import { useSessionStore } from './features/platform/sessionStore';
@@ -117,8 +118,9 @@ export default function App() {
             <Route path="/pipeline" element={canAccess('pipeline') ? <DataPipelineStandardPage /> : <NoPermission language={language} />} />
             <Route path="/opmarket" element={canAccess('opmarket') ? <OperatorMarketplacePage /> : <NoPermission language={language} />} />
             <Route path="/hub" element={canAccess('hub') ? <ModelRegistryPage /> : <NoPermission language={language} />} />
+            <Route path="/eval" element={canAccess('eval') ? <ModelEvaluationPage /> : <NoPermission language={language} />} />
             {appPages.map((page) => (
-              page.key === 'hub'
+              page.key === 'hub' || page.key === 'eval'
                 ? null
                 : <Route key={page.key} path={`/${page.key}`} element={canAccess(page.key) ? <ModuleOverviewPage page={page} language={language} /> : <NoPermission language={language} />} />
             ))}

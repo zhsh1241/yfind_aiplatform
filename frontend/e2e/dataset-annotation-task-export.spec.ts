@@ -39,5 +39,5 @@ test('TASK-dataset-annotation-task-export AC-01 AC-02 AC-06 AC-07 AC-08 dataset 
   await page.getByRole('button', { name: '下载训练包' }).last().click();
   expect((await contentRequest).headers().authorization).toBe('Bearer token-f006');
   expect((await download).suggestedFilename()).toBe('FILE-AEXP-WELD-Q2-SMP.zip');
-  await expect(page.getByText(/训练包已下载到本地/)).toBeVisible();
+  await expect(page.getByText(/训练包已下载到本地/).first()).toBeVisible();
 });

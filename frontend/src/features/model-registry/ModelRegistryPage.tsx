@@ -565,17 +565,57 @@ export function ModelRegistryPage() {
     crossBu: (modelQuery.data?.items ?? []).filter((item) => item.scope === 'PLATFORM').length,
     trainingReady: (modelQuery.data?.items ?? []).filter((item) => item.permissionSummary.canUseForTraining).length,
   };
+  const summaryCards = [
+    {
+      title: '模型资产',
+      value: summaryStats.total,
+      hint: '统一登记 ONNX / PyTorch / Paddle',
+      icon: <InboxOutlined />,
+      accent: 'blue',
+    },
+    {
+      title: '生产版本',
+      value: summaryStats.production,
+      hint: '可用于推理部署与业务验证',
+      icon: <SafetyCertificateOutlined />,
+      accent: 'green',
+    },
+    {
+      title: '平台共享',
+      value: summaryStats.crossBu,
+      hint: '跨 BU 复用需留痕审批',
+      icon: <EyeOutlined />,
+      accent: 'purple',
+    },
+    {
+      title: '训练复用',
+      value: summaryStats.trainingReady,
+      hint: '可作为训练 / 评估起点',
+      icon: <DownloadOutlined />,
+      accent: 'gold',
+    },
+  ];
 
   return (
     <div className="content-page">
       {messageContext}
       {modalContext}
-      <div className="page-hero">
-        <div>
+      <div className="page-hero model-registry-hero">
+        <div className="model-hero-copy">
+          <Space wrap size={8} className="model-hero-kickers">
+            <Tag color="blue">MODEL HUB</Tag>
+            <Tag color="purple">版本治理</Tag>
+            <Tag color="gold">训练复用</Tag>
+          </Space>
           <Typography.Title level={3}>模型中心</Typography.Title>
           <Typography.Text type="secondary">统一纳管模型、模型版本、下载审计与跨 BU 复用入口。</Typography.Text>
+          <Space wrap size={8} className="model-hero-metrics">
+            <span>当前生产版本 <strong>{summaryStats.production}</strong></span>
+            <span>训练可复用 <strong>{summaryStats.trainingReady}</strong></span>
+            <span>平台共享 <strong>{summaryStats.crossBu}</strong></span>
+          </Space>
         </div>
-        <Space>
+        <Space wrap className="model-hero-actions">
           <Button icon={<SafetyCertificateOutlined />} onClick={() => setAccessOpen(true)} disabled={!selectedModelId}>
             跨 BU 访问申请
           </Button>
@@ -592,24 +632,45 @@ export function ModelRegistryPage() {
         </Space>
       </div>
 
-      <Row gutter={[16, 16]} className="summary-grid">
-        <Col xs={24} md={6}><Card><Statistic title="模型总数" value={summaryStats.total} /></Card></Col>
-        <Col xs={24} md={6}><Card><Statistic title="生产版本" value={summaryStats.production} /></Card></Col>
-        <Col xs={24} md={6}><Card><Statistic title="平台共享模型" value={summaryStats.crossBu} /></Card></Col>
-        <Col xs={24} md={6}><Card><Statistic title="可训练复用" value={summaryStats.trainingReady} /></Card></Col>
-      </Row>
+      <div className="model-summary-grid">
+        {summaryCards.map((item) => (
+          <Card key={item.title} className={`model-summary-card model-summary-card-${item.accent}`}>
+            <div className="model-summary-card-header">
+              <span className="model-summary-icon">{item.icon}</span>
+              <Typography.Text type="secondary">{item.title}</Typography.Text>
+            </div>
+            <Statistic value={item.value} />
+            <Typography.Text type="secondary" className="model-summary-hint">{item.hint}</Typography.Text>
+          </Card>
+        ))}
+      </div>
 
-      <Card className="page-card" title="预训练模型选择器">
-          <Space orientation="vertical" className="full-width">
-          <Typography.Text type="secondary">该组件供 `train` / `exp` / `eval` 后续复用，仅展示当前用户可见且未废弃的模型版本。</Typography.Text>
-          <ModelSelector value={selectorVersionId} onChange={setSelectorVersionId} />
-          {selectorVersionId ? <Tag color="green">已选择版本 {selectorVersionId}</Tag> : null}
-        </Space>
+      <Card
+        className="page-card model-selector-card"
+        title={<Space><SafetyCertificateOutlined />预训练模型选择器</Space>}
+        extra={<Tag color="green">训练入口可复用</Tag>}
+      >
+        <div className="model-selector-panel">
+          <div>
+            <Typography.Title level={5}>快速选择可复用模型版本</Typography.Title>
+            <Typography.Text type="secondary">
+              供 `train` / `exp` / `eval` 后续流程复用，仅展示当前用户可见且未废弃的模型版本。
+            </Typography.Text>
+          </div>
+          <div className="model-selector-control">
+            <ModelSelector value={selectorVersionId} onChange={setSelectorVersionId} />
+            {selectorVersionId ? <Tag color="green">已选择版本 {selectorVersionId}</Tag> : <Tag>等待选择</Tag>}
+          </div>
+        </div>
       </Card>
 
       <div className="model-registry-layout">
-        <Card className="page-card" title="模型目录" extra={<Tag color="blue">TASK-model-registry-foundation</Tag>}>
-          <Space wrap className="full-width" style={{ marginBottom: 16 }}>
+        <Card
+          className="page-card model-catalog-card"
+          title={<Space><InboxOutlined />模型目录</Space>}
+          extra={<Space wrap><Tag color="blue">TASK-model-registry-foundation</Tag><Tag color="cyan">{modelQuery.data?.total ?? 0} 条</Tag></Space>}
+        >
+          <div className="model-filter-toolbar">
             <Input.Search
               allowClear
               placeholder="按名称/描述/标签搜索"
@@ -632,7 +693,7 @@ export function ModelRegistryPage() {
             <Select allowClear placeholder="任务类型" style={{ width: 180 }} options={TASK_TYPE_OPTIONS} onChange={(taskType) => setFilters((prev) => ({ ...prev, taskType, page: 1 }))} />
             <Select allowClear placeholder="共享范围" style={{ width: 160 }} options={SCOPE_OPTIONS} onChange={(scope) => setFilters((prev) => ({ ...prev, scope, page: 1 }))} />
             <Select allowClear placeholder="版本状态" style={{ width: 160 }} options={['DEVELOPMENT', 'TESTING', 'PRODUCTION', 'DEPRECATED'].map((item) => ({ value: item, label: item }))} onChange={(status) => setFilters((prev) => ({ ...prev, status, page: 1 }))} />
-          </Space>
+          </div>
           <Table
             rowKey="modelId"
             loading={modelQuery.isLoading}

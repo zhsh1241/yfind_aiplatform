@@ -42,16 +42,19 @@ public class ModelRegistryService {
     private final JdbcTemplate jdbc;
     private final PlatformIdentityService identityService;
     private final ObjectStorageService objectStorageService;
+    private final ModelEvaluationService modelEvaluationService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public ModelRegistryService(
         JdbcTemplate jdbc,
         PlatformIdentityService identityService,
-        ObjectStorageService objectStorageService
+        ObjectStorageService objectStorageService,
+        ModelEvaluationService modelEvaluationService
     ) {
         this.jdbc = jdbc;
         this.identityService = identityService;
         this.objectStorageService = objectStorageService;
+        this.modelEvaluationService = modelEvaluationService;
     }
 
     @Transactional(readOnly = true)
@@ -271,13 +274,14 @@ public class ModelRegistryService {
         if (!allowed.contains(target)) {
             throw new PlatformException(42231, 422, "不支持从当前状态直接转换为目标状态");
         }
-        if ("PRODUCTION".equals(target) && !List.of("PASSED", "IMPORTED_PROOF").contains(current.evaluationStatus())) {
-            recordAudit(principal, model.tenantId(), model.ownerOrgId(), "MODEL_VERSION_PUBLISH_BLOCKED", "ModelVersion", versionId, "BLOCKED", current.status(), target, blankToDefault(request.reason(), "evaluation-required"));
-            throw new PlatformException(42232, 422, "该模型版本尚未通过评估，请先执行模型评估或导入评估证明");
+        if ("PRODUCTION".equals(target) && !modelEvaluationService.hasPassedEvaluation(modelId, versionId)) {
+            recordAudit(principal, model.tenantId(), model.ownerOrgId(), "MODEL_VERSION_PUBLISH_BLOCKED_EVALUATION_REQUIRED", "ModelVersion", versionId, "BLOCKED", current.status(), target, "TASK-model-evaluation-readiness;AC-05;" + blankToDefault(request.reason(), "evaluation-required"));
+            throw new PlatformException(ModelEvaluationService.CODE_EVALUATION_REQUIRED, 422, "该模型版本尚未通过模型评估，请先在模型评估中导入 PASSED 评估结果");
         }
         jdbc.update("UPDATE model_registry_version SET status=? WHERE version_id=?", target, versionId);
         if ("PRODUCTION".equals(target)) {
             jdbc.update("UPDATE model_registry_model SET current_version_id=?, updated_at=? WHERE model_id=?", versionId, now(), modelId);
+            recordAudit(principal, model.tenantId(), model.ownerOrgId(), "MODEL_VERSION_PUBLISH_GATE_PASSED", "ModelVersion", versionId, "SUCCESS", current.status(), target, "TASK-model-evaluation-readiness;AC-06");
         }
         recordAudit(principal, model.tenantId(), model.ownerOrgId(), "MODEL_VERSION_TRANSITIONED", "ModelVersion", versionId, "SUCCESS", current.status(), target, blankToDefault(request.reason(), "transition"));
         return versionById(principal, model, versionId);

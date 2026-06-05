@@ -189,6 +189,180 @@ body {
   max-width: 100%;
 }
 
+.model-registry-hero {
+  position: relative;
+  overflow: hidden;
+  padding: 24px;
+  border: 1px solid rgb(22 119 255 / 12%);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 78% 12%, rgb(22 119 255 / 18%), transparent 28%),
+    linear-gradient(135deg, #f8fbff 0%, #fff 58%, #f5f8ff 100%);
+  box-shadow: 0 18px 45px rgb(15 23 42 / 8%);
+}
+
+.model-registry-hero::after {
+  position: absolute;
+  right: -40px;
+  bottom: -56px;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgb(22 119 255 / 14%), rgb(114 46 209 / 10%));
+  content: "";
+}
+
+.model-hero-copy,
+.model-hero-actions {
+  position: relative;
+  z-index: 1;
+}
+
+.model-hero-kickers {
+  margin-bottom: 8px;
+}
+
+.model-hero-metrics {
+  margin-top: 14px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.model-hero-metrics span {
+  padding: 5px 10px;
+  border: 1px solid rgb(22 119 255 / 12%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 72%);
+}
+
+.model-hero-metrics strong {
+  color: #0f172a;
+}
+
+.model-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.model-summary-card {
+  overflow: hidden;
+  border: 0;
+  border-radius: 16px;
+  box-shadow: 0 10px 28px rgb(15 23 42 / 7%);
+}
+
+.model-summary-card .ant-card-body {
+  position: relative;
+  padding: 18px;
+}
+
+.model-summary-card .ant-card-body::after {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 62px;
+  height: 62px;
+  border-radius: 18px;
+  opacity: .14;
+  content: "";
+}
+
+.model-summary-card-blue .ant-card-body::after {
+  background: #1677ff;
+}
+
+.model-summary-card-green .ant-card-body::after {
+  background: #52c41a;
+}
+
+.model-summary-card-purple .ant-card-body::after {
+  background: #722ed1;
+}
+
+.model-summary-card-gold .ant-card-body::after {
+  background: #faad14;
+}
+
+.model-summary-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.model-summary-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgb(22 119 255 / 10%);
+  color: #1677ff;
+}
+
+.model-summary-card-green .model-summary-icon {
+  background: rgb(82 196 26 / 12%);
+  color: #389e0d;
+}
+
+.model-summary-card-purple .model-summary-icon {
+  background: rgb(114 46 209 / 12%);
+  color: #722ed1;
+}
+
+.model-summary-card-gold .model-summary-icon {
+  background: rgb(250 173 20 / 16%);
+  color: #d48806;
+}
+
+.model-summary-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.model-selector-card .ant-card-body {
+  background: linear-gradient(135deg, rgb(22 119 255 / 5%), rgb(82 196 26 / 5%));
+}
+
+.model-selector-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, .9fr);
+  gap: 20px;
+  align-items: center;
+}
+
+.model-selector-control {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.model-filter-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid #edf0f5;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.model-catalog-card .ant-table-thead > tr > th {
+  color: #475569;
+  background: #f8fafc !important;
+}
+
+.model-catalog-card .ant-table-tbody > tr:hover > td {
+  background: #f5faff !important;
+}
+
 .dataset-upload-drop .ant-upload-drag {
   padding: 18px;
   border-color: #91caff;
@@ -711,8 +885,41 @@ body {
   .pipeline-grid,
   .pipeline-panels,
   .opmarket-layout,
+  .model-selector-panel,
   .annotation-workbench-layout {
     grid-template-columns: 1fr;
     height: auto;
   }
+}
+
+@media (max-width: 768px) {
+  .page-hero,
+  .model-registry-hero {
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .model-hero-actions {
+    width: 100%;
+  }
+
+  .model-hero-actions .ant-space-item,
+  .model-hero-actions button {
+    width: 100%;
+  }
+
+  .model-filter-toolbar .ant-input-search,
+  .model-filter-toolbar .ant-select {
+    width: 100% !important;
+  }
+}
+
+.link-button-inline {
+  height: auto;
+  padding: 0;
+  font-weight: 600;
+}
+
+.model-evaluation-page .ant-statistic-title {
+  color: #64748b;
 }
